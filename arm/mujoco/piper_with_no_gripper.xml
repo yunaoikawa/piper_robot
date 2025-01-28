@@ -45,7 +45,8 @@
                 <inertial pos="8.82262e-05 0.0566829 -0.0019612" quat="0.507447 0.490986 0.506887 0.494466" mass="0.144711" diaginertia="5.63237e-05 4.88652e-05 4.39642e-05"/>
                 <joint name="joint5" pos="0 0 0" axis="0 0 1" range="-1.22 1.22" actuatorfrcrange="-100 100"/>
                 <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="link5_col"/>
-                <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="link5"/>
+                <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="link5" name="gripper_geom"/>
+                <site name="attachment_site" size="0.01" pos="0 0.1 0" quat="-1 1 1 1" rgba="1 0 0 1" group="1"/>
               </body>
             </body>
           </body>
@@ -53,4 +54,16 @@
       </body>
     </body>
   </worldbody>
+
+  <actuator>
+    <position name="joint1" joint="joint1" ctrlrange="-2.618 2.618"/>
+    <position name="joint2" joint="joint2" ctrlrange="0 3.14"/>
+    <position name="joint3" joint="joint3" ctrlrange="-2.697 0"/>
+    <position name="joint4" joint="joint4" ctrlrange="-1.832 1.832"/>
+    <position name="joint5" joint="joint5" ctrlrange="-1.22 1.22"/>
+  </actuator>
+
+  <keyframe>
+    <key name="home" qpos="-1.47 1.11 -0.714 0.0778 1.22" ctrl="0 0 0 0 0"/>
+  </keyframe>
 </mujoco>
