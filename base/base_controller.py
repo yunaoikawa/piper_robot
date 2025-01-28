@@ -208,12 +208,30 @@ class Vehicle:
             else:
                 phoenix6.unmanaged.feed_enable(0.1)
 
-                # Operational space control
-                dx_d = np.zeros(3)
+                # TODO: incorporate (vx, vy, w) all into the control. w is missing
 
                 # Joint control
                 dyaw = math.atan2(self.target[1], self.target[0])
-                dx_steer = np.array()
+                dx_steer = np.array([dyaw, dyaw, dyaw, dyaw])
+
+                # TODO: do a PID control update
+                error = dx_steer - self.q[0:2*NUM_SWERVES:2] # Steer positions
+
+                # Compute control signal
+                dx_d_steer = self.steer_control_pid.update(error)
+
+                dspeed = np.linalg.norm(self.target[:2])
+                if error.max() < 0.05: # Swerve is close to target
+                    dx_d_drive = np.array([dspeed, dspeed, dspeed, dspeed])
+                else:
+                    dx_d_drive = np.zeros(4) # don't move if steer is not at target
+
+                for i, swerve in enumerate(self.swerve_modules):
+                    swerve.set_velocities(dx_d_steer[i], dx_d_drive[i])
+
+
+
+
 
 if __name__ == "__main__":
     canbus = CANBus("Drivetrain")
