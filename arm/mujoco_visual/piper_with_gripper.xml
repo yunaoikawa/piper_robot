@@ -386,5 +386,8 @@
     <position name="joint5" joint="joint5" ctrlrange="-1.22 1.22" />
     <position name="joint6" joint="joint6"/>
   </actuator>
-
+  
+  <keyframe>
+    <key name="home" qpos="0 0 0 0 0 0 0 0" ctrl="0 0 0 0 0 0"/>
+  </keyframe>
 </mujoco>
