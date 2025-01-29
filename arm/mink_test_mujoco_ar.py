@@ -95,3 +95,4 @@ if __name__ == "__main__":
                 rate.sleep()
             except KeyboardInterrupt:
                 mj_ar.stop()
+                exit()

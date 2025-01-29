@@ -57,7 +57,7 @@
                   <joint name="joint6" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-100 100"/>
                   <geom quat="0.707105 0 0 0.707108" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="link6_col"/>
                   <geom name="gripper_geom" type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="link6_1"/>
-                  <site name="attachment_site" size="0.01" pos="0 0.1 0" quat="-1 1 1 1" rgba="1 0 0 1" group="1"/>
+                  <site name="attachment_site" size="0.01" pos="0 0 0" quat="-1 1 1 1" rgba="1 0 0 1" group="1"/>
                   <body name="link7" pos="0 0 0.13503" quat="1.89468e-08 1.89469e-08 0.707108 0.707105">
                     <inertial pos="-0.000277778 -0.0467673 -0.00921029" quat="0.46134 0.536174 -0.553273 0.439968" mass="0.0264823" diaginertia="1.45134e-05 1.00041e-05 5.87021e-06"/>
                     <joint name="joint7" pos="0 0 0" axis="0 0 -1" type="slide" range="0 0.04" actuatorfrcrange="-10 10"/>
