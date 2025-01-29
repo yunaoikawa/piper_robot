@@ -10,7 +10,7 @@ import mink
 
 
 _HERE = Path(__file__).parent
-_XML = _HERE / "mujoco" / "scene_gripper.xml"
+_XML = _HERE / "mujoco_visual" / "scene_gripper.xml"
 
 
 if __name__ == "__main__":
