@@ -22,7 +22,7 @@ if __name__ == "__main__":
         end_effector_task := mink.FrameTask(
             frame_name="attachment_site",
             frame_type="site",
-            position_cost=100.0,
+            position_cost=10.0,
             orientation_cost=1.0,
             lm_damping=1.0,
         ),
@@ -64,13 +64,13 @@ if __name__ == "__main__":
     ) as viewer:
         mujoco.mjv_defaultFreeCamera(model, viewer.cam)
 
-        #     # Initialize to the home keyframe.
-        # configuration.update_from_keyframe("home")
+        # Initialize to the home keyframe.
+        configuration.update_from_keyframe("home")
 
         # Initialize the mocap target at the end-effector site.
         mink.move_mocap_to_frame(model, data, "target", "attachment_site", "site")
 
-        rate = RateLimiter(frequency=500.0, warn=False)
+        rate = RateLimiter(frequency=200.0, warn=False)
         while viewer.is_running():
             try:
                 # Update task target.
@@ -82,10 +82,11 @@ if __name__ == "__main__":
                     configuration, tasks, rate.dt, solver, 1e-3, limits=limits
                 )
                 configuration.integrate_inplace(vel, rate.dt)
+                print(f"Configuration: {configuration.q}")
                 mujoco.mj_camlight(model, data)
 
-                # # Note the below are optional: they are used to visualize the output of the
-                # # fromto sensor which is used by the collision avoidance constraint.
+                # Note the below are optional: they are used to visualize the output of the
+                # fromto sensor which is used by the collision avoidance constraint.
                 mujoco.mj_fwdPosition(model, data)
                 mujoco.mj_sensorPos(model, data)
 

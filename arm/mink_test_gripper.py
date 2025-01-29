@@ -21,7 +21,7 @@ if __name__ == "__main__":
         end_effector_task := mink.FrameTask(
             frame_name="attachment_site",
             frame_type="site",
-            position_cost=100.0,
+            position_cost=1.0,
             orientation_cost=1.0,
             lm_damping=1.0,
         ),
@@ -65,7 +65,7 @@ if __name__ == "__main__":
         # Initialize the mocap target at the end-effector site.
         mink.move_mocap_to_frame(model, data, "target", "attachment_site", "site")
 
-        rate = RateLimiter(frequency=500.0, warn=False)
+        rate = RateLimiter(frequency=200.0, warn=False)
         while viewer.is_running():
             # Update task target.
             T_wt = mink.SE3.from_mocap_name(model, data, "target")
