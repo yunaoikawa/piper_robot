@@ -67,7 +67,7 @@ if __name__ == "__main__":
         #     # Initialize to the home keyframe.
         # configuration.update_from_keyframe("home")
 
-        #     # Initialize the mocap target at the end-effector site.
+        # Initialize the mocap target at the end-effector site.
         mink.move_mocap_to_frame(model, data, "target", "attachment_site", "site")
 
         rate = RateLimiter(frequency=500.0, warn=False)
@@ -90,7 +90,6 @@ if __name__ == "__main__":
                 mujoco.mj_sensorPos(model, data)
 
                 # mujoco.mj_step(model, data)
-                # viewer.sync()
                 # Visualize at fixed FPS.
                 viewer.sync()
                 rate.sleep()
