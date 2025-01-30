@@ -25,6 +25,11 @@ if __name__ == "__main__":
             orientation_cost=1.0,
             lm_damping=1.0,
         ),
+        posture_control_task := mink.PostureTask(
+            model=model,
+            cost=[1e-3, 0, 0, 0, 0, 0, 0, 0],
+            lm_damping=1.0,
+        ),
     ]
 
     # Enable collision avoidance between the following geoms:
@@ -61,6 +66,7 @@ if __name__ == "__main__":
 
         # Initialize to the home keyframe.
         configuration.update_from_keyframe("home")
+        posture_control_task.set_target_from_configuration(configuration)
 
         # Initialize the mocap target at the end-effector site.
         mink.move_mocap_to_frame(model, data, "target", "attachment_site", "site")
