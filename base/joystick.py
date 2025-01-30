@@ -42,6 +42,7 @@ class GamepadTeleop:
             if self.vehicle:
                 # Hold down left/right bumper to enable control in local/global frame
                 right_bumper = self.joy.get_button(5)
+                left_bumper = self.joy.get_button(4)
                 if right_bumper:
                     if not last_enabled:
                         print(f'Robot enabled ({frame} frame)')
@@ -66,6 +67,26 @@ class GamepadTeleop:
                     print("Target velocity: ", target_velocity)
                     self.vehicle.set_target_velocity(target_velocity, frame=frame)
                     # self.vehicle.set_target_position(self.vehicle.x + 1.5 * target_velocity)
+                
+                elif left_bumper:
+                    if not last_enabled:
+                        print(f'Robot enabled ({frame} frame)')
+                        last_enabled = True
+                    
+                    # Compute target rotational velocity
+                    x = -self.joy.get_axis(1)  # Left analog stick
+                    y = -self.joy.get_axis(0)  # Left analog stick
+                    
+                    # Figure out the target rotational velocity using trig
+                    target_rotational_velocity = math.atan2(y, x)
+                    target_velocity = np.array([0, 0, target_rotational_velocity])
+                    # Apply deadzone for joystick drift
+                    target_velocity = apply_deadzone(target_velocity)
+
+                    # Send command to robot
+                    target_velocity = self.vehicle.max_vel * target_velocity
+                    print("Target velocity: ", target_velocity)
+                    self.vehicle.set_target_velocity(target_velocity, frame=frame)
 
                 elif last_enabled:
                     print('Robot disabled')
