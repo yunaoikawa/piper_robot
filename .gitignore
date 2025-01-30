@@ -2,3 +2,4 @@ arm/piper_sdk/
 
 .DS_Store
 *.swp
+*.pyc
