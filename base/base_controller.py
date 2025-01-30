@@ -31,7 +31,7 @@ class Motor:
     def __init__(self, num):
         self.num = num
         self.is_steer = num % 2 != 0  # Odd num motors are steer motors
-        self.fx = hardware.TalonFX(self.num)
+        self.fx = hardware.TalonFX(self.num, canbus="Drivetrain")
         assert self.fx.get_is_pro_licensed()  # Must be Phoenix Pro licensed for FOC
         self.fx.set_position(0)
         fx_cfg = configs.TalonFXConfiguration()
@@ -86,7 +86,7 @@ class Swerve:
         self.num = num
         self.steer_motor = Motor(2 * self.num - 1)
         self.drive_motor = Motor(2 * self.num)
-        self.cancoder = hardware.CANcoder(self.num)
+        self.cancoder = hardware.CANcoder(self.num, canbus="Drivetrain")
         self.cancoder_cfg = configs.CANcoderConfiguration()
 
         # Status signals

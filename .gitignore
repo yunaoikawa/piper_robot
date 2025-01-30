@@ -5,3 +5,6 @@ arm/piper_sdk/
 *.pyc
 __pycache__/
 
+
+
+*.png
