@@ -9,7 +9,7 @@ import mink
 
 
 _HERE = Path(__file__).parent
-_XML = _HERE / "mujoco" / "scene_gripper.xml"
+_XML = _HERE / "mujoco_visual" / "scene_gripper.xml"
 
 
 if __name__ == "__main__":
@@ -60,7 +60,7 @@ if __name__ == "__main__":
         mujoco.mjv_defaultFreeCamera(model, viewer.cam)
 
         # Initialize to the home keyframe.
-        # configuration.update_from_keyframe("home")
+        configuration.update_from_keyframe("home")
 
         # Initialize the mocap target at the end-effector site.
         mink.move_mocap_to_frame(model, data, "target", "attachment_site", "site")
