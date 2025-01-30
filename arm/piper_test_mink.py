@@ -90,12 +90,12 @@ if __name__ == "__main__":
     ]
 
     max_velocities = {
-        "joint1": 2 * np.pi,
-        "joint2": 2 * np.pi,
-        "joint3": 2 * np.pi,
-        "joint4": 2 * np.pi,
-        "joint5": 2 * np.pi,
-        "joint6": 2 * np.pi,
+        "joint1": np.pi,
+        "joint2": np.pi,
+        "joint3": np.pi,
+        "joint4": np.pi,
+        "joint5": np.pi,
+        "joint6": np.pi,
     }
 
     velocity_limit = mink.VelocityLimit(model, max_velocities)
