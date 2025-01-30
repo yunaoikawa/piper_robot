@@ -6,7 +6,7 @@ import queue
 import threading
 from enum import Enum
 
-os.environ['CTR_TARGET'] = 'Hardware'  # pylint: disable=wrong-import-position
+os.environ["CTR_TARGET"] = "Hardware"  # pylint: disable=wrong-import-position
 
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, CANBus
@@ -15,17 +15,23 @@ from constants import POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS
 from swerve_pid import SteerPIDController
 
 # Vehicle
-CONTROL_FREQ = 250                   # 250 Hz
+CONTROL_FREQ = 250  # 250 Hz
 CONTROL_PERIOD = 1.0 / CONTROL_FREQ  # 4 ms
 NUM_SWERVES = 4
+LENGTH = 0.106  # m
+WIDTH = 0.152  # m
+RADIUS = math.sqrt(LENGTH**2 + WIDTH**2)
+ROT_ANGLE = np.arctan2(LENGTH, WIDTH)
+ROT_OFFSET = np.array([0, np.pi / 2, 3 * np.pi / 2, 5 * np.pi / 2])
 
 # Swerve
 TWO_PI = 2 * math.pi
 N_s = 32.0 / 15.0 * 60.0 / 10.0  # Steer gear ratio
-N_r1 = 50.0 / 16.0               # Drive gear ratio (1st stage)
-N_r2 = 19.0 / 25.0               # Drive gear ratio (2nd stage)
-N_w = 45.0 / 15.0                # Wheel gear ratio
+N_r1 = 50.0 / 16.0  # Drive gear ratio (1st stage)
+N_r2 = 19.0 / 25.0  # Drive gear ratio (2nd stage)
+N_w = 45.0 / 15.0  # Wheel gear ratio
 N_r1_r2_w = N_r1 * N_r2 * N_w
+
 
 class Motor:
     def __init__(self, num):
@@ -39,9 +45,11 @@ class Motor:
         if self.num == 1:
             time.sleep(0.2)  # First CAN device, wait for CAN bus to be ready
             supply_voltage = self.fx.get_supply_voltage().value
-            print(f'Motor supply voltage: {supply_voltage:.2f} V')
+            print(f"Motor supply voltage: {supply_voltage:.2f} V")
             if supply_voltage < 11.5:
-                raise Exception('Motor supply voltage is too low. Please charge the battery.')
+                raise Exception(
+                    "Motor supply voltage is too low. Please charge the battery."
+                )
 
         # Status signals
         self.position_signal = self.fx.get_position()
@@ -54,11 +62,15 @@ class Motor:
 
         # Velocity control gains
         fx_cfg.slot0.k_p = 5.0
-        fx_cfg.slot0.k_d = 0.1 if self.is_steer else 0.0  # Set k_d for steer to prevent caster flutter
+        fx_cfg.slot0.k_d = (
+            0.1 if self.is_steer else 0.0
+        )  # Set k_d for steer to prevent caster flutter
 
         # Current limits (hard floor with no incline)
         # IMPORTANT: These values limit the force that the base can generate. Proceed very carefully if modifying these values.
-        torque_current_limit = 40 if self.is_steer else 10  # 40 A for steer, 10 A for drive
+        torque_current_limit = (
+            40 if self.is_steer else 10
+        )  # 40 A for steer, 10 A for drive
         fx_cfg.torque_current.peak_forward_torque_current = torque_current_limit
         fx_cfg.torque_current.peak_reverse_torque_current = -torque_current_limit
 
@@ -81,6 +93,7 @@ class Motor:
     def set_neutral(self):
         self.fx.set_control(self.neutral_request)
 
+
 class Swerve:
     def __init__(self, num):
         self.num = num
@@ -92,10 +105,16 @@ class Swerve:
         # Status signals
         self.steer_position_signal = self.cancoder.get_absolute_position()
         self.steer_velocity_signal = self.cancoder.get_velocity()
-        self.status_signals = self.steer_motor.status_signals + self.drive_motor.status_signals
-        self.status_signals.extend([self.steer_position_signal, self.steer_velocity_signal])
+        self.status_signals = (
+            self.steer_motor.status_signals + self.drive_motor.status_signals
+        )
+        self.status_signals.extend(
+            [self.steer_position_signal, self.steer_velocity_signal]
+        )
 
-        self.cancoder_cfg.magnet_sensor.magnet_offset = ENCODER_MAGNET_OFFSETS[self.num - 1]
+        self.cancoder_cfg.magnet_sensor.magnet_offset = ENCODER_MAGNET_OFFSETS[
+            self.num - 1
+        ]
         self.cancoder.configurator.apply(self.cancoder_cfg)
 
     def get_steer_position(self):
@@ -137,13 +156,15 @@ class Swerve:
 
 
 class CommandType(Enum):
-    POSITION = 'position'
-    VELOCITY = 'velocity'
+    POSITION = "position"
+    VELOCITY = "velocity"
+
 
 # Currently only used for velocity commands
 class FrameType(Enum):
-    GLOBAL = 'global'
-    LOCAL = 'local'
+    GLOBAL = "global"
+    LOCAL = "local"
+
 
 class Vehicle:
     def __init__(self, max_vel=(1.0, 1.0, 1.57), max_accel=(0.25, 0.25, 0.79)):
@@ -154,8 +175,12 @@ class Vehicle:
 
         self.swerve_modules = [Swerve(i) for i in range(1, 5)]
         # CAN bus update frequency
-        self.status_signals = [signal for swerve in self.swerve_modules for signal in swerve.status_signals]
-        phoenix6.BaseStatusSignal.set_update_frequency_for_all(CONTROL_FREQ, self.status_signals)
+        self.status_signals = [
+            signal for swerve in self.swerve_modules for signal in swerve.status_signals
+        ]
+        phoenix6.BaseStatusSignal.set_update_frequency_for_all(
+            CONTROL_FREQ, self.status_signals
+        )
 
         # PID controllers
         self.steer_pid = SteerPIDController(CONTROL_PERIOD, 10.0)
@@ -175,19 +200,21 @@ class Vehicle:
 
         # Control loop
         self.command_queue = queue.Queue(1)
-        self.control_loop_thread = threading.Thread(target=self.control_loop, daemon=True)
+        self.control_loop_thread = threading.Thread(
+            target=self.control_loop, daemon=True
+        )
         self.control_loop_running = False
 
     def _enqueue_command(self, command_type, target, frame=None):
         if self.command_queue.full():
-            print('Warning: Command queue is full. Is control loop running?')
+            print("Warning: Command queue is full. Is control loop running?")
         else:
-            command = {'type': command_type, 'target': target}
+            command = {"type": command_type, "target": target}
             if frame is not None:
-                command['frame'] = FrameType(frame)
+                command["frame"] = FrameType(frame)
             self.command_queue.put(command, block=False)
 
-    def set_target_velocity(self, velocity, frame='global'):
+    def set_target_velocity(self, velocity, frame="global"):
         self._enqueue_command(CommandType.VELOCITY, velocity, frame)
 
     def set_target_position(self, position):
@@ -197,12 +224,14 @@ class Vehicle:
         phoenix6.BaseStatusSignal.refresh_all(self.status_signals)
 
         for i, swerve in enumerate(self.swerve_modules):
-            self.q[2*i : 2*i+2] = swerve.get_positions()
-            self.dq[2*i : 2*i+2] = swerve.get_velocities()
+            self.q[2 * i : 2 * i + 2] = swerve.get_positions()
+            self.dq[2 * i : 2 * i + 2] = swerve.get_velocities()
 
     def start_control(self):
         if self.control_loop_thread is None:
-            print('To initiate a new control loop, please create a new instance of Vehicle.')
+            print(
+                "To initiate a new control loop, please create a new instance of Vehicle."
+            )
             return
 
         self.control_loop_running = True
@@ -228,13 +257,13 @@ class Vehicle:
             if not self.command_queue.empty():
                 command = self.command_queue.get()
                 last_command_time = time.time()
-                target = command['target']
+                target = command["target"]
 
-                if command['type'] == CommandType.VELOCITY:
-                    self.target = target # np.clip(target, -self.max_vel, self.max_vel) TODO: clip velocity
+                if command["type"] == CommandType.VELOCITY:
+                    self.target = target  # np.clip(target, -self.max_vel, self.max_vel) TODO: clip velocity
 
-                elif command['type'] == CommandType.POSITION:
-                    raise NotImplementedError('Position control not yet implemented')
+                elif command["type"] == CommandType.POSITION:
+                    raise NotImplementedError("Position control not yet implemented")
 
                 disable_motors = False
 
@@ -250,48 +279,59 @@ class Vehicle:
                 phoenix6.unmanaged.feed_enable(0.1)
 
                 # TODO: incorporate (vx, vy, w) all into the control. w is missing
+                vx, vy, w = self.target
 
-                # Joint control
-                dyaw = math.atan2(self.target[1], self.target[0])
-                # print("Desired yaw: ", dyaw)
-                dx_steer = np.array([dyaw]*NUM_SWERVES)
+                if vx == 0.0 and vy == 0.0 and w != 0.0:
+                    dx_steer = ROT_ANGLE + ROT_OFFSET
+                    dx_d_drive = np.ones(NUM_SWERVES) * w * RADIUS
+
+                else:
+                    # Joint control
+                    dyaw = math.atan2(self.target[1], self.target[0])
+                    # print("Desired yaw: ", dyaw)
+                    dx_steer = np.array([dyaw] * NUM_SWERVES)
+
+                    dspeed = np.linalg.norm(self.target[:2])
+                    # if dx_d_steer.max() < 0.05: # Steer is close (in the deadband)
+                    dx_d_drive = np.array([dspeed] * NUM_SWERVES)
+                    # else:
+                    #     dx_d_drive = np.zeros(NUM_SWERVES) # don't move if steer is not at target
+
+                    # print("Steer velocities: ", dx_d_steer)
+                    # print("Steer positions: ", self.q[0:2*NUM_SWERVES:2])
 
                 # Do a PID control update
-                dx_d_steer, error = self.steer_pid.update(setpoint=dx_steer, actual=self.q[0:2*NUM_SWERVES:2])
-
-                dspeed = np.linalg.norm(self.target[:2])
-                # if dx_d_steer.max() < 0.05: # Steer is close (in the deadband)
-                dx_d_drive = np.array([dspeed]*NUM_SWERVES)
-                # else:
-                #     dx_d_drive = np.zeros(NUM_SWERVES) # don't move if steer is not at target
-
-                # print("Steer velocities: ", dx_d_steer)
-                # print("Steer positions: ", self.q[0:2*NUM_SWERVES:2])
+                dx_d_steer, error = self.steer_pid.update(
+                    setpoint=dx_steer, actual=self.q[0 : 2 * NUM_SWERVES : 2]
+                )
 
                 for i, swerve in enumerate(self.swerve_modules):
                     swerve.set_velocities(dx_d_steer[i], dx_d_drive[i])
 
             step_time = time.time() - last_step_time
-            if step_time < CONTROL_PERIOD: # maintain control frequency
+            if step_time < CONTROL_PERIOD:  # maintain control frequency
                 time.sleep(CONTROL_PERIOD - step_time)
 
             curr_time = time.time()
             step_time = time.time() - last_step_time
             last_step_time = curr_time
 
-            if step_time > 0.005: # 5 ms
-                print(f'Warning: Step time {1000 * step_time:.3f} ms in {self.__class__.__name__} control_loop')
+            if step_time > 0.005:  # 5 ms
+                print(
+                    f"Warning: Step time {1000 * step_time:.3f} ms in {self.__class__.__name__} control_loop"
+                )
 
     def get_encoder_offsets(self):
         offsets = []
         for swerve in self.swerve_modules:
-            swerve.cancoder.configurator.refresh(swerve.cancoder_cfg)  # Read current config
+            swerve.cancoder.configurator.refresh(
+                swerve.cancoder_cfg
+            )  # Read current config
             curr_offset = swerve.cancoder_cfg.magnet_sensor.magnet_offset
             swerve.steer_position_signal.wait_for_update(0.1)
             curr_position = swerve.cancoder.get_absolute_position().value
-            offsets.append(f'{round(4096 * (curr_offset - curr_position))}.0 / 4096')
-        print(f'ENCODER_MAGNET_OFFSETS = [{", ".join(offsets)}]')
-
+            offsets.append(f"{round(4096 * (curr_offset - curr_position))}.0 / 4096")
+        print(f"ENCODER_MAGNET_OFFSETS = [{', '.join(offsets)}]")
 
 
 if __name__ == "__main__":
@@ -325,6 +365,3 @@ if __name__ == "__main__":
 
     finally:
         vehicle.stop_control()
-
-
-
