@@ -50,6 +50,13 @@
 
     <mesh name="base_link" file="base_link.stl" />
     <mesh name="link1" file="link1.stl" />
+    <mesh name="link2" file="link2.STL" />
+    <mesh name="link3" file="link3.STL" />
+    <mesh name="link4" file="link4.STL" />
+    <mesh name="link5" file="link5.STL" />
+    <mesh name="link6" file="link6_1.STL" />
+    <mesh name="link7" file="link7.STL" />
+    <mesh name="link8" file="link8.STL" />
 
     <mesh file="link2_0.obj" />
     <mesh file="link2_1.obj" />
@@ -192,39 +199,7 @@
           <geom mesh="link2_30" material="link2_darker_mat" class="visual" />
           <geom mesh="link2_31" material="link2_light_medium_mat" class="visual" />
 
-          <geom mesh="link2_0" class="collision" />
-          <geom mesh="link2_1" class="collision" />
-          <geom mesh="link2_2" class="collision" />
-          <geom mesh="link2_3" class="collision" />
-          <geom mesh="link2_4" class="collision" />
-          <geom mesh="link2_5" class="collision" />
-          <geom mesh="link2_6" class="collision" />
-          <geom mesh="link2_7" class="collision" />
-          <geom mesh="link2_8" class="collision" />
-          <geom mesh="link2_9" class="collision" />
-          <geom mesh="link2_10" class="collision" />
-          <geom mesh="link2_11" class="collision" />
-          <geom mesh="link2_12" class="collision" />
-          <geom mesh="link2_13" class="collision" />
-          <geom mesh="link2_14" class="collision" />
-          <geom mesh="link2_15" class="collision" />
-          <geom mesh="link2_16" class="collision" />
-          <geom mesh="link2_17" class="collision" />
-          <geom mesh="link2_18" class="collision" />
-          <geom mesh="link2_19" class="collision" />
-          <geom mesh="link2_20" class="collision" />
-          <geom mesh="link2_21" class="collision" />
-          <geom mesh="link2_22" class="collision" />
-          <geom mesh="link2_23" class="collision" />
-          <geom mesh="link2_24" class="collision" />
-          <geom mesh="link2_25" class="collision" />
-          <geom mesh="link2_26" class="collision" />
-          <geom mesh="link2_27" class="collision" />
-          <geom mesh="link2_28" class="collision" />
-          <geom mesh="link2_29" class="collision" />
-          <geom mesh="link2_30" class="collision" />
-          <geom mesh="link2_31" class="collision" />
-
+          <geom mesh="link2" class="collision" />
 
           <body name="link3" pos="0.28358 0.028726 0" quat="0.998726 0 0 0.0504536">
             <inertial pos="-0.0996835 0.0349477 0.000508026" quat="0.0777021 0.702287 -0.0990541 0.700674"
@@ -260,35 +235,7 @@
             <geom mesh="link3_27" material="link3_gray_mat" class="visual" />
             <geom mesh="link3_28" material="link3_gray_mat" class="visual" />
 
-            <geom mesh="link3_0" class="collision" />
-            <geom mesh="link3_1" class="collision" />
-            <geom mesh="link3_2" class="collision" />
-            <geom mesh="link3_3" class="collision" />
-            <geom mesh="link3_4" class="collision" />
-            <geom mesh="link3_5" class="collision" />
-            <geom mesh="link3_7" class="collision" />
-            <geom mesh="link3_8" class="collision" />
-            <geom mesh="link3_9" class="collision" />
-            <geom mesh="link3_10" class="collision" />
-            <geom mesh="link3_11" class="collision" />
-            <geom mesh="link3_12" class="collision" />
-            <geom mesh="link3_13" class="collision" />
-            <geom mesh="link3_14" class="collision" />
-            <geom mesh="link3_15" class="collision" />
-            <geom mesh="link3_16" class="collision" />
-            <geom mesh="link3_17" class="collision" />
-            <geom mesh="link3_18" class="collision" />
-            <geom mesh="link3_19" class="collision" />
-            <geom mesh="link3_20" class="collision" />
-            <geom mesh="link3_21" class="collision" />
-            <geom mesh="link3_22" class="collision" />
-            <geom mesh="link3_23" class="collision" />
-            <geom mesh="link3_24" class="collision" />
-            <geom mesh="link3_25" class="collision" />
-            <geom mesh="link3_26" class="collision" />
-            <geom mesh="link3_27" class="collision" />
-            <geom mesh="link3_28" class="collision" />
-
+            <geom mesh="link3" class="collision" />
 
             <body name="link4"
               pos="-0.24221 0.068514 0" quat="0.544767 -0.544769 -0.450809 0.450808">
@@ -318,14 +265,7 @@
                 <geom mesh="link5_7" material="link5_gray_mat" class="visual" />
                 <geom mesh="link5_8" material="link5_gray_mat" class="visual" />
 
-                <geom mesh="link5_2" class="collision" />
-                <geom mesh="link5_3" class="collision" />
-                <geom mesh="link5_4" class="collision" />
-                <geom mesh="link5_5" class="collision" />
-                <geom mesh="link5_6" class="collision" />
-                <geom mesh="link5_7" class="collision" />
-                <geom mesh="link5_8" class="collision" />
-
+                <geom mesh="link5" class="collision" />
 
                 <body name="link6" pos="0 0.091 0.0014165" quat="1.89468e-08 -1.89469e-08 -0.707105 -0.707108">
                   <inertial pos="0.0010312 0.0121761 0.0315481" quat="0.0230402 0.707091 0.0373344 0.70576"
@@ -354,8 +294,7 @@
                     <geom mesh="link7_0" material="link7_gray_mat" class="visual" />
                     <geom mesh="link7_1" material="link7_gray_mat" class="visual" />
 
-                    <geom mesh="link7_0" class="collision" />
-                    <geom mesh="link7_1" class="collision" />
+                    <geom mesh="link7" class="collision" />
 
 
                   </body>
@@ -366,8 +305,7 @@
                     <joint name="joint8" pos="0 0 0" axis="0 0 1" type="slide" range="-0.04 0" actuatorfrcrange="-10 10" />
                     <geom mesh="link8_2" material="link8_gray_mat" class="visual" />
                     <geom mesh="link8_3" material="link8_gray_mat" class="visual" />
-                    <geom mesh="link8_2" class="collision" />
-                    <geom mesh="link8_3" class="collision" />
+                    <geom mesh="link8" class="collision" />
                   </body>
                 </body>
               </body>
