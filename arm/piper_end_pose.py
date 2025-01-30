@@ -7,10 +7,11 @@ from typing import (
 import time
 from piper_sdk import *
 
-def enable_fun(piper:C_PiperInterface):
-    '''
+
+def enable_fun(piper: C_PiperInterface):
+    """
     使能机械臂并检测使能状态,尝试5s,如果使能超时则退出程序
-    '''
+    """
     enable_flag = False
     # 设置超时时间（秒）
     timeout = 5
@@ -20,15 +21,17 @@ def enable_fun(piper:C_PiperInterface):
     while not (enable_flag):
         elapsed_time = time.time() - start_time
         print("--------------------")
-        enable_flag = piper.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status and \
-            piper.GetArmLowSpdInfoMsgs().motor_2.foc_status.driver_enable_status and \
-            piper.GetArmLowSpdInfoMsgs().motor_3.foc_status.driver_enable_status and \
-            piper.GetArmLowSpdInfoMsgs().motor_4.foc_status.driver_enable_status and \
-            piper.GetArmLowSpdInfoMsgs().motor_5.foc_status.driver_enable_status and \
-            piper.GetArmLowSpdInfoMsgs().motor_6.foc_status.driver_enable_status
-        print("使能状态:",enable_flag)
+        enable_flag = (
+            piper.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status
+            and piper.GetArmLowSpdInfoMsgs().motor_2.foc_status.driver_enable_status
+            and piper.GetArmLowSpdInfoMsgs().motor_3.foc_status.driver_enable_status
+            and piper.GetArmLowSpdInfoMsgs().motor_4.foc_status.driver_enable_status
+            and piper.GetArmLowSpdInfoMsgs().motor_5.foc_status.driver_enable_status
+            and piper.GetArmLowSpdInfoMsgs().motor_6.foc_status.driver_enable_status
+        )
+        print("使能状态:", enable_flag)
         piper.EnableArm(7)
-        piper.GripperCtrl(0,1000,0x01, 0)
+        piper.GripperCtrl(0, 1000, 0x01, 0)
         print("--------------------")
         # 检查是否超过超时时间
         if elapsed_time > timeout:
@@ -38,9 +41,10 @@ def enable_fun(piper:C_PiperInterface):
             break
         time.sleep(1)
         pass
-    if(elapsed_time_flag):
+    if elapsed_time_flag:
         print("程序自动使能超时,退出程序")
         exit(0)
+
 
 if __name__ == "__main__":
     piper = C_PiperInterface("can0")
@@ -54,31 +58,32 @@ if __name__ == "__main__":
     while True:
         print(piper.GetArmEndPoseMsgs())
         import time
-        count = count+1
-        if(count == 0):
+
+        count = count + 1
+        if count == 0:
             print("1-----------")
             position[:3] = [55.0, 0.0, 206.0]
             # position[3:6] = [0, 85.0, 0]
-        elif(count == 200):
+        elif count == 200:
             print("2-----------")
             position[:3] = [100.0, 0.0, 236.0]
             # position[3:6] = [0, 85.0, 0]
-        elif(count == 400):
+        elif count == 400:
             print("1-----------")
             position[:3] = [55.0, 0.0, 206.0]
             # position[3:6] = [0, 85.0, 0]
             count = 0
 
-        X = round(position[0]*factor)
-        Y = round(position[1]*factor)
-        Z = round(position[2]*factor)
-        RX = round(position[3]*factor)
-        RY = round(position[4]*factor)
-        RZ = round(position[5]*factor)
-        joint_6 = round(position[6]*factor)
-        print(X,Y,Z,RX,RY,RZ)
+        X = round(position[0] * factor)
+        Y = round(position[1] * factor)
+        Z = round(position[2] * factor)
+        RX = round(position[3] * factor)
+        RY = round(position[4] * factor)
+        RZ = round(position[5] * factor)
+        joint_6 = round(position[6] * factor)
+        print(X, Y, Z, RX, RY, RZ)
         piper.MotionCtrl_2(0x01, 0x00, 100, 0x00)
-        piper.EndPoseCtrl(X,Y,Z,RX,RY,RZ)
+        piper.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
         # piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
         time.sleep(0.01)
         pass

@@ -10,16 +10,18 @@ from typing import (
 from piper_sdk import C_PiperInterface
 import time
 
+
 @dataclass
 class MinMax:
-    minVal:int = 1000000000
-    maxVal:int = -1000000000
+    minVal: int = 1000000000
+    maxVal: int = -1000000000
 
-# 1: MinMax(minVal=-156679, maxVal=153666), 
-# 2: MinMax(minVal=-1301, maxVal=194344), 
-# 3: MinMax(minVal=-173712, maxVal=1941), 
-# 4: MinMax(minVal=-102797, maxVal=102566), 
-# 5: MinMax(minVal=-75731, maxVal=74399), 
+
+# 1: MinMax(minVal=-156679, maxVal=153666),
+# 2: MinMax(minVal=-1301, maxVal=194344),
+# 3: MinMax(minVal=-173712, maxVal=1941),
+# 4: MinMax(minVal=-102797, maxVal=102566),
+# 5: MinMax(minVal=-75731, maxVal=74399),
 # 6: MinMax(minVal=611969, maxVal=611969)
 
 joint_limits = defaultdict(MinMax)
@@ -44,7 +46,7 @@ if __name__ == "__main__":
                     joint_limits[joint].minVal = min(value, joint_limits[joint].minVal)
                     joint_limits[joint].maxVal = max(value, joint_limits[joint].maxVal)
             print(joint_limits)
-            print('\033[3A')
+            print("\033[3A")
             # print(piper.GetArmGripperMsgs())
             time.sleep(0.005)
         except KeyboardInterrupt:
