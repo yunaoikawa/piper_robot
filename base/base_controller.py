@@ -35,7 +35,6 @@ class SteerMotor:
         assert num % 2 == 1, "Steer motors must have odd numbers"
         self.fx = hardware.TalonFX(self.num, canbus="Drivetrain")
         assert self.fx.get_is_pro_licensed()  # Must be Phoenix Pro licensed for FOC
-        fx_cfg = configs.TalonFXConfiguration()
 
         self.cc = hardware.CANcoder((self.num // 2) + 1, canbus="Drivetrain")
 
@@ -55,43 +54,44 @@ class SteerMotor:
         self.neutral_request = controls.NeutralOut()
 
         # Velocity control gains
-        fx_cfg.slot0.k_s = 5
-        fx_cfg.slot0.static_feedforward_sign = signals.StaticFeedforwardSignValue.USE_CLOSED_LOOP_SIGN
-        fx_cfg.slot0.k_p = 60
-        fx_cfg.slot0.k_i = 0.0
-        fx_cfg.slot0.k_d = 6
+        self.fx_cfg = configs.TalonFXConfiguration()
+        self.fx_cfg.slot0.k_s = 5
+        self.fx_cfg.slot0.static_feedforward_sign = signals.StaticFeedforwardSignValue.USE_CLOSED_LOOP_SIGN
+        self.fx_cfg.slot0.k_p = 60
+        self.fx_cfg.slot0.k_i = 0.0
+        self.fx_cfg.slot0.k_d = 6
 
         # Current limits (hard floor with no incline)
         # IMPORTANT: These values limit the force that the base can generate. Proceed very carefully if modifying these values.
         torque_current_limit = 40 # 40 A for steer, 10 A for drive
-        fx_cfg.torque_current.peak_forward_torque_current = torque_current_limit
-        fx_cfg.torque_current.peak_reverse_torque_current = -torque_current_limit
+        self.fx_cfg.torque_current.peak_forward_torque_current = torque_current_limit
+        self.fx_cfg.torque_current.peak_reverse_torque_current = -torque_current_limit
 
         # Disable beeps (Note: beep_on_config is not yet supported as of Oct 2024)
-        fx_cfg.audio.beep_on_boot = False
+        self.fx_cfg.audio.beep_on_boot = False
 
         # Fused CANcoder setup
-        fx_cfg.feedback.feedback_remote_sensor_id = self.cc.device_id
-        fx_cfg.feedback.feedback_sensor_source = signals.FeedbackSensorSourceValue.FUSED_CANCODER
-        fx_cfg.feedback.sensor_to_mechanism_ratio = 1.0
-        fx_cfg.feedback.rotor_to_sensor_ratio = 12.8
+        self.fx_cfg.feedback.feedback_remote_sensor_id = self.cc.device_id
+        self.fx_cfg.feedback.feedback_sensor_source = signals.FeedbackSensorSourceValue.FUSED_CANCODER
+        self.fx_cfg.feedback.sensor_to_mechanism_ratio = 1.0
+        self.fx_cfg.feedback.rotor_to_sensor_ratio = 12.8
 
         # Continuous wrap
-        fx_cfg.closed_loop_general.continuous_wrap = True
+        self.fx_cfg.closed_loop_general.continuous_wrap = True
 
         # CANcoder configuration
-        cc_cfg = configs.CANcoderConfiguration()
-        cc_cfg.magnet_sensor.absolute_sensor_discontinuity_point = 0.5
-        cc_cfg.magnet_sensor.magnet_offset = ENCODER_MAGNET_OFFSETS[self.num//2]
-        cc_cfg.magnet_sensor.sensor_direction = signals.SensorDirectionValue.COUNTER_CLOCKWISE_POSITIVE
+        self.cc_cfg = configs.CANcoderConfiguration()
+        self.cc_cfg.magnet_sensor.absolute_sensor_discontinuity_point = 0.5
+        self.cc_cfg.magnet_sensor.magnet_offset = ENCODER_MAGNET_OFFSETS[self.num//2]
+        self.cc_cfg.magnet_sensor.sensor_direction = signals.SensorDirectionValue.COUNTER_CLOCKWISE_POSITIVE
 
         # Apply fx configuration
-        status = self.fx.configurator.apply(fx_cfg)
+        status = self.fx.configurator.apply(self.fx_cfg)
         if not status.is_ok():
             raise Exception(f'Failed to apply TalonFX configuration: {status}')
 
         # Apply cc configuration
-        status = self.cc.configurator.apply(cc_cfg)
+        status = self.cc.configurator.apply(self.cc_cfg)
         if not status.is_ok():
             raise Exception(f'Failed to apply CANCoder configuration: {status}')
 
@@ -199,6 +199,22 @@ class Vehicle:
     def __init__(self, max_vel=(1.0, 1.0, 1.57), max_accel=(0.25, 0.25, 0.79)):
         self.max_vel = max_vel
         self.max_accel = max_accel
+
+        # Vehicle parameters
+        LF, LR, DL, DR = 0.10414, 0.10414, 0.14986, 0.14986
+
+        self.C_3_to_8 = np.array(
+            [
+                [1, 0, -LF],
+                [1, 0, -LF],
+                [1, 0, LR],
+                [1, 0, LR],
+                [0, 1, -DL],
+                [0, 1, DR],
+                [0, 1, -DL],
+                [0, 1, DR],
+            ]
+        )
 
         # TODO: create PID file
 
@@ -339,13 +355,13 @@ class Vehicle:
 
     def get_encoder_offsets(self):
         offsets = []
-        for swerve in self.swerve_modules:
-            swerve.cancoder.configurator.refresh(
-                swerve.cancoder_cfg
+        for i, swerve in enumerate(self.swerve_modules):
+            swerve.steer_motor.cc.configurator.refresh(
+                swerve.steer_motor.cc_cfg
             )  # Read current config
-            curr_offset = swerve.cancoder_cfg.magnet_sensor.magnet_offset
-            swerve.steer_position_signal.wait_for_update(0.1)
-            curr_position = swerve.cancoder.get_absolute_position().value
+            curr_offset = swerve.steer_motor.cc_cfg.magnet_sensor.magnet_offset
+            swerve.steer_motor.cc.get_absolute_position().wait_for_update(0.1)
+            curr_position = swerve.steer_motor.cc.get_absolute_position().value
             offsets.append(f"{round(4096 * (curr_offset - curr_position))}.0 / 4096")
         print(f"ENCODER_MAGNET_OFFSETS = [{', '.join(offsets)}]")
 
@@ -357,7 +373,7 @@ if __name__ == "__main__":
 
     try:
         for _ in range(100):
-            vehicle.set_target_velocity(np.array([-0.3, -0.3, 0]))
+            vehicle.set_target_velocity(np.array([0.0, 0.3, 0]))
             time.sleep(0.1)
 
     finally:

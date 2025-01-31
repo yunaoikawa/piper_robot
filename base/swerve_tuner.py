@@ -147,12 +147,12 @@ class DriveMotor:
         self.fx.set_control(self.neutral_request)
 
 def test_steer_motor():
-    motor = SteerMotor(3)
+    motor = SteerMotor(1)
     last_time = time.time()
     CONTROL_PERIOD = 0.004 # 250Hz
 
     position_log = []
-    target = -math.pi/2
+    target = 0
 
     try:
         motor.set_position(target)
