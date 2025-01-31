@@ -6,7 +6,7 @@ import queue
 import threading
 from enum import Enum
 
-os.environ["CTR_TARGET"] = "Hardware"  # pylint: disable=wrong-import-position
+# os.environ["CTR_TARGET"] = "Hardware"  # pylint: disable=wrong-import-position
 
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
@@ -42,7 +42,7 @@ class SteerMotor:
             time.sleep(0.2)  # First CAN device, wait for CAN bus to be ready
             supply_voltage = self.fx.get_supply_voltage().value
             print(f'Motor supply voltage: {supply_voltage:.2f} V')
-            if supply_voltage < 11.5:
+            if supply_voltage < 11.5 and os.environ.get("CTR_TARGET", None) == "Hardware":
                 raise Exception('Motor supply voltage is too low. Please charge the battery.')
 
         # Status signals
@@ -201,18 +201,16 @@ class Vehicle:
         self.max_accel = max_accel
 
         # Vehicle parameters
-        LF, LR, DL, DR = 0.10414, 0.10414, 0.14986, 0.14986
-
         self.C_3_to_8 = np.array(
             [
-                [1, 0, -LF],
-                [1, 0, -LF],
-                [1, 0, LR],
-                [1, 0, LR],
-                [0, 1, -DL],
-                [0, 1, DR],
-                [0, 1, -DL],
-                [0, 1, DR],
+                [1, 0, -LENGTH],
+                [1, 0, -LENGTH],
+                [1, 0, LENGTH],
+                [1, 0, LENGTH],
+                [0, 1, -WIDTH],
+                [0, 1, WIDTH],
+                [0, 1, -WIDTH],
+                [0, 1, WIDTH],
             ]
         )
 
@@ -282,6 +280,15 @@ class Vehicle:
         self.control_loop_thread.join()
         self.control_loop_thread = None
 
+    def vehicle_velocity_to_angle_and_speed(self, u_3dof):
+        wheel_velocities_directional = self.C_3_to_8 @ u_3dof
+        vx = wheel_velocities_directional[:4]
+        vy = wheel_velocities_directional[4:]
+
+        wheel_speeds = np.sqrt(vx**2 + vy**2)
+        wheel_angles = np.arctan2(vy, vx)
+        return wheel_speeds, wheel_angles
+
     def control_loop(self):
         # TODO: Set real-time scheduling policy
         disable_motors = True
@@ -319,26 +326,29 @@ class Vehicle:
                 phoenix6.unmanaged.feed_enable(0.1)
 
                 # TODO: incorporate (vx, vy, w) all into the control. w is missing
-                vx, vy, w = self.target
+                wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self.target)
 
-                if vx == 0.0 and vy == 0.0 and w != 0.0:
-                    d_steer_pos = np.array([ROT_ANGLE, np.pi-ROT_ANGLE, -np.pi+ROT_ANGLE, -ROT_ANGLE])
-                    d_drive_vel = np.ones(NUM_SWERVES) * w * RADIUS
-                else:
-                    # Joint control
-                    dyaw = math.atan2(self.target[1], self.target[0])
-                    d_steer_pos = np.array([dyaw] * NUM_SWERVES)
+                # if vx == 0.0 and vy == 0.0 and w != 0.0:
+                #     d_steer_pos = np.array([ROT_ANGLE, np.pi-ROT_ANGLE, -np.pi+ROT_ANGLE, -ROT_ANGLE])
+                #     d_drive_vel = np.ones(NUM_SWERVES) * w * RADIUS
+                # else:
+                #     # Joint control
+                #     dyaw = math.atan2(self.target[1], self.target[0])
+                #     d_steer_pos = np.array([dyaw] * NUM_SWERVES)
 
-                    dspeed = np.linalg.norm(self.target[:2])
-                    # if dx_d_steer.max() < 0.05: # Steer is close (in the deadband)
-                    d_drive_vel = np.array([dspeed] * NUM_SWERVES)
-                    # else:
-                    #     dx_d_drive = np.zeros(NUM_SWERVES) # don't move if steer is not at target
+                #     dspeed = np.linalg.norm(self.target[:2])
+                #     # if dx_d_steer.max() < 0.05: # Steer is close (in the deadband)
+                #     d_drive_vel = np.array([dspeed] * NUM_SWERVES)
+                #     # else:
+                #     #     dx_d_drive = np.zeros(NUM_SWERVES) # don't move if steer is not at target
 
-                for i, swerve in enumerate(self.swerve_modules):
-                    swerve.set_steer_position(d_steer_pos[i])
-                for i, swerve in enumerate(self.swerve_modules):
-                    swerve.set_velocity(d_drive_vel[i])
+                print(f"wheel_speeds: {wheel_speeds}")
+                print(f"wheel_angles: {wheel_angles}")
+
+                # for i, swerve in enumerate(self.swerve_modules):
+                #     swerve.set_steer_position(wheel_angles[i])
+                # for i, swerve in enumerate(self.swerve_modules):
+                #     swerve.set_velocity(wheel_speeds[i])
 
             step_time = time.time() - last_step_time
             if step_time < CONTROL_PERIOD:  # maintain control frequency
@@ -373,7 +383,7 @@ if __name__ == "__main__":
 
     try:
         for _ in range(100):
-            vehicle.set_target_velocity(np.array([0.0, 0.3, 0]))
+            vehicle.set_target_velocity(np.array([-0.3, -0.3, 0]))
             time.sleep(0.1)
 
     finally:
