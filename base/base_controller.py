@@ -22,7 +22,6 @@ LENGTH = 0.106  # m
 WIDTH = 0.152  # m
 RADIUS = math.sqrt(LENGTH**2 + WIDTH**2)
 ROT_ANGLE = np.arctan2(LENGTH, WIDTH)
-ROT_OFFSET = np.array([0, np.pi / 2, 3 * np.pi / 2, 5 * np.pi / 2])
 
 # Swerve
 TWO_PI = 2 * math.pi
@@ -282,7 +281,7 @@ class Vehicle:
                 vx, vy, w = self.target
 
                 if vx == 0.0 and vy == 0.0 and w != 0.0:
-                    dx_steer = ROT_ANGLE + ROT_OFFSET
+                    dx_steer = np.array([ROT_ANGLE, np.pi-ROT_ANGLE, -np.pi+ROT_ANGLE, -ROT_ANGLE])
                     dx_d_drive = np.ones(NUM_SWERVES) * w * RADIUS
 
                 else:
@@ -360,7 +359,7 @@ if __name__ == "__main__":
 
     try:
         for _ in range(100):
-            vehicle.set_target_velocity(np.array([0, -2, 0]))
+            vehicle.set_target_velocity(np.array([0, 0, +7]))
             time.sleep(0.1)
 
     finally:
