@@ -19,7 +19,8 @@ class GamepadTeleop:
         self.joy = Joystick(0)  # Logitech F710
         manager = BaseManager(address=(BASE_RPC_HOST, BASE_RPC_PORT), authkey=RPC_AUTH_KEY)
         manager.connect()
-        self.base = manager.Base(max_vel=(0.3, 0.3, 0.78))
+        self.max_vel = np.array([0.3, 0.3, 0.78])
+        self.base = manager.Base(max_vel=self.max_vel)
         self.control_loop_running = False
 
     def run(self):
@@ -58,7 +59,7 @@ class GamepadTeleop:
                     target_velocity = apply_deadzone(target_velocity)
 
                     # Send command to robot
-                    target_velocity = self.vehicle.max_vel * target_velocity
+                    target_velocity = self.max_vel * target_velocity
                     print("Target velocity: ", target_velocity)
                     self.base.execute_action({"v": target_velocity})
                     # self.vehicle.set_target_position(self.vehicle.x + 1.5 * target_velocity)

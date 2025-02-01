@@ -184,7 +184,7 @@ class FrameType(Enum):
 
 
 class Vehicle:
-    def __init__(self, max_vel=(1.0, 1.0, 1.57), max_accel=(0.25, 0.25, 0.79)):
+    def __init__(self, max_vel=np.array((1.0, 1.0, 1.57)), max_accel=np.array((0.25, 0.25, 0.79))):
         self.max_vel = max_vel
         self.max_accel = max_accel
 
