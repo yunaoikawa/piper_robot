@@ -1,7 +1,7 @@
 import math
 
 # RPC
-BASE_RPC_HOST = '100.96.33.32' # tailscale ip
+BASE_RPC_HOST = '10.19.131.241' # tailscale ip
 BASE_RPC_PORT = 32000
 
 # policy

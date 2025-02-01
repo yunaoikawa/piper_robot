@@ -14,7 +14,7 @@ try:
     base.reset()
     for i in range(50):
         base.execute_action({'v': np.array([0.0, 0.1, 0.0])})
-        print(base.get_state())
+        # print(base.get_state())
         time.sleep(POLICY_CONTROL_PERIOD)  # Note: Not precise
 finally:
     base.close()
