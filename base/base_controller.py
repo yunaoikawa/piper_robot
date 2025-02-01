@@ -191,14 +191,14 @@ class Vehicle:
         # Vehicle parameters
         self.C_3_to_8 = np.array(
             [
-                [1, 0, -LENGTH],
-                [1, 0, -LENGTH],
-                [1, 0, LENGTH],
-                [1, 0, LENGTH],
-                [0, 1, -WIDTH],
-                [0, 1, WIDTH],
-                [0, 1, -WIDTH],
-                [0, 1, WIDTH],
+                [1, 0, -WIDTH],
+                [1, 0, WIDTH],
+                [1, 0, -WIDTH],
+                [1, 0, WIDTH],
+                [0, 1, LENGTH],
+                [0, 1, LENGTH],
+                [0, 1, -LENGTH],
+                [0, 1, -LENGTH],
             ]
         )
 
@@ -275,6 +275,19 @@ class Vehicle:
 
         wheel_speeds = np.sqrt(vx**2 + vy**2)
         wheel_angles = np.arctan2(vy, vx)
+
+        # order: front left, front right, rear left, rear right
+
+        # convert to: front right, front left, rear left, rear right
+        wheel_speeds = wheel_speeds[[1, 0, 2, 3]]
+        wheel_angles = wheel_angles[[1, 0, 2, 3]]
+
+        # Apply transformations on the angle to match the swerve module orientation
+        # wheel_angles *= np.array([1, -1, 1, -1])
+        # wheel_angles += -np.pi # np.array([0, np.pi, -np.pi, 0])
+
+        # Normalize angles to [-pi, pi]
+        # wheel_angles = (wheel_angles + np.pi) % (2 * np.pi) - np.pi
         return wheel_speeds, wheel_angles
 
     def control_loop(self):
@@ -314,6 +327,9 @@ class Vehicle:
                 phoenix6.unmanaged.feed_enable(0.1)
 
                 wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self.target)
+
+                print("Wheel speeds: ", wheel_speeds)
+                print("Wheel angles: ", wheel_angles)
 
                 for i, swerve in enumerate(self.swerve_modules):
                     swerve.set_steer_position(wheel_angles[i])
@@ -400,12 +416,12 @@ if __name__ == "__main__":
     vehicle.start_control()
 
     try:
-        for i in range(profiles.shape[1]):
-            vehicle.set_target_velocity(profiles[:, i])
-            time.sleep(0.004)
-        # for _ in range(100):
-        #     vehicle.set_target_velocity(np.array([-1, 0, 0]))
-        #     time.sleep(0.1)
+        # for i in range(profiles.shape[1]):
+        #     vehicle.set_target_velocity(profiles[:, i])
+        #     time.sleep(0.004)
+        for _ in range(100):
+            vehicle.set_target_velocity(np.array([0, 0.1, 0]))
+            time.sleep(0.1)
 
     finally:
         vehicle.stop_control()
