@@ -6,5 +6,5 @@ ctre_sim/
 *.pyc
 __pycache__/
 
-secrets.py
+robot_secrets.py
 *.png

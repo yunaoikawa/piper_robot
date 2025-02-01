@@ -3,7 +3,7 @@ from multiprocessing.managers import BaseManager as MPBaseManager
 
 import time
 from constants import BASE_RPC_HOST, BASE_RPC_PORT
-from .secrets import RPC_AUTH_KEY
+from robot_secrets import RPC_AUTH_KEY
 
 class Base:
     def __init__(self, max_vel=(0.5, 0.5, 1.57), max_accel=(0.25, 0.25, 0.79)):
