@@ -1,6 +1,7 @@
 from base_controller import Vehicle
 from multiprocessing.managers import BaseManager as MPBaseManager
 
+import numpy as np
 import time
 from constants import BASE_RPC_HOST, BASE_RPC_PORT
 from robot_secrets import RPC_AUTH_KEY
