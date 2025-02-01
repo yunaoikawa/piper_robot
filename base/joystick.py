@@ -4,9 +4,10 @@ import time
 import numpy as np
 import pygame
 from pygame.joystick import Joystick
-import math
 
-from base_controller import Vehicle
+from base_server import BaseManager
+from constants import BASE_RPC_HOST, BASE_RPC_PORT
+from robot_secrets import RPC_AUTH_KEY
 
 pygame.init()
 
@@ -16,7 +17,11 @@ def apply_deadzone(arr, deadzone_size=0.05):
 class GamepadTeleop:
     def __init__(self):
         self.joy = Joystick(0)  # Logitech F710
-        self.vehicle = None
+        manager = BaseManager(address=(BASE_RPC_HOST, BASE_RPC_PORT), authkey=RPC_AUTH_KEY)
+        manager.connect()
+        self.max_vel = np.array([0.3, 0.3, 0.78])
+        self.base = manager.Base(max_vel=self.max_vel)
+        self.control_loop_running = False
 
     def run(self):
         last_enabled = False
@@ -26,67 +31,38 @@ class GamepadTeleop:
             pygame.event.pump()
 
             # Start control
-            if not self.vehicle and self.joy.get_button(7):  # 7 is the "Start" button
-                self.vehicle = Vehicle(max_vel=(8.0, 8.0, 3.14), max_accel=(0.5, 0.5, 2.36))
-                self.vehicle.start_control()
+            if not self.control_loop_running and self.joy.get_button(7):  # 7 is the "Start" button
+                self.base.reset()
                 last_enabled = False
-                frame = 'local'
+                self.control_loop_running = True
                 print('Control started')
 
             # Stop control
-            if self.vehicle and self.joy.get_button(6):  # 6 is the "Back" button
-                self.vehicle.stop_control()
-                self.vehicle = None
+            if self.control_loop_running and self.joy.get_button(6):  # 6 is the "Back" button
+                self.base.close()
                 print('Control stopped')
 
-            if self.vehicle:
+            if self.control_loop_running:
                 # Hold down left/right bumper to enable control in local/global frame
                 right_bumper = self.joy.get_button(5)
-                left_bumper = self.joy.get_button(4)
                 if right_bumper:
                     if not last_enabled:
                         print(f'Robot enabled ({frame} frame)')
                         last_enabled = True
 
                     # Compute unscaled target velocity
-                    # x = -self.joy.get_axis(1)  # Left analog stick
-                    # y = -self.joy.get_axis(0)  # Left analog stick
                     vy = -self.joy.get_axis(3)
                     vx = -self.joy.get_axis(4)  # Right analog stick
-                    target_velocity = np.array([vx, vy, 0])
+                    w = self.joy.get_axis(1) # Left analog stick
+                    target_velocity = np.array([vx, vy, w])
                     # Apply deadzone for joystick drift
                     target_velocity = apply_deadzone(target_velocity)
 
-                    # target_yaw = math.atan2(target[0], target[1])
-                    # target_speed = np.linalg.norm(target[:2])
-
-                    # print(f"Yaw: {target_yaw:.2f} | Speed: {target_speed:.2f}")
-
                     # Send command to robot
-                    target_velocity = self.vehicle.max_vel * target_velocity
+                    target_velocity = self.max_vel * target_velocity
                     print("Target velocity: ", target_velocity)
-                    self.vehicle.set_target_velocity(target_velocity, frame=frame)
+                    self.base.execute_action({"v": target_velocity})
                     # self.vehicle.set_target_position(self.vehicle.x + 1.5 * target_velocity)
-                
-                elif left_bumper:
-                    if not last_enabled:
-                        print(f'Robot enabled ({frame} frame)')
-                        last_enabled = True
-                    
-                    # Compute target rotational velocity
-                    x = -self.joy.get_axis(1)  # Left analog stick
-                    y = -self.joy.get_axis(0)  # Left analog stick
-                    
-                    # Figure out the target rotational velocity using trig
-                    target_rotational_velocity = math.atan2(y, x)
-                    target_velocity = np.array([0, 0, target_rotational_velocity])
-                    # Apply deadzone for joystick drift
-                    target_velocity = apply_deadzone(target_velocity)
-
-                    # Send command to robot
-                    target_velocity = self.vehicle.max_vel * target_velocity
-                    print("Target velocity: ", target_velocity)
-                    self.vehicle.set_target_velocity(target_velocity, frame=frame)
 
                 elif last_enabled:
                     print('Robot disabled')
@@ -104,6 +80,6 @@ if __name__ == '__main__':
     try:
         teleop.run()
     finally:
-        if teleop.vehicle:
-            teleop.vehicle.stop_control()
+        if teleop.control_loop_running:
+            teleop.base.close()
 
