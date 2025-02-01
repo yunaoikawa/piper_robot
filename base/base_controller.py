@@ -6,28 +6,14 @@ import queue
 import threading
 from enum import Enum
 
-# os.environ["CTR_TARGET"] = "Hardware"  # pylint: disable=wrong-import-position
+os.environ["CTR_TARGET"] = "Hardware"  # pylint: disable=wrong-import-position
 
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
-from constants import POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS
+from constants import (POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS, TWO_PI, N_r1_r2_w, CONTROL_FREQ, CONTROL_PERIOD, NUM_SWERVES, LENGTH, WIDTH, TIRE_RADIUS)
 
-# Vehicle
-CONTROL_FREQ = 250  # 250 Hz
-CONTROL_PERIOD = 1.0 / CONTROL_FREQ  # 4 ms
-NUM_SWERVES = 4
-LENGTH = 0.106  # m
-WIDTH = 0.152  # m
-RADIUS = math.sqrt(LENGTH**2 + WIDTH**2)
-ROT_ANGLE = np.arctan2(LENGTH, WIDTH)
 
-# Swerve
-TWO_PI = 2 * math.pi
-N_r1 = 50.0 / 16.0  # Drive gear ratio (1st stage)
-N_r2 = 19.0 / 25.0  # Drive gear ratio (2nd stage)
-N_w = 45.0 / 15.0  # Wheel gear ratio
-N_r1_r2_w = N_r1 * N_r2 * N_w
 
 class SteerMotor:
     def __init__(self, num):
@@ -151,7 +137,11 @@ class DriveMotor:
         return (self.velocity_signal.value / N_r1_r2_w)
 
     def set_velocity(self, velocity):
-        self.fx.set_control(self.velocity_request.with_velocity(velocity * N_r1_r2_w))
+        """
+        velocity: m/s
+        """
+        velocity = N_r1_r2_w * velocity / (TWO_PI * TIRE_RADIUS)
+        self.fx.set_control(self.velocity_request.with_velocity(velocity))
 
     def set_neutral(self):
         self.fx.set_control(self.neutral_request)
@@ -325,30 +315,12 @@ class Vehicle:
             else:
                 phoenix6.unmanaged.feed_enable(0.1)
 
-                # TODO: incorporate (vx, vy, w) all into the control. w is missing
                 wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self.target)
 
-                # if vx == 0.0 and vy == 0.0 and w != 0.0:
-                #     d_steer_pos = np.array([ROT_ANGLE, np.pi-ROT_ANGLE, -np.pi+ROT_ANGLE, -ROT_ANGLE])
-                #     d_drive_vel = np.ones(NUM_SWERVES) * w * RADIUS
-                # else:
-                #     # Joint control
-                #     dyaw = math.atan2(self.target[1], self.target[0])
-                #     d_steer_pos = np.array([dyaw] * NUM_SWERVES)
-
-                #     dspeed = np.linalg.norm(self.target[:2])
-                #     # if dx_d_steer.max() < 0.05: # Steer is close (in the deadband)
-                #     d_drive_vel = np.array([dspeed] * NUM_SWERVES)
-                #     # else:
-                #     #     dx_d_drive = np.zeros(NUM_SWERVES) # don't move if steer is not at target
-
-                print(f"wheel_speeds: {wheel_speeds}")
-                print(f"wheel_angles: {wheel_angles}")
-
-                # for i, swerve in enumerate(self.swerve_modules):
-                #     swerve.set_steer_position(wheel_angles[i])
-                # for i, swerve in enumerate(self.swerve_modules):
-                #     swerve.set_velocity(wheel_speeds[i])
+                for i, swerve in enumerate(self.swerve_modules):
+                    swerve.set_steer_position(wheel_angles[i])
+                for i, swerve in enumerate(self.swerve_modules):
+                    swerve.set_velocity(wheel_speeds[i])
 
             step_time = time.time() - last_step_time
             if step_time < CONTROL_PERIOD:  # maintain control frequency
@@ -376,15 +348,66 @@ class Vehicle:
         print(f"ENCODER_MAGNET_OFFSETS = [{', '.join(offsets)}]")
 
 
+def circling_profile():
+    T_final = 20
+    DT = 0.004
+    t = np.linspace(0, T_final, int(T_final / DT) + 1)
+
+    R = 1  # turn radius
+    w_path = math.pi / 8  # rad/s
+    v_path = (R * w_path)  # m/s
+    vx = v_path * np.cos(w_path * t)
+    vy = v_path * np.sin(w_path * t)
+    w = w_path * np.zeros_like(t) * 2
+    u_3dof = np.stack([vx, vy, w], axis=0)  # (3, t)
+    return u_3dof
+
+def square_profile():
+    T_final = 20
+    DT = 0.004
+    t = np.linspace(0, T_final, int(T_final / DT) + 1)
+
+    v_path = 0.5  # m/s
+
+    vx = np.zeros_like(t)
+    vy = np.zeros_like(t)
+    w = np.zeros_like(t)
+
+    for i in range(len(t)):
+        if t[i] < 5:
+            vx[i] = v_path
+            vy[i] = 0
+            w[i] = 0
+        elif t[i] < 10:
+            vx[i] = 0
+            vy[i] = v_path
+            w[i] = 0
+        elif t[i] < 15:
+            vx[i] = -v_path
+            vy[i] = 0
+            w[i] = 0
+        else:
+            vx[i] = 0
+            vy[i] = -v_path
+            w[i] = 0
+
+    u_3dof = np.stack([vx, vy, w], axis=0)  # (3, t)
+    return u_3dof
+
 if __name__ == "__main__":
     vehicle = Vehicle()
     # vehicle.get_encoder_offsets(); exit()
+
+    profiles = square_profile()
     vehicle.start_control()
 
     try:
-        for _ in range(100):
-            vehicle.set_target_velocity(np.array([-0.3, -0.3, 0]))
-            time.sleep(0.1)
+        for i in range(profiles.shape[1]):
+            vehicle.set_target_velocity(profiles[:, i])
+            time.sleep(0.004)
+        # for _ in range(100):
+        #     vehicle.set_target_velocity(np.array([-1, 0, 0]))
+        #     time.sleep(0.1)
 
     finally:
         vehicle.stop_control()
