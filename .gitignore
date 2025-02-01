@@ -6,6 +6,5 @@ ctre_sim/
 *.pyc
 __pycache__/
 
-
-
+secrets.py
 *.png

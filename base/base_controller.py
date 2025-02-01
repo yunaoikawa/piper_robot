@@ -13,8 +13,6 @@ from phoenix6 import configs, controls, hardware, signals
 
 from constants import (POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS, TWO_PI, N_r1_r2_w, CONTROL_FREQ, CONTROL_PERIOD, NUM_SWERVES, LENGTH, WIDTH, TIRE_RADIUS)
 
-
-
 class SteerMotor:
     def __init__(self, num):
         self.num = num
@@ -363,7 +361,7 @@ def circling_profile():
     return u_3dof
 
 def square_profile():
-    T_final = 20
+    T_final = 12
     DT = 0.004
     t = np.linspace(0, T_final, int(T_final / DT) + 1)
 
@@ -374,15 +372,15 @@ def square_profile():
     w = np.zeros_like(t)
 
     for i in range(len(t)):
-        if t[i] < 5:
+        if t[i] < 3:
             vx[i] = v_path
             vy[i] = 0
             w[i] = 0
-        elif t[i] < 10:
+        elif t[i] < 6:
             vx[i] = 0
             vy[i] = v_path
             w[i] = 0
-        elif t[i] < 15:
+        elif t[i] < 9:
             vx[i] = -v_path
             vy[i] = 0
             w[i] = 0
