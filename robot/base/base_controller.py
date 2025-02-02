@@ -1,20 +1,19 @@
 import os
 import time
 import math
-import numpy as np
 import queue
 import threading
 from enum import Enum
+from typing import Tuple
+import numpy as np
 
 os.environ["CTR_TARGET"] = "Hardware"  # pylint: disable=wrong-import-position
-
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
-
-from constants import (POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS, TWO_PI, N_r1_r2_w, CONTROL_FREQ, CONTROL_PERIOD, NUM_SWERVES, LENGTH, WIDTH, TIRE_RADIUS)
+from constants import (POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS, TWO_PI, DRIVE_GEAR_RATIO, CONTROL_FREQ, CONTROL_PERIOD, NUM_SWERVES, LENGTH, WIDTH, TIRE_RADIUS)
 
 class SteerMotor:
-    def __init__(self, num):
+    def __init__(self, num: int):
         self.num = num
         assert num % 2 == 1, "Steer motors must have odd numbers"
         self.fx = hardware.TalonFX(self.num, canbus="Drivetrain")
@@ -29,38 +28,25 @@ class SteerMotor:
             if supply_voltage < 11.5 and os.environ.get("CTR_TARGET", None) == "Hardware":
                 raise Exception('Motor supply voltage is too low. Please charge the battery.')
 
-        # Status signals
         self.position_signal = self.fx.get_position()
         self.status_signals = [self.position_signal]
-
-        # Control requests
         self.position_request = controls.PositionTorqueCurrentFOC(0)
         self.neutral_request = controls.NeutralOut()
 
-        # Velocity control gains
+        # Motor configuration
         self.fx_cfg = configs.TalonFXConfiguration()
         self.fx_cfg.slot0.k_s = 5
         self.fx_cfg.slot0.static_feedforward_sign = signals.StaticFeedforwardSignValue.USE_CLOSED_LOOP_SIGN
         self.fx_cfg.slot0.k_p = 60
         self.fx_cfg.slot0.k_i = 0.0
         self.fx_cfg.slot0.k_d = 6
-
-        # Current limits (hard floor with no incline)
-        # IMPORTANT: These values limit the force that the base can generate. Proceed very carefully if modifying these values.
-        torque_current_limit = 40 # 40 A for steer, 10 A for drive
-        self.fx_cfg.torque_current.peak_forward_torque_current = torque_current_limit
-        self.fx_cfg.torque_current.peak_reverse_torque_current = -torque_current_limit
-
-        # Disable beeps (Note: beep_on_config is not yet supported as of Oct 2024)
+        self.fx_cfg.torque_current.peak_forward_torque_current = 40 # Amperes
+        self.fx_cfg.torque_current.peak_reverse_torque_current = -40
         self.fx_cfg.audio.beep_on_boot = False
-
-        # Fused CANcoder setup
         self.fx_cfg.feedback.feedback_remote_sensor_id = self.cc.device_id
         self.fx_cfg.feedback.feedback_sensor_source = signals.FeedbackSensorSourceValue.FUSED_CANCODER
         self.fx_cfg.feedback.sensor_to_mechanism_ratio = 1.0
         self.fx_cfg.feedback.rotor_to_sensor_ratio = 12.8
-
-        # Continuous wrap
         self.fx_cfg.closed_loop_general.continuous_wrap = True
 
         # CANcoder configuration
@@ -69,23 +55,20 @@ class SteerMotor:
         self.cc_cfg.magnet_sensor.magnet_offset = ENCODER_MAGNET_OFFSETS[self.num//2]
         self.cc_cfg.magnet_sensor.sensor_direction = signals.SensorDirectionValue.COUNTER_CLOCKWISE_POSITIVE
 
-        # Apply fx configuration
         status = self.fx.configurator.apply(self.fx_cfg)
         if not status.is_ok():
             raise Exception(f'Failed to apply TalonFX configuration: {status}')
 
-        # Apply cc configuration
         status = self.cc.configurator.apply(self.cc_cfg)
         if not status.is_ok():
             raise Exception(f'Failed to apply CANCoder configuration: {status}')
 
         self.fx.set_position(0)
 
-    def get_position(self):
-        # return wrapped position
+    def get_position(self) -> float: # radians (-pi, pi)
         return ((self.position_signal.value + 0.5) % 1 - 0.5) * TWO_PI
 
-    def set_position(self, position):
+    def set_position(self, position: float) -> None:
         assert -math.pi <= position <= math.pi
         self.fx.set_control(self.position_request.with_position(position / TWO_PI))
 
@@ -93,85 +76,42 @@ class SteerMotor:
         self.fx.set_control(self.neutral_request)
 
 class DriveMotor:
-    def __init__(self, num):
+    def __init__(self, num: int):
         self.num = num
         assert num % 2 == 0, "Drive motors must have even numbers"
         self.fx = hardware.TalonFX(self.num, canbus="Drivetrain")
         assert self.fx.get_is_pro_licensed()  # Must be Phoenix Pro licensed for FOC
-        fx_cfg = configs.TalonFXConfiguration()
 
-        # Status signals
         self.velocity_signal = self.fx.get_velocity()
         self.status_signals = [self.velocity_signal]
-
-        # Control requests
         self.velocity_request = controls.VelocityTorqueCurrentFOC(0)
         self.neutral_request = controls.NeutralOut()
 
-        # Velocity control gains
-        fx_cfg.slot0.k_s = 1.5
-        fx_cfg.slot0.k_p = 3
-        fx_cfg.slot0.k_i = 0
-        fx_cfg.slot0.k_d = 0.1
+        # Motor configuration
+        self.fx_cfg = configs.TalonFXConfiguration()
+        self.fx_cfg.slot0.k_s = 1.5
+        self.fx_cfg.slot0.k_p = 3
+        self.fx_cfg.slot0.k_i = 0
+        self.fx_cfg.slot0.k_d = 0.1
+        self.fx_cfg.torque_current.peak_forward_torque_current = 10 # Amperes
+        self.fx_cfg.torque_current.peak_reverse_torque_current = -10
+        self.fx_cfg.audio.beep_on_boot = False
 
-        # Current limits (hard floor with no incline)
-        # IMPORTANT: These values limit the force that the base can generate. Proceed very carefully if modifying these values.
-        torque_current_limit = 10 # 40 A for steer, 10 A for drive
-        fx_cfg.torque_current.peak_forward_torque_current = torque_current_limit
-        fx_cfg.torque_current.peak_reverse_torque_current = -torque_current_limit
-
-        # Disable beeps (Note: beep_on_config is not yet supported as of Oct 2024)
-        fx_cfg.audio.beep_on_boot = False
-
-        # Apply fx configuration
-        status = self.fx.configurator.apply(fx_cfg)
+        status = self.fx.configurator.apply(self.fx_cfg)
         if not status.is_ok():
             raise Exception(f'Failed to apply TalonFX configuration: {status}')
 
         self.fx.set_position(0)
 
-    def get_velocity(self):
-        # return reduced velocity
-        return (self.velocity_signal.value / N_r1_r2_w)
+    def get_velocity(self) -> float:
+        return (self.velocity_signal.value / DRIVE_GEAR_RATIO)
 
-    def set_velocity(self, velocity):
-        """
-        velocity: m/s
-        """
-        velocity = N_r1_r2_w * velocity / (TWO_PI * TIRE_RADIUS)
+    def set_velocity(self, velocity: float) -> None: # m/s
+        velocity = DRIVE_GEAR_RATIO * (velocity / (TWO_PI * TIRE_RADIUS))
         self.fx.set_control(self.velocity_request.with_velocity(velocity))
 
     def set_neutral(self):
         self.fx.set_control(self.neutral_request)
-
-
-class Swerve:
-    def __init__(self, num):
-        self.num = num
-        self.steer_motor = SteerMotor(2 * self.num - 1)
-        self.drive_motor = DriveMotor(2 * self.num)
-
-        # Status signals
-        self.status_signals = (
-            self.steer_motor.status_signals + self.drive_motor.status_signals
-        )
-
-    def get_steer_position(self):
-        return self.steer_motor.get_position()
-
-    def get_velocity(self):
-        return self.drive_motor.get_velocity()
-
-    def set_steer_position(self, steer_position):
-        self.steer_motor.set_position(steer_position)
-
-    def set_velocity(self, drive_velocity):
-        self.drive_motor.set_velocity(drive_velocity)
-
-    def set_neutral(self):
-        self.steer_motor.set_neutral()
-        self.drive_motor.set_neutral()
-
 
 class CommandType(Enum):
     POSITION = "position"
@@ -182,56 +122,30 @@ class FrameType(Enum):
     GLOBAL = "global"
     LOCAL = "local"
 
-
 class Vehicle:
     def __init__(self, max_vel=np.array((1.0, 1.0, 1.57)), max_accel=np.array((0.25, 0.25, 0.79))):
         self.max_vel = max_vel
         self.max_accel = max_accel
+        self.C = np.array([[1, 0, -WIDTH], [1, 0, WIDTH], [1, 0, -WIDTH], [1, 0, WIDTH],
+                           [0, 1, LENGTH], [0, 1, LENGTH], [0, 1, -LENGTH], [0, 1, -LENGTH]])
 
-        # Vehicle parameters
-        self.C_3_to_8 = np.array(
-            [
-                [1, 0, -WIDTH],
-                [1, 0, WIDTH],
-                [1, 0, -WIDTH],
-                [1, 0, WIDTH],
-                [0, 1, LENGTH],
-                [0, 1, LENGTH],
-                [0, 1, -LENGTH],
-                [0, 1, -LENGTH],
-            ]
-        )
+        self.steer_motors = [SteerMotor(i*2-1) for i in range(NUM_SWERVES)]
+        self.drive_motors = [DriveMotor(i*2) for i in range(NUM_SWERVES)]
 
-        # TODO: create PID file
+        self.status_signals = [s for m in self.steer_motors + self.drive_motors for s in m.status_signals]
+        phoenix6.BaseStatusSignal.set_update_frequency_for_all(CONTROL_FREQ, self.status_signals)
 
-        self.swerve_modules = [Swerve(i) for i in range(1, 5)]
-        # CAN bus update frequency
-        self.status_signals = [
-            signal for swerve in self.swerve_modules for signal in swerve.status_signals
-        ]
-        phoenix6.BaseStatusSignal.set_update_frequency_for_all(
-            CONTROL_FREQ, self.status_signals
-        )
-
-        # Joint space
         self.steer_pos = np.zeros(NUM_SWERVES)
         self.drive_vel = np.zeros(NUM_SWERVES)
-
-        # Operational space (global frame)
-        num_dofs = 3  # (x, y, theta)
-        self.x = np.zeros(num_dofs)
-        self.dx = np.zeros(num_dofs)
-
         self.target = None
 
-        # Control loop
         self.command_queue = queue.Queue(1)
         self.control_loop_thread = threading.Thread(
             target=self.control_loop, daemon=True
         )
         self.control_loop_running = False
 
-    def _enqueue_command(self, command_type, target, frame=None):
+    def _enqueue_command(self, command_type: CommandType, target:np.ndarray, frame: FrameType=None) -> None:
         if self.command_queue.full():
             print("Warning: Command queue is full. Is control loop running?")
         else:
@@ -240,75 +154,52 @@ class Vehicle:
                 command["frame"] = FrameType(frame)
             self.command_queue.put(command, block=False)
 
-    def set_target_velocity(self, velocity, frame="global"):
+    def set_target_velocity(self, velocity: np.ndarray, frame: str="global")->None:
         self._enqueue_command(CommandType.VELOCITY, velocity, frame)
 
-    def set_target_position(self, position):
+    def set_target_position(self, position: np.ndarray)->None:
         self._enqueue_command(CommandType.POSITION, position)
 
-    def update_state(self):
+    def update_state(self) -> None:
         phoenix6.BaseStatusSignal.refresh_all(self.status_signals)
+        for i in range(NUM_SWERVES):
+            self.steer_pos[i] = self.steer_motors[i].get_position()
+            self.drive_vel[i] = self.drive_motors[i].get_velocity()
 
-        for i, swerve in enumerate(self.swerve_modules):
-            self.steer_pos[i] = swerve.get_steer_position()
-            self.drive_vel[i] = swerve.get_velocity()
-
-    def start_control(self):
-        if self.control_loop_thread is None:
-            print(
-                "To initiate a new control loop, please create a new instance of Vehicle."
-            )
-            return
-
+    def start_control(self) -> None:
+        if self.control_loop_thread is None: raise Exception("Control loop thread not initialized. Please create a new instance of Vehicle.")
         self.control_loop_running = True
         self.control_loop_thread.start()
 
-    def stop_control(self):
+    def stop_control(self) -> None:
         self.control_loop_running = False
         self.control_loop_thread.join()
         self.control_loop_thread = None
 
-    def vehicle_velocity_to_angle_and_speed(self, u_3dof):
-        wheel_velocities_directional = self.C_3_to_8 @ u_3dof
-        vx = wheel_velocities_directional[:4]
-        vy = wheel_velocities_directional[4:]
-
-        wheel_speeds = np.sqrt(vx**2 + vy**2)
-        wheel_angles = np.arctan2(vy, vx)
-
-        # order: front left, front right, rear left, rear right
-
+    def vehicle_velocity_to_angle_and_speed(self, u_3dof: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        wheel_velocities_directional = self.C @ u_3dof
+        vx, vy = wheel_velocities_directional[:4], wheel_velocities_directional[4:]
+        # order: front left, front right, rear left, rear right TODO: fix this with self.C
         # convert to: front right, front left, rear left, rear right
-        wheel_speeds = wheel_speeds[[1, 0, 2, 3]]
-        wheel_angles = wheel_angles[[1, 0, 2, 3]]
-
-        # Apply transformations on the angle to match the swerve module orientation
-        # wheel_angles *= np.array([1, -1, 1, -1])
-        # wheel_angles += -np.pi # np.array([0, np.pi, -np.pi, 0])
-
-        # Normalize angles to [-pi, pi]
-        # wheel_angles = (wheel_angles + np.pi) % (2 * np.pi) - np.pi
+        wheel_speeds = np.sqrt(vx**2 + vy**2)[[1, 0, 2, 3]]
+        wheel_angles = np.arctan2(vy, vx)[[1, 0, 2, 3]]
         return wheel_speeds, wheel_angles
 
     def control_loop(self):
         # TODO: Set real-time scheduling policy
         disable_motors = True
-
         last_command_time = time.time()
         last_step_time = time.time()
 
         while self.control_loop_running:
-            # update state
             self.update_state()
 
-            # Check for new command
             if not self.command_queue.empty():
                 command = self.command_queue.get()
                 last_command_time = time.time()
-                target = command["target"]
 
                 if command["type"] == CommandType.VELOCITY:
-                    self.target = target  # np.clip(target, -self.max_vel, self.max_vel) TODO: clip velocity
+                    self.target = np.clip(command["target"], -self.max_vel, self.max_vel) # TODO: clip velocity
 
                 elif command["type"] == CommandType.POSITION:
                     raise NotImplementedError("Position control not yet implemented")
@@ -321,43 +212,34 @@ class Vehicle:
                 # TODO: ruckig control
 
             if disable_motors:
-                for swerve in self.swerve_modules:
-                    swerve.set_neutral()
+                for s in self.steer_motors:
+                    s.set_neutral()
+                for d in self.drive_motors:
+                    d.set_neutral()
             else:
                 phoenix6.unmanaged.feed_enable(0.1)
 
                 wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self.target)
 
-                print("Wheel speeds: ", wheel_speeds)
-                print("Wheel angles: ", wheel_angles)
-
-                for i, swerve in enumerate(self.swerve_modules):
-                    swerve.set_steer_position(wheel_angles[i])
-                for i, swerve in enumerate(self.swerve_modules):
-                    swerve.set_velocity(wheel_speeds[i])
+                for i in range(NUM_SWERVES):
+                    self.steer_motors[i].set_position(wheel_angles[i])
+                    self.drive_motors[i].set_velocity(wheel_speeds[i]) # TODO: cosine error scaling velocity
 
             step_time = time.time() - last_step_time
-            if step_time < CONTROL_PERIOD:  # maintain control frequency
+            if step_time < CONTROL_PERIOD:
                 time.sleep(CONTROL_PERIOD - step_time)
+            if step_time > 0.005: # 5 ms
+                print(f"Warning: Step time {1000 * step_time:.3f} ms in {self.__class__.__name__} control_loop")
+            last_step_time = time.time()
 
-            curr_time = time.time()
-            step_time = time.time() - last_step_time
-            last_step_time = curr_time
-
-            if step_time > 0.005:  # 5 ms
-                print(
-                    f"Warning: Step time {1000 * step_time:.3f} ms in {self.__class__.__name__} control_loop"
-                )
 
     def get_encoder_offsets(self):
         offsets = []
-        for i, swerve in enumerate(self.swerve_modules):
-            swerve.steer_motor.cc.configurator.refresh(
-                swerve.steer_motor.cc_cfg
-            )  # Read current config
-            curr_offset = swerve.steer_motor.cc_cfg.magnet_sensor.magnet_offset
-            swerve.steer_motor.cc.get_absolute_position().wait_for_update(0.1)
-            curr_position = swerve.steer_motor.cc.get_absolute_position().value
+        for steer_motor in self.steer_motors:
+            steer_motor.cc.configurator.refresh(steer_motor.cc_cfg)
+            curr_offset = steer_motor.cc_cfg.magnet_sensor.magnet_offset
+            steer_motor.cc.get_absolute_position().wait_for_update(0.1)
+            curr_position = steer_motor.cc.get_absolute_position().value
             offsets.append(f"{round(4096 * (curr_offset - curr_position))}.0 / 4096")
         print(f"ENCODER_MAGNET_OFFSETS = [{', '.join(offsets)}]")
 
@@ -411,10 +293,8 @@ def square_profile():
 if __name__ == "__main__":
     vehicle = Vehicle()
     # vehicle.get_encoder_offsets(); exit()
-
     profiles = square_profile()
     vehicle.start_control()
-
     try:
         # for i in range(profiles.shape[1]):
         #     vehicle.set_target_velocity(profiles[:, i])
@@ -422,6 +302,5 @@ if __name__ == "__main__":
         for _ in range(100):
             vehicle.set_target_velocity(np.array([0, 0.1, 0]))
             time.sleep(0.1)
-
     finally:
         vehicle.stop_control()

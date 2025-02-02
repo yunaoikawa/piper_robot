@@ -5,6 +5,7 @@ ctre_sim/
 *.swp
 *.pyc
 __pycache__/
+*.egg-info/
 
 robot_secrets.py
 *.png

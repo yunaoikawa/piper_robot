@@ -24,4 +24,4 @@ TWO_PI = 2 * math.pi
 N_r1 = 50.0 / 16.0  # Drive gear ratio (1st stage)
 N_r2 = 19.0 / 25.0  # Drive gear ratio (2nd stage)
 N_w = 45.0 / 15.0  # Wheel gear ratio
-N_r1_r2_w = N_r1 * N_r2 * N_w
+DRIVE_GEAR_RATIO = N_r1 * N_r2 * N_w
