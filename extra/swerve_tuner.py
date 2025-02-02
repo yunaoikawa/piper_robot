@@ -1,5 +1,5 @@
 import os
-# os.environ['CTR_TARGET'] = 'Hardware'  # pylint: disable=wrong-import-position
+os.environ['CTR_TARGET'] = 'Hardware'  # pylint: disable=wrong-import-position
 import math
 import time
 

@@ -7,10 +7,11 @@ from enum import Enum
 from typing import Tuple
 import numpy as np
 
-os.environ["CTR_TARGET"] = "Hardware"  # pylint: disable=wrong-import-position
+os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
-from constants import (POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS, TWO_PI, DRIVE_GEAR_RATIO, CONTROL_FREQ, CONTROL_PERIOD, NUM_SWERVES, LENGTH, WIDTH, TIRE_RADIUS)
+from constants import (POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS, TWO_PI, DRIVE_GEAR_RATIO,
+                       CONTROL_FREQ, CONTROL_PERIOD, NUM_SWERVES, LENGTH, WIDTH, TIRE_RADIUS)
 
 class SteerMotor:
     def __init__(self, num: int):
@@ -231,7 +232,6 @@ class Vehicle:
             if step_time > 0.005: # 5 ms
                 print(f"Warning: Step time {1000 * step_time:.3f} ms in {self.__class__.__name__} control_loop")
             last_step_time = time.time()
-
 
     def get_encoder_offsets(self):
         offsets = []
