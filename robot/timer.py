@@ -9,7 +9,7 @@ class FrequencyTimer:
     self.start = time.time()
     return self
 
-  def __exit__(self):
+  def __exit__(self, *_):
     end = time.time()
     elapsed = end - self.start
     sleep_time = 1 / self.frequency - elapsed

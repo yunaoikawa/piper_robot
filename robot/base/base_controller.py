@@ -11,7 +11,7 @@ import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
 from robot.timer import FrequencyTimer
-from constants import POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS, TWO_PI, DRIVE_GEAR_RATIO, CONTROL_FREQ, NUM_SWERVES, LENGTH, WIDTH, TIRE_RADIUS
+from robot.base.constants import POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS, TWO_PI, DRIVE_GEAR_RATIO, CONTROL_FREQ, NUM_SWERVES, LENGTH, WIDTH, TIRE_RADIUS
 
 
 class SteerMotor:
@@ -24,7 +24,7 @@ class SteerMotor:
     self.cc = hardware.CANcoder((self.num // 2) + 1, canbus="Drivetrain")
 
     if self.num == 1:
-      time.sleep(0.2)  # First CAN device, wait for CAN bus to be ready
+      time.sleep(0.2)  # wait for CAN bus to be ready
       supply_voltage = self.fx.get_supply_voltage().value
       print(f"Motor supply voltage: {supply_voltage:.2f} V")
       if supply_voltage < 11.5 and os.environ.get("CTR_TARGET", None) == "Hardware":
@@ -100,14 +100,15 @@ class DriveMotor:
     self.fx_cfg.torque_current.peak_reverse_torque_current = -10
     self.fx_cfg.audio.beep_on_boot = False
 
-    status = self.fx.configurator.apply(self.fx_cfg)
-    if not status.is_ok():
-      raise Exception(f"Failed to apply TalonFX configuration: {status}")
+    for _ in range(3):
+      status = self.fx.configurator.apply(self.fx_cfg)
+      if status.is_ok(): break
+    if not status.is_ok(): raise Exception(f"Failed to apply TalonFX configuration: {status}")
 
     self.fx.set_position(0)
 
   def get_velocity(self) -> float:
-    return self.velocity_signal.value / DRIVE_GEAR_RATIO
+    return (TWO_PI * TIRE_RADIUS) * self.velocity_signal.value / DRIVE_GEAR_RATIO
 
   def set_velocity(self, velocity: float) -> None:  # m/s
     velocity = DRIVE_GEAR_RATIO * (velocity / (TWO_PI * TIRE_RADIUS))
@@ -143,8 +144,8 @@ class Vehicle:
       [0, 1, -LENGTH],
     ])
 
-    self.steer_motors = [SteerMotor(i * 2 - 1) for i in range(NUM_SWERVES)]
-    self.drive_motors = [DriveMotor(i * 2) for i in range(NUM_SWERVES)]
+    self.steer_motors = [SteerMotor(i * 2 + 1) for i in range(NUM_SWERVES)]
+    self.drive_motors = [DriveMotor(i * 2 + 2) for i in range(NUM_SWERVES)]
 
     self.status_signals = [s for m in self.steer_motors + self.drive_motors for s in m.status_signals]
     phoenix6.BaseStatusSignal.set_update_frequency_for_all(CONTROL_FREQ, self.status_signals)
@@ -224,7 +225,7 @@ class Vehicle:
         else:
           phoenix6.unmanaged.feed_enable(0.1)
 
-          wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self._command)
+          wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self._command["target"])
           for i in range(NUM_SWERVES):
             self.steer_motors[i].set_position(wheel_angles[i])
             self.drive_motors[i].set_velocity(wheel_speeds[i])  # TODO: cosine error scaling velocity
@@ -240,65 +241,13 @@ class Vehicle:
     print(f"ENCODER_MAGNET_OFFSETS = [{', '.join(offsets)}]")
 
 
-def circling_profile():
-  T_final = 20
-  DT = 0.004
-  t = np.linspace(0, T_final, int(T_final / DT) + 1)
-
-  R = 1  # turn radius
-  w_path = math.pi / 8  # rad/s
-  v_path = R * w_path  # m/s
-  vx = v_path * np.cos(w_path * t)
-  vy = v_path * np.sin(w_path * t)
-  w = w_path * np.zeros_like(t) * 2
-  u_3dof = np.stack([vx, vy, w], axis=0)  # (3, t)
-  return u_3dof
-
-
-def square_profile():
-  T_final = 12
-  DT = 0.004
-  t = np.linspace(0, T_final, int(T_final / DT) + 1)
-
-  v_path = 0.5  # m/s
-
-  vx = np.zeros_like(t)
-  vy = np.zeros_like(t)
-  w = np.zeros_like(t)
-
-  for i in range(len(t)):
-    if t[i] < 3:
-      vx[i] = v_path
-      vy[i] = 0
-      w[i] = 0
-    elif t[i] < 6:
-      vx[i] = 0
-      vy[i] = v_path
-      w[i] = 0
-    elif t[i] < 9:
-      vx[i] = -v_path
-      vy[i] = 0
-      w[i] = 0
-    else:
-      vx[i] = 0
-      vy[i] = -v_path
-      w[i] = 0
-
-  u_3dof = np.stack([vx, vy, w], axis=0)  # (3, t)
-  return u_3dof
-
 
 if __name__ == "__main__":
   vehicle = Vehicle()
-  # vehicle.get_encoder_offsets(); exit()
-  profiles = square_profile()
   vehicle.start_control()
   try:
-    # for i in range(profiles.shape[1]):
-    #     vehicle.set_target_velocity(profiles[:, i])
-    #     time.sleep(0.004)
     for _ in range(100):
-      vehicle.set_target_velocity(np.array([0, 0.1, 0]))
+      vehicle.set_target_velocity(np.array([0, 0, math.pi / 8]))
       time.sleep(0.1)
   finally:
     vehicle.stop_control()
