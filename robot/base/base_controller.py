@@ -11,7 +11,17 @@ import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
 from robot.timer import FrequencyTimer
-from robot.base.constants import POLICY_CONTROL_PERIOD, ENCODER_MAGNET_OFFSETS, TWO_PI, DRIVE_GEAR_RATIO, CONTROL_FREQ, NUM_SWERVES, LENGTH, WIDTH, TIRE_RADIUS
+from robot.base.constants import (
+  POLICY_CONTROL_PERIOD,
+  ENCODER_MAGNET_OFFSETS,
+  TWO_PI,
+  DRIVE_GEAR_RATIO,
+  CONTROL_FREQ,
+  NUM_SWERVES,
+  LENGTH,
+  WIDTH,
+  TIRE_RADIUS,
+)
 
 
 class SteerMotor:
@@ -102,8 +112,10 @@ class DriveMotor:
 
     for _ in range(3):
       status = self.fx.configurator.apply(self.fx_cfg)
-      if status.is_ok(): break
-    if not status.is_ok(): raise Exception(f"Failed to apply TalonFX configuration: {status}")
+      if status.is_ok():
+        break
+    if not status.is_ok():
+      raise Exception(f"Failed to apply TalonFX configuration: {status}")
 
     self.fx.set_position(0)
 
@@ -134,8 +146,8 @@ class Vehicle:
     self.max_vel = max_vel
     self.max_accel = max_accel
     self.C = np.array([
-      [1, 0, -WIDTH],
       [1, 0, WIDTH],
+      [1, 0, -WIDTH],
       [1, 0, -WIDTH],
       [1, 0, WIDTH],
       [0, 1, LENGTH],
@@ -153,31 +165,19 @@ class Vehicle:
     self.steer_pos = np.zeros(NUM_SWERVES)
     self.drive_vel = np.zeros(NUM_SWERVES)
 
-    # self.command_queue = queue.Queue(1)
     self._command = None
     self.control_loop_thread = threading.Thread(target=self.control_loop, daemon=True)
     self.control_loop_running = False
     self.last_command_time = time.time()
     self.timer = FrequencyTimer(frequency=CONTROL_FREQ)
 
-  # def _enqueue_command(self, command_type: CommandType, target:np.ndarray, frame: FrameType=None) -> None:
-  #     if self.command_queue.full():
-  #         print("Warning: Command queue is full. Is control loop running?")
-  #     else:
-  #         command = {"type": command_type, "target": target}
-  #         if frame is not None:
-  #             command["frame"] = FrameType(frame)
-  #         self.command_queue.put(command, block=False)
-
   def set_target_velocity(self, velocity: np.ndarray, frame: str = "global") -> None:
     self._command = {"type": CommandType.VELOCITY, "target": velocity, "frame": frame}
     self.last_command_time = time.time()
-    # self._enqueue_command(CommandType.VELOCITY, velocity, frame)
 
   def set_target_position(self, position: np.ndarray) -> None:
     self._command = {"type": CommandType.POSITION, "target": position}
     self.last_command_time = time.time()
-    # self._enqueue_command(CommandType.POSITION, position)
 
   def update_state(self) -> None:
     phoenix6.BaseStatusSignal.refresh_all(self.status_signals)
@@ -199,15 +199,12 @@ class Vehicle:
   def vehicle_velocity_to_angle_and_speed(self, u_3dof: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     wheel_velocities_directional = self.C @ u_3dof
     vx, vy = wheel_velocities_directional[:4], wheel_velocities_directional[4:]
-    # order: front left, front right, rear left, rear right TODO: fix this with self.C
-    # convert to: front right, front left, rear left, rear right
-    wheel_speeds = np.sqrt(vx**2 + vy**2)[[1, 0, 2, 3]]
-    wheel_angles = np.arctan2(vy, vx)[[1, 0, 2, 3]]
+    wheel_speeds = np.sqrt(vx**2 + vy**2)
+    wheel_angles = np.arctan2(vy, vx)
     return wheel_speeds, wheel_angles
 
   def control_loop(self):
     # TODO: Set real-time scheduling policy
-    # disable_motors = True
     while self.control_loop_running:
       with self.timer:
         self.update_state()
@@ -218,9 +215,8 @@ class Vehicle:
           # TODO: ruckig control
 
         if self._command is None:
-          for s in self.steer_motors:
+          for s, d in zip(self.steer_motors, self.drive_motors):
             s.set_neutral()
-          for d in self.drive_motors:
             d.set_neutral()
         else:
           phoenix6.unmanaged.feed_enable(0.1)
@@ -239,7 +235,6 @@ class Vehicle:
       curr_position = steer_motor.cc.get_absolute_position().value
       offsets.append(f"{round(4096 * (curr_offset - curr_position))}.0 / 4096")
     print(f"ENCODER_MAGNET_OFFSETS = [{', '.join(offsets)}]")
-
 
 
 if __name__ == "__main__":
