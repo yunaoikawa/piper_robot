@@ -1,0 +1,74 @@
+<mujoco model="robot">
+    <compiler meshdir="assets" texturedir="assets" />
+
+    <asset>
+        <!-- TODO: put STL's of the robot here -->
+    </asset>
+
+    <!-- <default>
+        <default class="robot">
+            <default class="visual">
+                <geom type="mesh" contype="0" conaffinity="0" density="0" group="2" />
+            </default>
+        </default>
+    </default> -->
+
+    <worldbody>
+        <body name="chassis" pos="0 0 3" euler='0 0 0'>
+            <joint type="free"/>
+            <geom type="box" size="1.6 2.1 1" rgba=".1 .1 0 0.5"/>
+            <!-- <camera euler="180 -30 90" fovy="75" name="tracking_camera" pos="-2.5 0 -3"
+                mode="trackcom" /> -->
+            <!-- <site name="marker" pos="0 0 0.6" size="0.1" /> -->
+            <body name="r-front" pos="1.05 -1.56 -1" euler='0 0 0'>
+                <joint damping="0.1" name="r-front-steer" type="hinge" axis="0 0 -1" />
+                <geom type="cylinder" size=".2 0.32" rgba="0 0 0 1" />
+                <body name="r-front-wheel" pos="0 0 -0.4" euler="90 0 0">
+                    <joint damping="0.1" name="r-front-wheel" type="hinge" axis="0 0 1"
+                        limited="false" />
+                    <geom type="cylinder" size=".508 0.32" rgba="0 1 0 0.8" />
+                </body>
+            </body>
+            <body name="l-front" pos="1.05 1.56 -1" euler='0 0 0'>
+                <joint damping="0.1" name="l-front-steer" type="hinge" axis="0 0 -1" />
+                <geom type="cylinder" size=".2 0.32" rgba="0 0 0 1" />
+                <body name="l-front-wheel" pos="0 0 -0.4" euler="90 0 0">
+                    <joint damping="0.1" name="l-front-wheel" type="hinge" axis="0 0 1"
+                        limited="false" />
+                    <geom type="cylinder" size=".508 0.32" rgba="0 1 0 0.8" />
+                </body>
+            </body>
+            <body name="l-back" pos="-1.05 1.56 -1" euler='0 0 0'>
+                <joint damping="0.1" name="l-back-steer" type="hinge" axis="0 0 -1" />
+                <geom type="cylinder" size=".2 0.32" rgba="0 0 0 1" />
+                <body name="l-back-wheel" pos="0 0 -0.4" euler="90 0 0">
+                    <joint damping="0.1" name="l-back-wheel" type="hinge" axis="0 0 1"
+                        limited="false" />
+                    <geom type="cylinder" size=".508 0.32" rgba="0 1 0 0.8" />
+                </body>
+            </body>
+            <body name="r-back" pos="-1.05 -1.56 -1" euler='0 0 0'>
+                <joint name="r-back-steer" type="hinge" axis="0 0 -1" />
+                <geom type="cylinder" size=".2 0.32" rgba="0 0 0 1" />
+                <body name="r-back-wheel" pos="0 0 -0.4" euler="90 0 0">
+                    <joint damping="0.1" name="r-back-wheel" type="hinge" axis="0 0 1"
+                        limited="false" />
+                    <geom type="cylinder" size=".508 0.32" rgba="0 1 0 0.8" />
+                </body>
+            </body>
+        </body>
+    </worldbody>
+
+    <actuator>
+        <position name="l-front-steer-servo" joint="l-front-steer" kp="1000000" kv="50000"/>
+        <position name="r-front-steer-servo" joint="r-front-steer" kp="1000000" kv="50000"/>
+		<position name="l-back-steer-servo" joint="l-back-steer" kp="1000000" kv="50000"/>
+        <position name="r-back-steer-servo" joint="r-back-steer" kp="1000000" kv="50000"/>
+
+
+        <velocity name="l-front-wheel-servo" joint="l-front-wheel" kv="50000"/>
+        <velocity name="r-front-wheel-servo" joint="r-front-wheel" kv="50000"/>
+        <velocity name="l-back-wheel-servo" joint="l-back-wheel" kv="50000"/>
+        <velocity name="r-back-wheel-servo" joint="r-back-wheel" kv="50000"/>
+	</actuator>
+</mujoco>
