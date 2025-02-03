@@ -190,11 +190,14 @@ class Base:
       self.steer_pos[i] = self.steer_motors[i].get_position()
       self.drive_vel[i] = self.drive_motors[i].get_velocity()
 
-    dt = self.status_signals[0].timestamp - self.status_timestamp
+    dt = self.status_signals[0].timestamp.time - self.status_timestamp.time
     self.status_timestamp = self.status_signals[0].timestamp
+    print("dt: ", dt)
 
     dx = self.angle_and_speed_to_vehicle_velocity(self.drive_vel, self.steer_pos)
     self.x += dx * dt
+    self.x[2] = (self.x[2] + np.pi) % (2*np.pi) - np.pi # wrap to (-pi, pi)
+    print(self.x)
 
   def angle_and_speed_to_vehicle_velocity(self, wheel_speeds:np.ndarray, wheel_angles:np.ndarray) -> np.ndarray:
     vx, vy = wheel_speeds * np.cos(wheel_angles), wheel_speeds * np.sin(wheel_angles)
