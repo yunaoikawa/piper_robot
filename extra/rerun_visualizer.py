@@ -9,6 +9,7 @@ def visualize_state():
     topic = bytes("state ", 'utf-8')
     state_subscriber = zmq.Context().socket(zmq.SUB)
     state_subscriber.connect(f"tcp://{ROBOT_IP}:{STATE_PORT}")
+    state_subscriber.setsockopt(zmq.CONFLATE, 1)
     state_subscriber.setsockopt(zmq.SUBSCRIBE, topic)
     timer = FrequencyTimer(frequency=30)
 
