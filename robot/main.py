@@ -38,9 +38,10 @@ class RobotMain:
         break
 
   def state_publisher(self):
+    topic = bytes("state ", 'utf-8')
     while self.running:
       with self.state_publisher_timer:
-        self.state_publisher.send(bytes("state", 'utf-8') + self.base.x.tobytes())
+        self.state_publisher.send(topic + self.base.x.tobytes())
 
   def handle_shutdown(self):
     self.running = False

@@ -6,7 +6,7 @@ from robot.timer import FrequencyTimer
 from robot.communications import ROBOT_IP, STATE_PORT
 
 def visualize_state():
-    topic = bytes("state", 'utf-8')
+    topic = bytes("state ", 'utf-8')
     state_subscriber = zmq.Context().socket(zmq.SUB)
     state_subscriber.connect(f"tcp://{ROBOT_IP}:{STATE_PORT}")
     state_subscriber.setsockopt(zmq.SUBSCRIBE, topic)
@@ -19,4 +19,7 @@ def visualize_state():
 
 
 
+
+if __name__ == "__main__":
+    visualize_state()
 
