@@ -38,7 +38,7 @@ class RobotMain:
     topic = bytes("state ", 'utf-8')
     state_publisher: zmq.Socket = zmq.Context().socket(zmq.PUB)
     state_publisher.bind(f"tcp://*:{STATE_PORT}")
-    state_publisher_timer = FrequencyTimer(frequency=100)
+    state_publisher_timer = FrequencyTimer(frequency=30)
     while self.running:
       with state_publisher_timer:
         state_publisher.send(topic + self.base.x.tobytes())

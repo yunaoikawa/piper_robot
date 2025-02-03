@@ -15,7 +15,9 @@ def visualize_state():
 
     while True:
         with timer:
-            state = np.frombuffer(state_subscriber.recv().lstrip(topic))
+            buffer = state_subscriber.recv().lstrip(topic)
+            if len(buffer) % np.dtype(float).itemsize != 0: continue
+            state = np.frombuffer(buffer, dtype=float)
             print(f"x: {state[0]} | y: {state[1]} | θ: {(state[2] + np.pi) % (2 * np.pi) - np.pi}")
 
 
