@@ -119,8 +119,8 @@ class DriveMotor:
 
     self.fx.set_position(0)
 
-  def get_velocity(self) -> float:
-    return (TWO_PI * TIRE_RADIUS) * self.velocity_signal.value / DRIVE_GEAR_RATIO
+  def get_velocity(self) -> Tuple[float, float]:
+    return (TWO_PI * TIRE_RADIUS) * self.velocity_signal.value / DRIVE_GEAR_RATIO, self.velocity_signal.timestamp
 
   def set_velocity(self, velocity: float) -> None:  # m/s
     velocity = DRIVE_GEAR_RATIO * (velocity / (TWO_PI * TIRE_RADIUS))
@@ -155,9 +155,11 @@ class Base:
 
     self.status_signals = [s for m in self.steer_motors + self.drive_motors for s in m.status_signals]
     phoenix6.BaseStatusSignal.set_update_frequency_for_all(CONTROL_FREQ, self.status_signals)
+    self.status_timestamp = self.status_signals[0].timestamp
 
     self.steer_pos = np.zeros(NUM_SWERVES)
     self.drive_vel = np.zeros(NUM_SWERVES)
+    self.x = np.zeros(3) # x, y, theta
 
     self._command = None
     self.last_command_time = time.time()
@@ -187,6 +189,16 @@ class Base:
     for i in range(NUM_SWERVES):
       self.steer_pos[i] = self.steer_motors[i].get_position()
       self.drive_vel[i] = self.drive_motors[i].get_velocity()
+
+    dt = self.status_signals[0].timestamp - self.status_timestamp
+    self.status_timestamp = self.status_signals[0].timestamp
+
+    dx = self.angle_and_speed_to_vehicle_velocity(self.drive_vel, self.steer_pos)
+    self.x += dx * dt
+
+  def angle_and_speed_to_vehicle_velocity(self, wheel_speeds:np.ndarray, wheel_angles:np.ndarray) -> np.ndarray:
+    vx, vy = wheel_speeds * np.cos(wheel_angles), wheel_speeds * np.sin(wheel_angles)
+    return np.linalg.lstsq(self.C, np.concatenate((vx, vy)), rcond=None)[0]
 
   def vehicle_velocity_to_angle_and_speed(self, u_3dof: np.ndarray, cos_error_scaling: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     wheel_velocities_directional = self.C @ u_3dof
