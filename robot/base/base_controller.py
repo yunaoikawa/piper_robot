@@ -11,7 +11,7 @@ import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
 from robot.timer import FrequencyTimer
-from robot.base.constants import (
+from robot.constants import (
   POLICY_CONTROL_PERIOD,
   ENCODER_MAGNET_OFFSETS,
   TWO_PI,
@@ -130,18 +130,11 @@ class DriveMotor:
     self.fx.set_control(self.neutral_request)
 
 
-class CommandType(Enum):
-  POSITION = "position"
-  VELOCITY = "velocity"
+class ControlMode(Enum):
+  POSITION = 1
+  VELOCITY = 2
 
-
-# Currently only used for velocity commands
-class FrameType(Enum):
-  GLOBAL = "global"
-  LOCAL = "local"
-
-
-class Vehicle:
+class Base:
   def __init__(self, max_vel=np.array((1.0, 1.0, 1.57)), max_accel=np.array((0.25, 0.25, 0.79))):
     self.max_vel = max_vel
     self.max_accel = max_accel
@@ -166,18 +159,27 @@ class Vehicle:
     self.drive_vel = np.zeros(NUM_SWERVES)
 
     self._command = None
-    self.control_loop_thread = threading.Thread(target=self.control_loop, daemon=True)
-    self.control_loop_running = False
     self.last_command_time = time.time()
     self.timer = FrequencyTimer(frequency=CONTROL_FREQ)
 
-  def set_target_velocity(self, velocity: np.ndarray, frame: str = "global") -> None:
-    self._command = {"type": CommandType.VELOCITY, "target": velocity, "frame": frame}
-    self.last_command_time = time.time()
+    self.control_loop_thread = threading.Thread(target=self.control_loop, daemon=True)
+    self.control_loop_running = True
+    self.control_loop_thread.start()
 
-  def set_target_position(self, position: np.ndarray) -> None:
-    self._command = {"type": CommandType.POSITION, "target": position}
+  def set_target_velocity(self, velocity: np.ndarray) -> bytes:
+    self._command = {"mode": ControlMode.VELOCITY, "target": velocity}
     self.last_command_time = time.time()
+    return b"ok"
+
+  def set_target_position(self, position: np.ndarray) -> bytes:
+    self._command = {"mode": ControlMode.POSITION, "target": position}
+    self.last_command_time = time.time()
+    return b"ok"
+
+  def stop_control(self) -> None:
+    self.control_loop_running = False
+    self.control_loop_thread.join()
+    self.control_loop_thread = None
 
   def update_state(self) -> None:
     phoenix6.BaseStatusSignal.refresh_all(self.status_signals)
@@ -185,22 +187,12 @@ class Vehicle:
       self.steer_pos[i] = self.steer_motors[i].get_position()
       self.drive_vel[i] = self.drive_motors[i].get_velocity()
 
-  def start_control(self) -> None:
-    if self.control_loop_thread is None:
-      raise Exception("Control loop thread not initialized. Please create a new instance of Vehicle.")
-    self.control_loop_running = True
-    self.control_loop_thread.start()
-
-  def stop_control(self) -> None:
-    self.control_loop_running = False
-    self.control_loop_thread.join()
-    self.control_loop_thread = None
-
-  def vehicle_velocity_to_angle_and_speed(self, u_3dof: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+  def vehicle_velocity_to_angle_and_speed(self, u_3dof: np.ndarray, cos_error_scaling:bool=True) -> Tuple[np.ndarray, np.ndarray]:
     wheel_velocities_directional = self.C @ u_3dof
     vx, vy = wheel_velocities_directional[:4], wheel_velocities_directional[4:]
     wheel_speeds = np.sqrt(vx**2 + vy**2)
     wheel_angles = np.arctan2(vy, vx)
+    if cos_error_scaling: wheel_speeds *= np.cos(((wheel_angles - self.steer_pos) + np.pi) % (2 * np.pi) - np.pi)
     return wheel_speeds, wheel_angles
 
   def control_loop(self):
@@ -209,10 +201,8 @@ class Vehicle:
       with self.timer:
         self.update_state()
 
-        # Maintain current pose if command stream is disrupted
         if time.time() - self.last_command_time > 2.5 * POLICY_CONTROL_PERIOD:
           self._command = None
-          # TODO: ruckig control
 
         if self._command is None:
           for s, d in zip(self.steer_motors, self.drive_motors):
@@ -221,10 +211,13 @@ class Vehicle:
         else:
           phoenix6.unmanaged.feed_enable(0.1)
 
-          wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self._command["target"])
-          for i in range(NUM_SWERVES):
-            self.steer_motors[i].set_position(wheel_angles[i])
-            self.drive_motors[i].set_velocity(wheel_speeds[i])  # TODO: cosine error scaling velocity
+          if self._command["mode"] == ControlMode.VELOCITY:
+            wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self._command["target"])
+            for i in range(NUM_SWERVES):
+              self.steer_motors[i].set_position(wheel_angles[i])
+              self.drive_motors[i].set_velocity(wheel_speeds[i])  # TODO: cosine error scaling velocity
+          elif self._command["mode"] == ControlMode.POSITION:
+            raise NotImplementedError("Position control not implemented yet")
 
   def get_encoder_offsets(self):
     offsets = []
@@ -238,8 +231,7 @@ class Vehicle:
 
 
 if __name__ == "__main__":
-  vehicle = Vehicle()
-  vehicle.start_control()
+  vehicle = Base()
   try:
     for _ in range(100):
       vehicle.set_target_velocity(np.array([0, 0, math.pi / 8]))

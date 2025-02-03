@@ -2,7 +2,7 @@ import math
 import numpy as np
 import time
 
-from robot.base.base_controller import Vehicle
+from robot.base.base_controller import Base
 
 def circling_profile():
   T_final = 20
@@ -54,7 +54,7 @@ def square_profile():
 
 
 if __name__ == "__main__":
-  vehicle = Vehicle()
+  vehicle = Base()
   profiles = square_profile()
   vehicle.start_control()
   try:
