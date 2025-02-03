@@ -10,7 +10,7 @@ def visualize_state():
     state_subscriber = zmq.Context().socket(zmq.SUB)
     state_subscriber.connect(f"tcp://{ROBOT_IP}:{STATE_PORT}")
     state_subscriber.setsockopt(zmq.SUBSCRIBE, topic)
-    timer = FrequencyTimer(frequency=100)
+    timer = FrequencyTimer(frequency=30)
 
     while True:
         with timer:
