@@ -18,6 +18,8 @@ class RobotMain:
     self.state_publisher_timer = FrequencyTimer(frequency=100)
     self.state_publisher_thread = threading.Thread(target=self.state_publisher)
 
+    self.running = False
+
   def run(self):
     self.running = True
     self.state_publisher_thread.start()
