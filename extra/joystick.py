@@ -1,3 +1,6 @@
+"""
+To run joystick on Jetson Nano, one needs to install xpad drivers. Then, one needs to add the user to input group and create udev rules.
+"""
 import os
 import signal
 import numpy as np
@@ -18,7 +21,7 @@ def apply_deadzone(arr, deadzone_size=0.05):
 class GamepadTeleop:
   def __init__(self):
     self.joy = Joystick(0)  # Logitech F710
-    self.max_vel = np.array([0.3, 0.3, 0.78])
+    self.max_vel = np.array([0.5, 0.5, 0.78])
 
     self.socket = zmq.Context().socket(zmq.REQ)
     self.socket.connect(f"tcp://{ROBOT_IP}:{COMMAND_PORT}")
