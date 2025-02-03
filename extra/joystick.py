@@ -9,8 +9,8 @@ from pygame.joystick import Joystick
 
 import zmq
 from robot.timer import FrequencyTimer
-from robot.constants import ROBOT_IP, COMMAND_PORT
-from robot.communications import send_command, CommandType
+from robot.communications import send_command, CommandType, ROBOT_IP, COMMAND_PORT
+
 
 pygame.init()
 

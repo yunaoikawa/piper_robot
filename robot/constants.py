@@ -1,9 +1,5 @@
 import math
 
-# Network
-ROBOT_IP = "100.96.33.32"  # tailscale ip
-COMMAND_PORT = 5555
-
 # policy
 POLICY_CONTROL_FREQ = 10
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ

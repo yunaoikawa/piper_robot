@@ -2,8 +2,7 @@ import zmq
 import threading
 
 from robot.base.base_controller import Base
-from robot.constants import COMMAND_PORT, STATE_PORT
-from robot.communications import CommandType, receive_command
+from robot.communications import CommandType, receive_command, COMMAND_PORT, STATE_PORT
 from robot.timer import FrequencyTimer
 
 
@@ -41,7 +40,7 @@ class RobotMain:
   def state_publisher(self):
     while self.running:
       with self.state_publisher_timer:
-        self.state_publisher.send(self.base.x.tobytes())
+        self.state_publisher.send(bytes("state", 'utf-8') + self.base.x.tobytes())
 
   def handle_shutdown(self):
     self.running = False

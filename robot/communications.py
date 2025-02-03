@@ -3,6 +3,11 @@ from typing import Optional
 import zmq
 import numpy as np
 
+# Networking Constants
+ROBOT_IP = "100.96.33.32"  # tailscale ip
+COMMAND_PORT = 5555
+STATE_PORT = 5556
+
 
 class CommandType(Enum):
   SET_TARGET_VELOCITY = 1
