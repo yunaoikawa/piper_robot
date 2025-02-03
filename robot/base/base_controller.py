@@ -199,7 +199,6 @@ class Base:
     R = np.array([[np.cos(theta_avg), -np.sin(theta_avg), 0], [np.sin(theta_avg), np.cos(theta_avg), 0], [0, 0, 1]])
     self.dx = R @ dx_local
     self.x += self.dx * dt
-    print(f"x: {self.x[0]} | y: {self.x[1]} | θ: {(self.x[2] + np.pi) % (2 * np.pi) - np.pi}")
 
   def angle_and_speed_to_vehicle_velocity(self, wheel_speeds: np.ndarray, wheel_angles: np.ndarray) -> np.ndarray:
     vx, vy = wheel_speeds * np.cos(wheel_angles), wheel_speeds * np.sin(wheel_angles)
