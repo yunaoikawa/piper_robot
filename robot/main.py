@@ -1,9 +1,9 @@
-
 import zmq
 
 from robot.base.base_controller import Base
 from robot.constants import COMMAND_PORT
 from robot.communications import CommandType, receive_command
+
 
 class RobotMain:
   def __init__(self):
@@ -13,11 +13,10 @@ class RobotMain:
 
   def run(self):
     command_handlers = {
-        CommandType.SET_TARGET_VELOCITY: self.base.set_target_velocity,
-        CommandType.SET_TARGET_POSITION: self.base.set_target_position,
+      CommandType.SET_TARGET_VELOCITY: self.base.set_target_velocity,
+      CommandType.SET_TARGET_POSITION: self.base.set_target_position,
     }
     while True:
-      # print("Waiting for command...")
       command_type, data = receive_command(self.listener)
       try:
         result: bytes = command_handlers[command_type](data)
@@ -29,16 +28,10 @@ class RobotMain:
         break
 
   def handle_shutdown(self):
-    if self.base.control_loop_running: self.base.stop_control()
+    if self.base.control_loop_running:
+      self.base.stop_control()
     self.listener.close()
 
-
-# def handle_signal(*_):
-#   r.handle_shutdown()
-#   exit(0)
-
-# signal.signal(signal.SIGTERM, handle_signal)
-# signal.signal(signal.SIGINT, handle_signal)
 
 if __name__ == "__main__":
   r = RobotMain()

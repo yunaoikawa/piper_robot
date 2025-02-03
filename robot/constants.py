@@ -1,7 +1,7 @@
 import math
 
 # Network
-ROBOT_IP = "100.96.33.32" # tailscale ip
+ROBOT_IP = "100.96.33.32"  # tailscale ip
 COMMAND_PORT = 5555
 
 # policy

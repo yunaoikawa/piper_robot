@@ -134,6 +134,7 @@ class ControlMode(Enum):
   POSITION = 1
   VELOCITY = 2
 
+
 class Base:
   def __init__(self, max_vel=np.array((1.0, 1.0, 1.57)), max_accel=np.array((0.25, 0.25, 0.79))):
     self.max_vel = max_vel
@@ -187,12 +188,13 @@ class Base:
       self.steer_pos[i] = self.steer_motors[i].get_position()
       self.drive_vel[i] = self.drive_motors[i].get_velocity()
 
-  def vehicle_velocity_to_angle_and_speed(self, u_3dof: np.ndarray, cos_error_scaling:bool=True) -> Tuple[np.ndarray, np.ndarray]:
+  def vehicle_velocity_to_angle_and_speed(self, u_3dof: np.ndarray, cos_error_scaling: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     wheel_velocities_directional = self.C @ u_3dof
     vx, vy = wheel_velocities_directional[:4], wheel_velocities_directional[4:]
     wheel_speeds = np.sqrt(vx**2 + vy**2)
     wheel_angles = np.arctan2(vy, vx)
-    if cos_error_scaling: wheel_speeds *= np.cos(((wheel_angles - self.steer_pos) + np.pi) % (2 * np.pi) - np.pi)
+    if cos_error_scaling:
+      wheel_speeds *= np.cos(((wheel_angles - self.steer_pos) + np.pi) % (2 * np.pi) - np.pi)
     return wheel_speeds, wheel_angles
 
   def control_loop(self):
