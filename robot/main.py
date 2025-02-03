@@ -1,17 +1,28 @@
 import zmq
+import threading
 
 from robot.base.base_controller import Base
-from robot.constants import COMMAND_PORT
+from robot.constants import COMMAND_PORT, STATE_PORT
 from robot.communications import CommandType, receive_command
+from robot.timer import FrequencyTimer
 
 
 class RobotMain:
   def __init__(self):
     self.base = Base()
-    self.listener = zmq.Context().socket(zmq.REP)
+    context = zmq.Context()
+    self.listener = context.socket(zmq.REP)
     self.listener.bind(f"tcp://*:{COMMAND_PORT}")
 
+    self.state_publisher: zmq.Socket = context.socket(zmq.PUB)
+    self.state_publisher.bind(f"tcp://*:{STATE_PORT}")
+    self.state_publisher_timer = FrequencyTimer(frequency=100)
+    self.state_publisher_thread = threading.Thread(target=self.state_publisher)
+
   def run(self):
+    self.running = True
+    self.state_publisher_thread.start()
+
     command_handlers = {
       CommandType.SET_TARGET_VELOCITY: self.base.set_target_velocity,
       CommandType.SET_TARGET_POSITION: self.base.set_target_position,
@@ -27,9 +38,15 @@ class RobotMain:
         self.handle_shutdown()
         break
 
+  def state_publisher(self):
+    while self.running:
+      with self.state_publisher_timer:
+        self.state_publisher.send(self.base.x.tobytes())
+
   def handle_shutdown(self):
-    if self.base.control_loop_running:
-      self.base.stop_control()
+    self.running = False
+    self.state_publisher_thread.join()
+    if self.base.control_loop_running: self.base.stop_control()
     self.listener.close()
 
 

@@ -119,8 +119,8 @@ class DriveMotor:
 
     self.fx.set_position(0)
 
-  def get_velocity(self) -> Tuple[float, float]:
-    return (TWO_PI * TIRE_RADIUS) * self.velocity_signal.value / DRIVE_GEAR_RATIO, self.velocity_signal.timestamp
+  def get_velocity(self) -> float:
+    return (TWO_PI * TIRE_RADIUS) * self.velocity_signal.value / DRIVE_GEAR_RATIO
 
   def set_velocity(self, velocity: float) -> None:  # m/s
     velocity = DRIVE_GEAR_RATIO * (velocity / (TWO_PI * TIRE_RADIUS))
@@ -159,7 +159,8 @@ class Base:
 
     self.steer_pos = np.zeros(NUM_SWERVES)
     self.drive_vel = np.zeros(NUM_SWERVES)
-    self.x = np.zeros(3) # x, y, theta
+    self.x = np.zeros(3)  # x, y, θ
+    self.dx = np.zeros(3) # vx, vy, ω
 
     self._command = None
     self.last_command_time = time.time()
@@ -192,14 +193,15 @@ class Base:
 
     dt = self.status_signals[0].timestamp.time - self.status_timestamp.time
     self.status_timestamp = self.status_signals[0].timestamp
-    print("dt: ", dt)
 
-    dx = self.angle_and_speed_to_vehicle_velocity(self.drive_vel, self.steer_pos)
-    self.x += dx * dt
-    self.x[2] = (self.x[2] + np.pi) % (2*np.pi) - np.pi # wrap to (-pi, pi)
-    print(self.x)
+    dx_local = self.angle_and_speed_to_vehicle_velocity(self.drive_vel, self.steer_pos)
+    theta_avg = self.x[2] + 0.5 * dx_local[2] * dt
+    R = np.array([[np.cos(theta_avg), -np.sin(theta_avg), 0], [np.sin(theta_avg), np.cos(theta_avg), 0], [0, 0, 1]])
+    self.dx = R @ dx_local
+    self.x += self.dx * dt
+    print(f"x: {self.x[0]} | y: {self.x[1]} | θ: {(self.x[2] + np.pi) % (2 * np.pi) - np.pi}")
 
-  def angle_and_speed_to_vehicle_velocity(self, wheel_speeds:np.ndarray, wheel_angles:np.ndarray) -> np.ndarray:
+  def angle_and_speed_to_vehicle_velocity(self, wheel_speeds: np.ndarray, wheel_angles: np.ndarray) -> np.ndarray:
     vx, vy = wheel_speeds * np.cos(wheel_angles), wheel_speeds * np.sin(wheel_angles)
     return np.linalg.lstsq(self.C, np.concatenate((vx, vy)), rcond=None)[0]
 
@@ -232,7 +234,7 @@ class Base:
             wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self._command["target"])
             for i in range(NUM_SWERVES):
               self.steer_motors[i].set_position(wheel_angles[i])
-              self.drive_motors[i].set_velocity(wheel_speeds[i])  # TODO: cosine error scaling velocity
+              self.drive_motors[i].set_velocity(wheel_speeds[i])
           elif self._command["mode"] == ControlMode.POSITION:
             raise NotImplementedError("Position control not implemented yet")
 
