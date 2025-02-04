@@ -205,7 +205,7 @@ class Base:
     vx, vy = wheel_speeds * np.cos(wheel_angles), wheel_speeds * np.sin(wheel_angles)
     return np.linalg.lstsq(self.C, np.concatenate((vx, vy)), rcond=None)[0]
 
-  def vehicle_velocity_to_angle_and_speed(self, u_3dof: np.ndarray, cos_error_scaling: bool = True) -> Tuple[np.ndarray, np.ndarray]:
+  def vehicle_velocity_to_angle_and_speed(self, u_3dof: np.ndarray, cos_error_scaling: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     wheel_velocities_directional = self.C @ u_3dof
     vx, vy = wheel_velocities_directional[:4], wheel_velocities_directional[4:]
     wheel_speeds = np.sqrt(vx**2 + vy**2)
@@ -214,7 +214,7 @@ class Base:
     error = diff_angle(wheel_angles, self.steer_pos)
     wheel_angles = np.where(np.abs(error) > np.pi / 2, diff_angle(wheel_angles, np.pi), wheel_angles)
     wheel_speeds = np.where(np.abs(error) > np.pi / 2, -wheel_speeds, wheel_speeds)
-    if cos_error_scaling: wheel_speeds *= np.cos(error)
+    if cos_error_scaling: wheel_speeds *= np.cos(diff_angle(wheel_angles, self.steer_pos))
     return wheel_speeds, wheel_angles
 
   def control_loop(self):
