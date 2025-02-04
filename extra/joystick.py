@@ -57,7 +57,7 @@ class GamepadTeleop:
             # Compute unscaled target velocity
             vy = -self.joy.get_axis(3)
             vx = -self.joy.get_axis(4)  # Right analog stick
-            w = self.joy.get_axis(0)  # Left analog stick
+            w = -self.joy.get_axis(0)  # Left analog stick
             target_velocity = np.array([vx, vy, w])
             # Apply deadzone for joystick drift
             target_velocity = apply_deadzone(target_velocity)
@@ -66,8 +66,9 @@ class GamepadTeleop:
             target_velocity = self.max_vel * target_velocity
             print("Target velocity: ", target_velocity)
 
-            send_command(self.socket, CommandType.SET_TARGET_VELOCITY, target_velocity.tobytes())
-            _ = self.socket.recv()
+            if sum(np.abs(target_velocity)) > 0.0:
+              send_command(self.socket, CommandType.SET_TARGET_VELOCITY, target_velocity.tobytes())
+              _ = self.socket.recv()
 
           elif last_enabled:
             print("Robot disabled")

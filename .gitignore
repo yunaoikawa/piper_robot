@@ -7,5 +7,5 @@ ctre_sim/
 __pycache__/
 *.egg-info/
 
-robot_secrets.py
+*.npy
 *.png

@@ -23,6 +23,7 @@ from robot.constants import (
   TIRE_RADIUS,
 )
 
+def diff_angle(a: np.ndarray, b: np.ndarray) -> np.ndarray: return ((a - b) + np.pi) % (2 * np.pi) - np.pi
 
 class SteerMotor:
   def __init__(self, num: int):
@@ -209,8 +210,11 @@ class Base:
     vx, vy = wheel_velocities_directional[:4], wheel_velocities_directional[4:]
     wheel_speeds = np.sqrt(vx**2 + vy**2)
     wheel_angles = np.arctan2(vy, vx)
-    if cos_error_scaling:
-      wheel_speeds *= np.cos(((wheel_angles - self.steer_pos) + np.pi) % (2 * np.pi) - np.pi)
+
+    error = diff_angle(wheel_angles, self.steer_pos)
+    wheel_angles = np.where(np.abs(error) > np.pi / 2, diff_angle(wheel_angles, np.pi), wheel_angles)
+    wheel_speeds = np.where(np.abs(error) > np.pi / 2, -wheel_speeds, wheel_speeds)
+    if cos_error_scaling: wheel_speeds *= np.cos(error)
     return wheel_speeds, wheel_angles
 
   def control_loop(self):
