@@ -1,5 +1,6 @@
 arm/piper_sdk/
 ctre_sim/
+notebooks/
 
 .DS_Store
 *.swp
@@ -9,3 +10,4 @@ __pycache__/
 
 *.npy
 *.png
+*.r3d
