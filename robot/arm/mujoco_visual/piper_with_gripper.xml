@@ -274,13 +274,6 @@
     </body>
   </worldbody>
 
-  <tendon>
-    <fixed name="split">
-      <joint joint="joint7" coef="0.5" />
-      <joint joint="joint8" coef="-0.5" />
-    </fixed>
-  </tendon>
-
   <actuator>
     <general name="joint1" joint="joint1" ctrlrange="-2.618 2.618" />
     <general name="joint2" joint="joint2" ctrlrange="0 3.14" />
@@ -288,9 +281,12 @@
     <general name="joint4" joint="joint4" ctrlrange="-1.832 1.832" />
     <general name="joint5" joint="joint5" ctrlrange="-1.22 1.22" />
     <general name="joint6" joint="joint6" ctrlrange="-3.14 3.14" />
-    <general name="gripper" tendon="split" ctrlrange="-0.08 0.0" />
-
+    <general name="gripper" joint="joint7" ctrlrange="-0.04 0.0" />
   </actuator>
+
+  <equality>
+    <joint name="mirror_constraint" joint1="joint7" joint2="joint8" polycoef="0 -1 0 0 0"/>
+  </equality>
 
   <keyframe>
     <key name="home" qpos="0 1.57 -1.3485 0 0 0 0 0 " ctrl="0 0 0 0 0 0 0" />
