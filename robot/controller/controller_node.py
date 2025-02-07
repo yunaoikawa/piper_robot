@@ -14,7 +14,7 @@ def main():
 
   for event in node:
     if event["type"] == "INPUT":
-      if event["id"] == "/robot/command":
+      if event["id"] == "command":
         metadata = event["metadata"]
         target = event["value"].to_numpy()
         match metadata["command_type"]:
