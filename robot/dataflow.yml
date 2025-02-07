@@ -1,0 +1,12 @@
+nodes:
+  - id: robot_controller
+    path: controller/controller_node.py
+    inputs:
+      command: joystick/command
+
+  - id: joystick
+    path: ../extra/joystick.py
+    inputs:
+      tick: dora/timer/millis/20
+    outputs:
+      - command
