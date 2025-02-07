@@ -5,7 +5,7 @@ import time
 import phoenix6
 import phoenix6.unmanaged
 
-from robot.base.base_controller import SteerMotor, DriveMotor
+from robot.controller.base import SteerMotor, DriveMotor
 
 def test_steer_motor():
     motor = SteerMotor(7)
