@@ -28,7 +28,7 @@ class Subscriber:
     self.socket: zmq.Socket = ctx.socket(zmq.SUB)
     self.socket.connect(f"tcp://{host}:{port}")
     for topic in topics:
-      self.socket.setsockopt(zmq.SUBSCRIBE, topic.encode("utf-8"))
+      self.socket.setsockopt_string(zmq.SUBSCRIBE, topic)
     if conflate:
       self.socket.setsockopt(zmq.CONFLATE, 1)
     self.deserializer = deserializer

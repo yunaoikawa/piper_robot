@@ -20,6 +20,7 @@ class ControllerNode:
     command_sub = Subscriber(self.ctx, COMMAND_PORT, ["/robot/command"], Command.deserialize)
     while not event.is_set():
       _, command = command_sub.receive()
+      print(f"Received command: {command}")
       match command.type:
         case CommandType.BASE_VELOCITY:
           self.base.set_target_velocity(command.payload)
