@@ -1,17 +1,12 @@
 from dora import Node
-import threading
 
 from robot.msgs import CommandType
 from robot.controller.base import Base
 
 def main():
   node = Node("robot")
-  stop_event = threading.Event()
 
   base = Base()
-  base_control_loop = threading.Thread(target=base.control_loop, args=(stop_event,))
-  base_control_loop.start()
-
   for event in node:
     if event["type"] == "INPUT":
       if event["id"] == "command":
