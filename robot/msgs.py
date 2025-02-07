@@ -44,13 +44,13 @@ class Command:
 
   @classmethod
   def serialize(cls, command: "Command") -> Tuple[str, bytes]:
-    metadata = {"timestamp": command.timestamp, "type": command.type}
+    metadata = {"timestamp": command.timestamp, "type": command.type.value}
     return json.dumps(metadata), command.payload.tobytes()
 
   @classmethod
   def deserialize(cls, metadata: str, data: bytes) -> "Command":
     metadata: Dict = json.loads(metadata)
-    return cls(metadata["timestamp"], metadata["type"], np.frombuffer(data, dtype=np.float64))
+    return cls(metadata["timestamp"], CommandType(metadata["type"]), np.frombuffer(data, dtype=np.float64))
 
 
 @dataclass
