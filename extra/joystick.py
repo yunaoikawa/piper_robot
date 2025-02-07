@@ -8,8 +8,9 @@ import pygame
 from pygame.joystick import Joystick
 
 import zmq
-from robot.timer import FrequencyTimer
-from robot.communications import send_command, CommandType, ROBOT_IP, COMMAND_PORT
+from robot.timer import RateKeeper
+from robot.msgs import Command, CommandType
+from robot.communications import Publisher, COMMAND_PORT
 
 
 pygame.init()
@@ -23,11 +24,11 @@ class GamepadTeleop:
     self.joy = Joystick(0)  # Logitech F710
     self.max_vel = np.array([0.5, 0.5, 0.78])
 
-    self.socket = zmq.Context().socket(zmq.REQ)
-    self.socket.connect(f"tcp://{ROBOT_IP}:{COMMAND_PORT}")
+    self.ctx = zmq.Context()
+    self.command_pub = Publisher(self.ctx, COMMAND_PORT, Command.serialize)
     self.control_loop_running = False
 
-    self.timer = FrequencyTimer(frequency=50)
+    self.rk = RateKeeper(frequency=50)
 
   def run(self):
     last_enabled = False
@@ -67,8 +68,7 @@ class GamepadTeleop:
             print("Target velocity: ", target_velocity)
 
             if sum(np.abs(target_velocity)) > 0.0:
-              send_command(self.socket, CommandType.SET_TARGET_VELOCITY, target_velocity.tobytes())
-              _ = self.socket.recv()
+              self.command_pub.publish("/robot/command", Command(self.rk.last_monitor_time, CommandType.BASE_VELOCITY, target_velocity))
 
           elif last_enabled:
             print("Robot disabled")
@@ -85,4 +85,4 @@ if __name__ == "__main__":
   try:
     teleop.run()
   finally:
-    teleop.socket.close()
+    teleop.command_pub.stop()

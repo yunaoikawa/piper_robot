@@ -19,6 +19,9 @@ class Publisher:
     self.socket.send_string(metadata, zmq.SNDMORE)
     self.socket.send(data, copy=copy)
 
+  def stop(self):
+    self.socket.close()
+
 
 class Subscriber:
   def __init__(self, ctx: zmq.Context, port: int, topics: List[str], deserializer: callable, host: str = "localhost", conflate: bool = True):
@@ -32,7 +35,7 @@ class Subscriber:
 
   def receive(self) -> tuple[str, Any]:
     topic, metadata, data = self.socket.recv_multipart()
-    return topic.decode("utf-8"), self.deserializer(metadata.decode('utf-8'), data)
+    return topic.decode("utf-8"), self.deserializer(metadata.decode("utf-8"), data)
 
   def register_poller(self, poller: zmq.Poller):
     poller.register(self.socket, zmq.POLLIN)

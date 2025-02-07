@@ -50,7 +50,7 @@ class Command:
   @classmethod
   def deserialize(cls, metadata: str, data: bytes) -> "Command":
     metadata: Dict = json.loads(metadata)
-    return cls(metadata["timestamp"], metadata["type"], np.frombuffer(data))
+    return cls(metadata["timestamp"], metadata["type"], np.frombuffer(data, dtype=np.float64))
 
 
 @dataclass
