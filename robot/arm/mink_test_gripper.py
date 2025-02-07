@@ -30,6 +30,21 @@ if __name__ == "__main__":
       lm_damping=1.0,
     ),
   ]
+  limits = [
+    mink.ConfigurationLimit(model=model),
+  ]
+
+  max_velocities = {
+    "joint1": np.pi,
+    "joint2": np.pi,
+    "joint3": np.pi,
+    "joint4": np.pi,
+    "joint5": np.pi,
+    "joint6": np.pi,
+  }
+
+  velocity_limit = mink.VelocityLimit(model, max_velocities)
+  limits.append(velocity_limit)
 
   ## =================== ##
 
@@ -60,7 +75,7 @@ if __name__ == "__main__":
 
       # Compute velocity and integrate into the next configuration.
       for i in range(max_iters):
-        vel = mink.solve_ik(configuration, tasks, rate.dt, solver, 1e-3)
+        vel = mink.solve_ik(configuration, tasks, rate.dt, solver, 1e-3, limits=limits)
         configuration.integrate_inplace(vel, rate.dt)
         err = end_effector_task.compute_error(configuration)
         pos_achieved = np.linalg.norm(err[:3]) <= pos_threshold
