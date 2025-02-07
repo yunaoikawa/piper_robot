@@ -3,6 +3,7 @@ from dora import Node
 from robot.msgs import CommandType
 from robot.controller.base import Base
 
+
 def main():
   node = Node("robot")
 
@@ -20,9 +21,6 @@ def main():
       if event["id"] == "tick":
         base.step()
 
-    # if event["type"] == "STOP" or event["type"] == "ERROR":
-    #   stop_event.set()
-    #   base_control_loop.join()
 
 if __name__ == "__main__":
   main()
