@@ -28,13 +28,12 @@ class GamepadTeleop:
     self.command_pub = Publisher(self.ctx, COMMAND_PORT, Command.serialize)
     self.control_loop_running = False
 
-    self.rk = RateKeeper(frequency=50)
+    self.rk = RateKeeper(name="GamepadTeleop", rate=50)
 
   def run(self):
     last_enabled = False
     print('Press the "Start" button on the gamepad to start control')
     while True:
-      with self.timer:
         pygame.event.pump()
 
         # Start control
@@ -73,6 +72,7 @@ class GamepadTeleop:
           elif last_enabled:
             print("Robot disabled")
             last_enabled = False
+        self.rk.keep_time()
 
 # Handle SIGTERM
 def handler(signum, frame):

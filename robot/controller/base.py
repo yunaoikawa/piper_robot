@@ -6,7 +6,7 @@ from typing import Tuple
 import numpy as np
 import threading
 
-# os.environ["CTR_TARGET"] = "Hardware"
+os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
