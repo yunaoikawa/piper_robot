@@ -1,4 +1,4 @@
-from robot.base.base_controller import Base
+from robot.controller.base import Base
 
 if __name__ == "__main__":
   vehicle = Base()

@@ -2,7 +2,7 @@ import math
 import numpy as np
 import time
 
-from robot.base.base_controller import Base
+from robot.controller.base import Base
 
 def circling_profile():
   T_final = 20
