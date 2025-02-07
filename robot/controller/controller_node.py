@@ -22,10 +22,12 @@ def main():
             base.set_target_velocity(target)
           case CommandType.BASE_POSITION.value:
             base.set_target_position(target)
+      if event["id"] == "tick":
+        base.step()
 
-    if event["type"] == "STOP" or event["type"] == "ERROR":
-      stop_event.set()
-      base_control_loop.join()
+    # if event["type"] == "STOP" or event["type"] == "ERROR":
+    #   stop_event.set()
+    #   base_control_loop.join()
 
 if __name__ == "__main__":
   main()

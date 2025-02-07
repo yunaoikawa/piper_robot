@@ -21,7 +21,6 @@ from robot.constants import (
   WIDTH,
   TIRE_RADIUS,
 )
-from robot.timer import RateKeeper
 
 
 def diff_angle(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -216,34 +215,28 @@ class Base:
       wheel_speeds *= np.cos(diff_angle(wheel_angles, self.steer_pos))
     return wheel_speeds, wheel_angles
 
-  def control_loop(self, stop_event: threading.Event):
-    rk = RateKeeper("base_control_loop", 250, 0.001)
+  def step(self):
     # TODO: Set real-time scheduling policy
-    while not stop_event.is_set():
-      print("Base step: ", self._command)
-      self.update_state()
+    self.update_state()
 
-      if time.time() - self.last_command_time > 2 * POLICY_CONTROL_PERIOD:
-        with self._command_lock:
-          self._command = None
+    if time.time() - self.last_command_time > 2 * POLICY_CONTROL_PERIOD:
+      with self._command_lock:
+        self._command = None
 
-      command = self.get_command()
-      if command is None:
-        for s, d in zip(self.steer_motors, self.drive_motors):
-          s.set_neutral()
-          d.set_neutral()
-      else:
-        phoenix6.unmanaged.feed_enable(0.1)
-        if command["mode"] == ControlMode.VELOCITY:
-          wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self._command["target"])
-          for i in range(NUM_SWERVES):
-            self.steer_motors[i].set_position(wheel_angles[i])
-            self.drive_motors[i].set_velocity(wheel_speeds[i])
-        elif command["mode"] == ControlMode.POSITION:
-          raise NotImplementedError("Position control not implemented yet")
-
-      rk.keep_time()
-    print("Control loop stopped.")
+    command = self.get_command()
+    if command is None:
+      for s, d in zip(self.steer_motors, self.drive_motors):
+        s.set_neutral()
+        d.set_neutral()
+    else:
+      phoenix6.unmanaged.feed_enable(0.1)
+      if command["mode"] == ControlMode.VELOCITY:
+        wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self._command["target"])
+        for i in range(NUM_SWERVES):
+          self.steer_motors[i].set_position(wheel_angles[i])
+          self.drive_motors[i].set_velocity(wheel_speeds[i])
+      elif command["mode"] == ControlMode.POSITION:
+        raise NotImplementedError("Position control not implemented yet")
 
   def get_encoder_offsets(self):
     offsets = []
