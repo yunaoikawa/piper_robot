@@ -1,17 +1,4 @@
 nodes:
-  - id: robot_controller
-    path: controller/controller_node.py
-    inputs:
-      tick: dora/timer/millis/4
-      command: joystick/command
-
-  - id: joystick
-    path: ../extra/joystick.py
-    inputs:
-      tick: dora/timer/millis/20
-    outputs:
-      - command
-
   - id: iphone
     path: sensor/iphone.py
     inputs:
@@ -29,4 +16,3 @@ nodes:
       depth: iphone/depth
       pose: iphone/pose
       confidence: iphone/confidence
-

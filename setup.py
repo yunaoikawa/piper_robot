@@ -19,7 +19,7 @@ with open(directory / 'README.md', encoding='utf-8') as f:
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License"
     ],
-    install_requires=["phoenix6", "numpy", "pyzmq", "dora-rs-cli", "rerun-sdk"],
+    install_requires=["phoenix6", "numpy", "pyzmq", "dora-rs-cli", "rerun-sdk", "record3d"],
     python_requires='>=3.10',
     extras_require={},
     include_package_data=True,
