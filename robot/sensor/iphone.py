@@ -1,9 +1,11 @@
 import pyarrow as pa
 import numpy as np
+import json
+import time
 from threading import Event
 
 from dora import Node
-from record3d import Record3DStream
+from record3d import Record3DStream, CameraPose
 
 new_frame_event = Event()
 stop_event = Event()
@@ -11,6 +13,14 @@ stop_event = Event()
 def on_new_frame(): new_frame_event.set()
 
 def on_stream_stopped(): stop_event.set()
+
+def get_intrinsic_mat_from_coeffs(coeffs: np.ndarray) -> np.ndarray:
+  return np.array([[coeffs.fx, 0, coeffs.tx], [0, coeffs.fy, coeffs.ty], [0, 0, 1]])
+
+def get_timestamp_from_misc_data(misc_data: np.ndarray) -> float:
+  return str(json.loads(misc_data.tobytes().decode('ascii'))["metadata"]["unixTimestampOnReceivedFrame"])
+
+def get_pose_array_from_pose(pose: CameraPose) -> np.ndarray: return np.array([pose.qx, pose.qy, pose.qz, pose.qw, pose.tx, pose.ty, pose.tz])
 
 def main(device_id: int):
   # start stream
@@ -32,15 +42,17 @@ def main(device_id: int):
 
       rgb = session.get_rgb_frame()
       depth = session.get_depth_frame()
-      intrinsics = session.get_intrinsic_mat_from_coeffs(session.get_intrinsic_mat())
+      intrinsics = session.get_intrinsic_mat()
       confidence = session.get_confidence_frame()
-      pose = session.get_camera_pose()
-      timestamp = session.get_misc_data()["metadata"]["relativeTimestamp"]
+      pose = get_pose_array_from_pose(session.get_camera_pose())
+      timestamp = get_timestamp_from_misc_data(session.get_misc_data())
+      timestamp_node = time.time_ns()
+
 
       if depth.shape != rgb.shape: pass  # TODO: resize depth map
 
       # RGB output
-      node.send_output("image", pa.array(rgb.ravel()), {"timestamp": timestamp, "encoding": "8UC3", "width": rgb.shape[1], "height": rgb.shape[0]})
+      node.send_output("image", pa.array(rgb.ravel()), {"timestamp": timestamp, "timestamp_node": timestamp_node, "encoding": "8UC3", "width": rgb.shape[1], "height": rgb.shape[0]})
 
       # Depth output with focal length and encoding info
       node.send_output(
@@ -51,8 +63,8 @@ def main(device_id: int):
           "width": depth.shape[1],
           "height": depth.shape[0],
           "encoding": "64FC1",
-          "focal": [int(intrinsics[0, 0]), int(intrinsics[1, 1])],
-          "resolution": [int(intrinsics[0, 2]), int(intrinsics[1, 2])],
+          "focal": [int(intrinsics.fx), int(intrinsics.fy)],
+          "resolution": [int(intrinsics.tx), int(intrinsics.ty)],
         },
       )
 
