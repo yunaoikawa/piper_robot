@@ -32,7 +32,7 @@ def main(device_id: int):
 
       rgb = session.get_rgb_frame()
       depth = session.get_depth_frame()
-      intrinsics = session.self.get_intrinsic_mat_from_coeffs(session.get_intrinsic_mat())
+      intrinsics = session.get_intrinsic_mat_from_coeffs(session.get_intrinsic_mat())
       confidence = session.get_confidence_frame()
       pose = session.get_camera_pose()
       timestamp = session.get_misc_data()["metadata"]["relativeTimestamp"]
