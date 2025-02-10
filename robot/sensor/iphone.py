@@ -1,7 +1,6 @@
 import pyarrow as pa
 import numpy as np
 import json
-import time
 from threading import Event
 
 from dora import Node
@@ -18,7 +17,8 @@ def get_intrinsic_mat_from_coeffs(coeffs: np.ndarray) -> np.ndarray:
   return np.array([[coeffs.fx, 0, coeffs.tx], [0, coeffs.fy, coeffs.ty], [0, 0, 1]])
 
 def get_timestamp_from_misc_data(misc_data: np.ndarray) -> float:
-  return str(json.loads(misc_data.tobytes().decode('ascii'))["metadata"]["unixTimestampOnReceivedFrame"])
+  metadata = misc_data.tobytes().decode('ascii')
+  return json.loads(metadata)["metadata"]["unixTimestampOnReceivedFrame"]
 
 def get_pose_array_from_pose(pose: CameraPose) -> np.ndarray: return np.array([pose.qx, pose.qy, pose.qz, pose.qw, pose.tx, pose.ty, pose.tz])
 
@@ -38,21 +38,21 @@ def main(device_id: int):
   for event in node:
     if event["type"] == "INPUT" and event["id"] == "tick":
       if stop_event.is_set(): break
-      new_frame_event.wait()  # wait for new frame
+      rx_frame = new_frame_event.wait(0.1)  # wait for new frame
+      if not rx_frame: continue
 
       rgb = session.get_rgb_frame()
       depth = session.get_depth_frame()
       intrinsics = session.get_intrinsic_mat()
       confidence = session.get_confidence_frame()
       pose = get_pose_array_from_pose(session.get_camera_pose())
-      timestamp = get_timestamp_from_misc_data(session.get_misc_data())
-      timestamp_node = time.time_ns()
-
+      timestamp = str(get_timestamp_from_misc_data(session.get_misc_data()))
 
       if depth.shape != rgb.shape: pass  # TODO: resize depth map
 
       # RGB output
-      node.send_output("image", pa.array(rgb.ravel()), {"timestamp": timestamp, "timestamp_node": timestamp_node, "encoding": "8UC3", "width": rgb.shape[1], "height": rgb.shape[0]})
+      print(rgb.shape)
+      node.send_output("image", pa.array(rgb.ravel()), {"timestamp": timestamp, "encoding": "8UC3", "width": rgb.shape[1], "height": rgb.shape[0]})
 
       # Depth output with focal length and encoding info
       node.send_output(
