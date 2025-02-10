@@ -55,8 +55,9 @@ if __name__ == "__main__":
     max_iters = 10
 
     with mujoco.viewer.launch_passive(
-        model=model, data=data, show_left_ui=False, show_right_ui=False
+        model=model, data=data, show_left_ui=True, show_right_ui=False
     ) as viewer:
+        viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
         mujoco.mjv_defaultFreeCamera(model, viewer.cam)
 
         mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
