@@ -13,3 +13,4 @@ __pycache__/
 *.npy
 *.png
 *.r3d
+*.rrd

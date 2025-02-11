@@ -9,10 +9,11 @@ nodes:
       - pose
       - confidence
 
-  - id: iphone_listener
-    path: sensor/iphone_listener.py
+  - id: rerun
+    path: rerun/rerun_viz.py
     inputs:
-      image: iphone/image
-      depth: iphone/depth
-      pose: iphone/pose
-      confidence: iphone/confidence
+      tick: dora/timer/millis/1000
+      iphone/image: iphone/image
+      iphone/depth: iphone/depth
+      iphone/pose: iphone/pose
+      iphone/confidence: iphone/confidence

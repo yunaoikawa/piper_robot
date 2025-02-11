@@ -51,18 +51,17 @@ def main(device_id: int):
       if depth.shape != rgb.shape: pass  # TODO: resize depth map
 
       # RGB output
-      print(rgb.shape)
       node.send_output("image", pa.array(rgb.ravel()), {"timestamp": timestamp, "encoding": "8UC3", "width": rgb.shape[1], "height": rgb.shape[0]})
 
       # Depth output with focal length and encoding info
       node.send_output(
         "depth",
-        pa.array(depth.ravel().astype(np.float64)),
+        pa.array(depth.ravel().astype(np.float32)),
         {
           "timestamp": timestamp,
           "width": depth.shape[1],
           "height": depth.shape[0],
-          "encoding": "64FC1",
+          "encoding": "32FC1",
           "focal": [int(intrinsics.fx), int(intrinsics.fy)],
           "resolution": [int(intrinsics.tx), int(intrinsics.ty)],
         },
