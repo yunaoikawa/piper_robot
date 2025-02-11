@@ -1,11 +1,13 @@
 import numpy as np
-import time
 
 import rerun as rr
 from dora import Node
 
-from robot.constants import LENGTH, WIDTH
 from robot.nav.mapping import get_pcd_from_image_and_depth
+
+def get_int_mat(focal, resolution):
+    return np.array([[focal[0], 0, resolution[0]], [0, focal[1], resolution[1]], [0, 0, 1]], dtype=np.float32)
+
 
 def log_image(event):
     image_buffer: np.ndarray = event["value"].to_numpy().astype(np.uint8)
@@ -26,34 +28,15 @@ def log_depth(event):
     depth = depth_buffer.reshape((height, width))
     rr.log("iphone/depth", rr.DepthImage(depth))
 
-def log_pose(event):
-    # Create coordinate frame arrows
-    frame_length = 1.0  # 1 meter arrows
-    x_axis = np.array([[0, 0], [frame_length, 0]])
-    y_axis = np.array([[0, 0], [0, -frame_length]])
+def log_pose(all_poses, event):
+    pose_buffer: np.ndarray = event["value"].to_numpy().astype(np.float32)
+    all_poses.append(pose_buffer)
+    for pose in all_poses:
+        quaternion, translation = pose[:4], pose[4:7]
+        rr.log("world/camera", rr.Transform3D(translation=translation, rotation=rr.Quaternion(xyzw=quaternion)))
+    return all_poses
 
-    buffer = event["value"].to_numpy()
-    state = np.frombuffer(buffer, dtype=float)
-
-    rr.log("world/x_axis", rr.LineStrips2D([x_axis], colors=(255, 0, 0)))
-    rr.log("world/y_axis", rr.LineStrips2D([y_axis], colors=[0, 0, 255]))
-
-    x, y, theta = state
-    y = -y  # Invert y-axis
-    theta = -theta  # Invert theta
-    corners = np.array([[LENGTH, WIDTH], [LENGTH, -WIDTH], [-LENGTH, -WIDTH], [-LENGTH, WIDTH], [LENGTH, WIDTH]])
-    R = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
-    corners = (R @ corners.T).T + np.array([x, y])
-
-    rr.set_time_seconds("real_time", time.time())
-    rr.log('robot/base', rr.LineStrips2D([corners]))
-
-    arrow_length = 0.7 * LENGTH * 2
-    arrow_tip = np.array([x, y]) + arrow_length * np.array([np.cos(theta), np.sin(theta)])
-    arrow_line = np.array([[x, y], arrow_tip])
-    rr.log("robot/arrow", rr.LineStrips2D([arrow_line]))
-
-def log_map(curr_map, image_event, depth_event, curr_confidence_event, pose_event):
+def log_map(curr_map, all_poses, image_event, depth_event, curr_confidence_event, pose_event):
     image_time = float(image_event["metadata"]["timestamp"])
     depth_time = float(depth_event["metadata"]["timestamp"])
     pose_time = float(pose_event["metadata"]["timestamp"])
@@ -67,17 +50,26 @@ def log_map(curr_map, image_event, depth_event, curr_confidence_event, pose_even
     image = image_event["value"].to_numpy().astype(np.uint8).reshape((image_event["metadata"]["height"], image_event["metadata"]["width"], 3))
     depth = depth_event["value"].to_numpy().astype(np.float32).reshape((depth_event["metadata"]["height"], depth_event["metadata"]["width"]))
     confidence = curr_confidence_event["value"].to_numpy().astype(np.uint8).reshape((depth_event["metadata"]["height"], depth_event["metadata"]["width"]))
+    pose = pose_event["value"].to_numpy().astype(np.float32)
+
     focal = depth_event["metadata"]["focal"]
     resolution = depth_event["metadata"]["resolution"]
-    # pose = pose_event["value"].to_numpy().astype(np.float32)
 
-    pcd = get_pcd_from_image_and_depth(image, depth, confidence, focal, resolution)
+    all_poses.append(pose)
+    rr.log("world/pose", rr.Points3D(positions=[pose[4:7] for pose in all_poses], radii=[0.025 for _ in all_poses]))
+
+    rr.log("world/camera", rr.Transform3D(translation=pose[4:7], rotation=rr.Quaternion(xyzw=pose[:4])))
+    rr.log("world/camera",
+        rr.Pinhole(resolution=(image.shape[1], image.shape[0]), focal_length=focal, principal_point=resolution, camera_xyz=rr.ViewCoordinates.RDF, image_plane_distance=0.1)
+    )
+    pcd = get_pcd_from_image_and_depth(image, depth, confidence, pose, focal, resolution)
 
     if curr_map is None: curr_map = pcd
     else:
         curr_map += pcd
         curr_map = curr_map.voxel_down_sample(voxel_size=0.02)
-    rr.log("world/map", rr.Points3D(positions=np.asarray(pcd.points), colors=np.asarray(pcd.colors)))
+    rr.log("world/map", rr.Points3D(positions=np.asarray(curr_map.points), colors=np.asarray(curr_map.colors)))
+    return curr_map, all_poses
 
 
 def main():
@@ -86,6 +78,7 @@ def main():
     rr.init("rerun_visualizer")
     # rr.serve_web(open_browser=False, server_memory_limit="1GB")
     rr.save("rerun_test.rrd")
+    rr.log("world/axis", rr.Transform3D(translation=[0, 0, 0], rotation=rr.Quaternion(xyzw=[1, 0, 0, 0]), axis_length=0.5), static=True)
 
     curr_image_event = None
     curr_depth_event = None
@@ -93,6 +86,7 @@ def main():
     curr_pose_event = None
 
     curr_map = None
+    all_poses = []
 
     for event in node:
         if event["type"] == "INPUT":
@@ -108,10 +102,10 @@ def main():
                 if curr_image_event is not None: log_image(curr_image_event)
                 if curr_depth_event is not None: log_depth(curr_depth_event)
                 if curr_confidence_event is not None: pass
-                if curr_pose_event is not None: pass # log_pose(curr_pose_event)
+                # if curr_pose_event is not None: all_poses = log_pose(all_poses, curr_pose_event)
 
                 if curr_image_event is not None and curr_depth_event is not None and curr_confidence_event is not None and curr_pose_event is not None:
-                    log_map(curr_map, curr_image_event, curr_depth_event, curr_confidence_event, curr_pose_event)
+                    curr_map, all_poses = log_map(curr_map, all_poses, curr_image_event, curr_depth_event, curr_confidence_event, curr_pose_event)
 
     rr.disconnect()
 if __name__ == "__main__":
