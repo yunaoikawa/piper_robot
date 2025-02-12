@@ -80,6 +80,12 @@ def add_3color_axes_to_viewer(pos, rotation, viewer, length=0.25):
     )
 
 
+def transform_gripper_values(gripper_values: np.ndarray) -> np.ndarray:
+    HIGH = -0.04
+    LOW = 0
+    return gripper_values * (HIGH - LOW) + LOW
+
+
 # This transform should take the data from the dataset and transform it to the
 # coordinate frame of the robot end-effector.
 # The data in our datasets follows the OpenCV convention:
@@ -114,7 +120,7 @@ def get_random_target_trajectory(task, seed=424242):
     SE3_matrices[:, :3, :3] = transformed_rot
     SE3_matrices[:, :3, 3] = transformed_xyz
     SE3_matrices[:, 3, 3] = 1
-    return SE3_matrices, gripper_values
+    return SE3_matrices, transform_gripper_values(gripper_values)
 
 
 parser = argparse.ArgumentParser(
@@ -196,7 +202,6 @@ if __name__ == "__main__":
         show_right_ui=False,
         key_callback=key_callback,
     ) as viewer:
-        add_3color_axes_to_viewer(np.ones(3), np.eye(3), viewer)
         viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
         mujoco.mjv_defaultFreeCamera(model, viewer.cam)
 
@@ -231,6 +236,7 @@ if __name__ == "__main__":
                 target_T_wt = init_T_wt.copy().multiply(
                     mink.SE3.from_matrix(target_SE3)
                 )
+                target_gripper = gripper_values[current_target_idx]
                 if current_target_idx % draw_every == 0:
                     add_3color_axes_to_viewer(
                         target_T_wt.copy().translation(),
@@ -252,7 +258,8 @@ if __name__ == "__main__":
                 if pos_achieved and ori_achieved:
                     break
 
-            data.ctrl = configuration.q[:7]
+            data.ctrl[:6] = configuration.q[:6]
+            data.ctrl[6] = target_gripper
             mujoco.mj_step(model, data)
 
             # Visualize at fixed FPS.
