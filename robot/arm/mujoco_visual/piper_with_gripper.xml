@@ -242,7 +242,7 @@
                   <geom quat="0.707105 0 0 0.707108" mesh="link6" class="collision" />
 
                   <geom name="gripper_geom" type="mesh" rgba="0.792157 0.819608 0.933333 0" mesh="link6_1_gripper" />
-                  <site name="attachment_site" size="0.01" pos="0 0 0.1" quat="-1 1 1 1" rgba="1 0 0 1" group="1" />
+                  <site name="attachment_site" size="0.01" pos="0 0 0" quat="1 0 0 0" rgba="1 0 0 1" group="1" />
 
                   <body name="link7" pos="0 0 0.13503" quat="1.89468e-08 1.89469e-08 0.707108 0.707105">
                     <inertial pos="-0.000277778 -0.0467673 -0.00921029" quat="0.46134 0.536174 -0.553273 0.439968"
@@ -290,6 +290,7 @@
 
   <keyframe>
     <key name="home" qpos="0 1.57 -1.3485 0 0 0 0 0 " ctrl="0 0 0 0 0 0 0" />
+    <key name="tasks" qpos='0 0.502701 -0.414997 0 0 0 0 0'/>
   </keyframe>
 
 
