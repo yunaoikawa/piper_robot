@@ -25,7 +25,7 @@ def log_pose(all_poses, event):
 
 def log_map(curr_map, all_poses, image, depth, confidence, pose, focal, resolution):
   all_poses.append(pose)
-  rr.log("world/pose", rr.Points3D(positions=[pose[4:7] for pose in all_poses], radii=[0.025 for _ in all_poses]))
+  rr.log("world/pose", rr.Points3D(positions=[pose[4:7] for pose in all_poses], radii=[0.05 for _ in all_poses], colors=[(0, 255, 0) for _ in all_poses]))
 
   rr.log("world/camera", rr.Transform3D(translation=pose[4:7], rotation=rr.Quaternion(xyzw=pose[:4])))
   rr.log(
@@ -80,8 +80,9 @@ def main():
       focal = data["focal"]
       resolution = data["resolution"]
 
-      if init_timestamp is None: init_timestamp = data["timestamp"]
-      print(f"visualizing at timestamp: {data["timestamp"]} | relative: {data["timestamp"] - init_timestamp}")
+      if init_timestamp is None: init_timestamp = float(data["timestamp"])
+      print(f"visualizing at timestamp: {data['timestamp']} | relative: {float(data['timestamp']) - init_timestamp}")
+      print(f"delay @ viz: {time.time() - float(data['timestamp']):.3f}s")
 
       tic = time.time()
       curr_map, all_poses = log_map(curr_map, all_poses, image, depth, confidence, pose, focal, resolution)

@@ -15,6 +15,7 @@ def pub_map_info(socket: zmq.Socket, image_event, depth_event, curr_confidence_e
     if max_diff > 0.04:
         print(f"Error: Event timestamps not synchronized. Max difference: {max_diff:.3f}s")
         return
+    print("delay @ pub_map_info:", time.time() - image_time)
 
     image_md, depth_md = image_event["metadata"], depth_event["metadata"]
 
