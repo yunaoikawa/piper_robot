@@ -10,7 +10,7 @@ nodes:
       - confidence
 
   - id: rerun
-    path: rerun/rerun_viz.py
+    path: rerun/viz_publisher.py
     inputs:
       tick: dora/timer/millis/1000
       iphone/image: iphone/image
