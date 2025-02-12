@@ -8,10 +8,14 @@ import time
 from robot.nav.mapping import get_pcd_from_image_and_depth
 
 
-def log_image(image): rr.log("iphone/image", rr.Image(image))
+def log_image(image):
+  image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+  rr.log("iphone/image", rr.Image(image))
 
 
-def log_depth(depth): rr.log("iphone/depth", rr.DepthImage(depth))
+def log_depth(depth):
+  depth = cv2.rotate(depth, cv2.ROTATE_90_CLOCKWISE)
+  rr.log("iphone/depth", rr.DepthImage(depth))
 
 
 def log_pose(all_poses, event):
@@ -80,12 +84,19 @@ def main():
       focal = data["focal"]
       resolution = data["resolution"]
 
+      # rotate image, depth and confidence 90 degrees clockwise
+      # image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+      # depth = cv2.rotate(depth, cv2.ROTATE_90_CLOCKWISE)
+      # confidence = cv2.rotate(confidence, cv2.ROTATE_90_CLOCKWISE)
+
       if init_timestamp is None: init_timestamp = float(data["timestamp"])
       print(f"visualizing at timestamp: {data['timestamp']} | relative: {float(data['timestamp']) - init_timestamp}")
       print(f"delay @ viz: {time.time() - float(data['timestamp']):.3f}s")
 
       tic = time.time()
       curr_map, all_poses = log_map(curr_map, all_poses, image, depth, confidence, pose, focal, resolution)
+      log_image(image)
+      log_depth(depth)
       print(f"log_map elapsed time: {time.time() - tic:.3f}s")
 
   finally:
