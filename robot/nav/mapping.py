@@ -17,9 +17,6 @@ def get_pcd_from_image_and_depth(image: np.ndarray, depth: np.ndarray, confidenc
         rgb_o3d, depth_o3d, convert_rgb_to_intensity=False
     )
 
-    print("focal:", focal)
-    print("resolution:", resolution)
-
     camera_intrinsics = o3d.camera.PinholeCameraIntrinsic(
         width=rgb_width,
         height=rgb_height,
@@ -42,7 +39,7 @@ def get_pcd_from_image_and_depth(image: np.ndarray, depth: np.ndarray, confidenc
     transform[:3, :3] = as_rotation_matrix(quaternion(qw, qx, qy, qz))
     transform[:3, 3] = translation
     pcd.transform(transform)
-    pcd = pcd.voxel_down_sample(voxel_size=0.02)
+    pcd = pcd.voxel_down_sample(voxel_size=0.05)
     # pcd.transform(flip_transform_inverse)
 
     return pcd

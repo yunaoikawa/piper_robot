@@ -3,6 +3,7 @@ import zmq
 import cv2
 import blosc as bl
 import pickle
+import time
 
 from dora import Node
 
@@ -15,10 +16,11 @@ def pub_map_info(socket: zmq.Socket, image_event, depth_event, curr_confidence_e
         print(f"Error: Event timestamps not synchronized. Max difference: {max_diff:.3f}s")
         return
 
-    image = image_event["value"].to_numpy().astype(np.uint8).reshape((image_event["metadata"]["height"], image_event["metadata"]["width"], 3))
-    depth = depth_event["value"].to_numpy().astype(np.float32).reshape((depth_event["metadata"]["height"], depth_event["metadata"]["width"]))
-    confidence = curr_confidence_event["value"].to_numpy().astype(np.uint8).reshape((depth_event["metadata"]["height"], depth_event["metadata"]["width"]))
-    # print(f"{confidence[confidence==2].sum()}")
+    image_md, depth_md = image_event["metadata"], depth_event["metadata"]
+
+    image = image_event["value"].to_numpy().astype(np.uint8).reshape((image_md["height"], image_md["width"], 3))
+    depth = depth_event["value"].to_numpy().astype(np.float32).reshape((depth_md["height"], depth_md["width"]))
+    confidence = curr_confidence_event["value"].to_numpy().astype(np.uint8).reshape((depth_md["height"], depth_md["width"]))
     pose = pose_event["value"].to_numpy().astype(np.float32)
 
     _, buffer = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
@@ -28,7 +30,11 @@ def pub_map_info(socket: zmq.Socket, image_event, depth_event, curr_confidence_e
     compressed_confidence = bl.pack_array(
         confidence, cname="zstd", clevel=1, shuffle=bl.NOSHUFFLE
     )
-    data = {"image": buffer, "depth": compressed_depth, "confidence": compressed_confidence, "pose": pose, "focal": depth_event["metadata"]["focal"], "resolution": depth_event["metadata"]["resolution"]}
+    data = {
+        "image": buffer, "depth": compressed_depth, "confidence": compressed_confidence,
+        "pose": pose, "focal": depth_md["focal"], "resolution": depth_md["resolution"], "timestamp": image_md["timestamp"]
+    }
+    print(f"Publishing map info with timestamp: {image_md['timestamp']}")
     socket.send(b"map_info" + pickle.dumps(data, protocol=-1))
 
 
@@ -36,6 +42,7 @@ def main():
     context = zmq.Context()
     socket = context.socket(zmq.PUB)
     socket.bind("tcp://*:5555")
+    socket.setsockopt(zmq.HWM, 2)
 
     node = Node("rerun")
 
@@ -43,9 +50,6 @@ def main():
     curr_depth_event = None
     curr_confidence_event = None
     curr_pose_event = None
-
-    # curr_map = None
-    # all_poses = []
 
     for event in node:
         if event["type"] == "INPUT":
@@ -60,7 +64,9 @@ def main():
             elif event["id"] == "tick":
 
                 if curr_image_event is not None and curr_depth_event is not None and curr_confidence_event is not None and curr_pose_event is not None:
+                    tic = time.time()
                     pub_map_info(socket, curr_image_event, curr_depth_event, curr_confidence_event, curr_pose_event)
+                    print(f"Publishing took {time.time() - tic:.3f}s")
 
 
 if __name__ == "__main__":
