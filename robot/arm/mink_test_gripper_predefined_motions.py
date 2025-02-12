@@ -228,20 +228,17 @@ if __name__ == "__main__":
             if (current_time * fps) >= current_target_idx and not done:
                 current_target_idx += 1
                 if current_target_idx >= len(task_trajectory):
-                    done = True
+                    break
             # Update task target.
-            if not done:
-                target_SE3 = task_trajectory[current_target_idx]
-                target_T_wt = init_T_wt.copy().multiply(
-                    mink.SE3.from_matrix(target_SE3)
+            target_SE3 = task_trajectory[current_target_idx]
+            target_T_wt = init_T_wt.copy().multiply(mink.SE3.from_matrix(target_SE3))
+            target_gripper = gripper_values[current_target_idx]
+            if current_target_idx % draw_every == 0:
+                add_3color_axes_to_viewer(
+                    target_T_wt.copy().translation(),
+                    target_T_wt.copy().rotation().as_matrix(),
+                    viewer.user_scn,
                 )
-                target_gripper = gripper_values[current_target_idx]
-                if current_target_idx % draw_every == 0:
-                    add_3color_axes_to_viewer(
-                        target_T_wt.copy().translation(),
-                        target_T_wt.copy().rotation().as_matrix(),
-                        viewer.user_scn,
-                    )
             # Update task target.
             end_effector_task.set_target(target_T_wt)
 
