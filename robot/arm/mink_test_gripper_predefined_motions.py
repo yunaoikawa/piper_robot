@@ -37,8 +37,7 @@ class KeyCallback:
             self.pause = not self.pause
 
 
-def add_3color_axes_to_viewer(pos, rotation, viewer, length=0.25):
-    scene = viewer.user_scn
+def add_3color_axes_to_viewer(pos, rotation, scene, length=0.25, opacity=0.1):
     if scene.ngeom >= scene.maxgeom:
         return
     scene.ngeom += 3  # increment ngeom
@@ -49,7 +48,7 @@ def add_3color_axes_to_viewer(pos, rotation, viewer, length=0.25):
         geom=scene.geoms[scene.ngeom - 3],
         type=mujoco.mjtGeom.mjGEOM_ARROW,
         size=np.array([0.01, 0.01, length]),
-        rgba=np.array([1, 0, 0, 0.5]),
+        rgba=np.array([1, 0, 0, opacity]),
         pos=pos,
         mat=R_local_to_world.flatten(),  # Rotate to align with X
     )
@@ -64,7 +63,7 @@ def add_3color_axes_to_viewer(pos, rotation, viewer, length=0.25):
         geom=scene.geoms[scene.ngeom - 2],
         type=mujoco.mjtGeom.mjGEOM_ARROW,
         size=np.array([0.01, 0.01, length]),
-        rgba=np.array([0, 1, 0, 0.5]),
+        rgba=np.array([0, 1, 0, opacity]),
         pos=pos,
         mat=R_local_to_world_y.flatten(),  # Rotate 90° to align with Y
     )
@@ -74,7 +73,7 @@ def add_3color_axes_to_viewer(pos, rotation, viewer, length=0.25):
         geom=scene.geoms[scene.ngeom - 1],
         type=mujoco.mjtGeom.mjGEOM_ARROW,
         size=np.array([0.01, 0.01, length]),
-        rgba=np.array([0, 0, 1, 0.5]),
+        rgba=np.array([0, 0, 1, opacity]),
         pos=pos,
         mat=rotation.flatten(),  # Identity matrix for alignment
     )
@@ -241,7 +240,7 @@ if __name__ == "__main__":
                     add_3color_axes_to_viewer(
                         target_T_wt.copy().translation(),
                         target_T_wt.copy().rotation().as_matrix(),
-                        viewer,
+                        viewer.user_scn,
                     )
             # Update task target.
             end_effector_task.set_target(target_T_wt)
