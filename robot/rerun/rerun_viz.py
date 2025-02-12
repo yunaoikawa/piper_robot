@@ -59,10 +59,11 @@ def main():
 
     socket.connect(f"tcp://{robot_ip}:5555")
 
-    rr.init("rerun_visualizer")
+    rr.init("rerun_visualizer", spawn=True)
     # rr.serve_web(open_browser=False, server_memory_limit="1GB")
-    rr.save("rerun_test.rrd")
+    # rr.save("rerun_test.rrd")
     rr.log("world/axis", rr.Transform3D(translation=[0, 0, 0], rotation=rr.Quaternion(xyzw=[1, 0, 0, 0]), axis_length=0.5), static=True)
+    rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Y_UP)
 
     curr_map = None
     all_poses = []
