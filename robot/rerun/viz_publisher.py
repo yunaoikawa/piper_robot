@@ -14,12 +14,11 @@ def pub_map_info(socket: zmq.Socket, image_event, depth_event, curr_confidence_e
     if max_diff > 0.04:
         print(f"Error: Event timestamps not synchronized. Max difference: {max_diff:.3f}s")
         return
-    print("publishing map info")
 
     image = image_event["value"].to_numpy().astype(np.uint8).reshape((image_event["metadata"]["height"], image_event["metadata"]["width"], 3))
     depth = depth_event["value"].to_numpy().astype(np.float32).reshape((depth_event["metadata"]["height"], depth_event["metadata"]["width"]))
     confidence = curr_confidence_event["value"].to_numpy().astype(np.uint8).reshape((depth_event["metadata"]["height"], depth_event["metadata"]["width"]))
-    print(f"{confidence[confidence==2].sum()}")
+    # print(f"{confidence[confidence==2].sum()}")
     pose = pose_event["value"].to_numpy().astype(np.float32)
 
     _, buffer = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
