@@ -42,7 +42,7 @@ def main():
     context = zmq.Context()
     socket = context.socket(zmq.PUB)
     socket.bind("tcp://*:5555")
-    socket.setsockopt(zmq.HWM, 2)
+    socket.setsockopt(zmq.SNDHWM, 2)
 
     node = Node("rerun")
 
