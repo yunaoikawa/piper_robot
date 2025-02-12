@@ -18,7 +18,8 @@ def apply_deadzone(arr, deadzone_size=0.05):
 def main():
   pygame.init()
   joy = Joystick(0)  # Logitech F710
-  max_vel = np.array([0.5, 0.5, 0.78])
+  max_vels = [np.array([0.5, 0.5, 0.78]), np.array([0.25, 0.25, 0.78]), np.array([0.75, 0.75, 0.78])]
+  max_vel_setting = 0 
   control_loop_running = False
   last_enabled = False
 
@@ -38,7 +39,9 @@ def main():
           print("Control stopped")
 
         if control_loop_running:
+          left_bumper = joy.get_button(4)
           right_bumper = joy.get_button(5)
+          if left_bumper: max_vel_setting = (max_vel_setting + 1) % 3
           if right_bumper:
             if not last_enabled: last_enabled = True
             vy = -joy.get_axis(3)
@@ -47,13 +50,14 @@ def main():
             target_velocity = np.array([vx, vy, w])
             target_velocity = apply_deadzone(target_velocity)
 
-            target_velocity = max_vel * target_velocity
-            print("Target velocity: ", target_velocity)
+            target_velocity = max_vels[max_vel_setting] * target_velocity
+            # print("Target velocity: ", target_velocity)
             if sum(np.abs(target_velocity)) > 0.0:
               node.send_output("command", pa.array(target_velocity.ravel()), metadata={"command_type": CommandType.BASE_VELOCITY.value})
           elif last_enabled:
             print("Robot disabled")
             last_enabled = False
+          
 
 if __name__ == "__main__":
   main()
