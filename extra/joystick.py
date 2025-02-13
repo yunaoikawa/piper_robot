@@ -8,7 +8,7 @@ from pygame.joystick import Joystick
 import pyarrow as pa
 from dora import Node
 
-from robot.msgs import CommandType
+from robot.controller import CommandType
 
 
 def apply_deadzone(arr, deadzone_size=0.05):
@@ -19,7 +19,7 @@ def main():
   pygame.init()
   joy = Joystick(0)  # Logitech F710
   max_vels = [np.array([0.5, 0.5, 0.78]), np.array([0.25, 0.25, 0.78]), np.array([0.75, 0.75, 0.78])]
-  max_vel_setting = 0 
+  max_vel_setting = 0
   control_loop_running = False
   last_enabled = False
 
@@ -57,7 +57,7 @@ def main():
           elif last_enabled:
             print("Robot disabled")
             last_enabled = False
-          
+
 
 if __name__ == "__main__":
   main()

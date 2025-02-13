@@ -1,6 +1,6 @@
 from dora import Node
 
-from robot.msgs import CommandType
+from robot.controller import CommandType
 from robot.controller.base import Base
 
 
