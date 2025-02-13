@@ -167,8 +167,8 @@ if __name__ == "__main__":
     configuration = mink.Configuration(model)
     collision_pairs = [
         (
-            mink.get_subtree_geom_ids(model, model.body("right_link3").id),
-            mink.get_subtree_geom_ids(model, model.body("left_link3").id),
+            mink.get_subtree_geom_ids(model, model.body("right_link5").id),
+            mink.get_subtree_geom_ids(model, model.body("left_link5").id),
         ),
     ]
     tasks = [
