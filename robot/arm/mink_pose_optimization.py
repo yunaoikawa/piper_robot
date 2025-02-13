@@ -1,4 +1,6 @@
 import argparse
+import pickle
+from concurrent import futures
 from functools import partial
 from pathlib import Path
 
@@ -338,7 +340,7 @@ if __name__ == "__main__":
     ])
     # Nevergrad parametrization
     params = ng.p.Array(init=default_init_position, lower=ctrl_lower, upper=ctrl_upper)
-    optimizer = ng.optimizers.NGOpt(parametrization=params, budget=2)
+    optimizer = ng.optimizers.NGOpt(parametrization=params, budget=4)
     to_optimize = partial(
         rollout_with_random_tasks_and_fixed_init,
         seed=args.seed,
@@ -346,5 +348,9 @@ if __name__ == "__main__":
         fps=fps,
         use_left=use_left,
     )
-    recommendation = optimizer.minimize(to_optimize)
-    print(recommendation)
+    with futures.ProcessPoolExecutor(max_workers=2) as executor:
+        recommendation = optimizer.minimize(
+            to_optimize, executor=executor, batch_mode=False
+        )
+    print(recommendation.value)
+    pickle.dump(recommendation, open("recommendation.pkl", "wb"))
