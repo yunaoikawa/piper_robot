@@ -7,6 +7,7 @@ import time
 
 from dora import Node
 
+
 def pub_map_info(socket: zmq.Socket, image_event, depth_event, curr_confidence_event, pose_event):
     image_time = float(image_event["metadata"]["timestamp"])
     depth_time = float(depth_event["metadata"]["timestamp"])
@@ -21,19 +22,22 @@ def pub_map_info(socket: zmq.Socket, image_event, depth_event, curr_confidence_e
 
     image = image_event["value"].to_numpy().astype(np.uint8).reshape((image_md["height"], image_md["width"], 3))
     depth = depth_event["value"].to_numpy().astype(np.float32).reshape((depth_md["height"], depth_md["width"]))
-    confidence = curr_confidence_event["value"].to_numpy().astype(np.uint8).reshape((depth_md["height"], depth_md["width"]))
+    confidence = (
+        curr_confidence_event["value"].to_numpy().astype(np.uint8).reshape((depth_md["height"], depth_md["width"]))
+    )
     pose = pose_event["value"].to_numpy().astype(np.float32)
 
     _, buffer = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-    compressed_depth = bl.pack_array(
-        depth, cname="zstd", clevel=1, shuffle=bl.NOSHUFFLE
-    )
-    compressed_confidence = bl.pack_array(
-        confidence, cname="zstd", clevel=1, shuffle=bl.NOSHUFFLE
-    )
+    compressed_depth = bl.pack_array(depth, cname="zstd", clevel=1, shuffle=bl.NOSHUFFLE)
+    compressed_confidence = bl.pack_array(confidence, cname="zstd", clevel=1, shuffle=bl.NOSHUFFLE)
     data = {
-        "image": buffer, "depth": compressed_depth, "confidence": compressed_confidence,
-        "pose": pose, "focal": depth_md["focal"], "resolution": depth_md["resolution"], "timestamp": image_md["timestamp"]
+        "image": buffer,
+        "depth": compressed_depth,
+        "confidence": compressed_confidence,
+        "pose": pose,
+        "focal": depth_md["focal"],
+        "resolution": depth_md["resolution"],
+        "timestamp": image_md["timestamp"],
     }
     print(f"Publishing map info with timestamp: {image_md['timestamp']}")
     socket.send(b"map_info" + pickle.dumps(data, protocol=-1))
@@ -63,8 +67,12 @@ def main():
             elif event["id"] == "iphone/confidence":
                 curr_confidence_event = event
             elif event["id"] == "tick":
-
-                if curr_image_event is not None and curr_depth_event is not None and curr_confidence_event is not None and curr_pose_event is not None:
+                if (
+                    curr_image_event is not None
+                    and curr_depth_event is not None
+                    and curr_confidence_event is not None
+                    and curr_pose_event is not None
+                ):
                     tic = time.time()
                     pub_map_info(socket, curr_image_event, curr_depth_event, curr_confidence_event, curr_pose_event)
                     print(f"Publishing took {time.time() - tic:.3f}s")
@@ -72,4 +80,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
