@@ -13,7 +13,7 @@ import mujoco
 import mujoco.viewer
 
 _HERE = Path(__file__).parent
-_XML = _HERE / "mujoco_visual" / "scene_gripper.xml"
+_XML = _HERE / "mujoco_visual" / "shoulder_mounted_pipers.xml"
 DATASET_PATH = Path("~/projects/local-code/robot-utility-model-data/train").expanduser()
 
 TASKS = {
@@ -140,12 +140,18 @@ parser.add_argument(
     default=10,
     help="How often to visualize the target pose.",
 )
+parser.add_argument(
+    "--left",
+    action="store_true",
+    help="Use left arm instead of right arm.",
+)
 
 if __name__ == "__main__":
     args = parser.parse_args()
     random_traj = get_random_target_trajectory(task=args.task, seed=args.seed)
     fps = args.fps
     vis_frequency = args.visualize_every
+    use_left = args.left
 
     model = mujoco.MjModel.from_xml_path(_XML.as_posix())
     data = mujoco.MjData(model)
@@ -154,10 +160,22 @@ if __name__ == "__main__":
     # Setup IK.
     # =================== #
     configuration = mink.Configuration(model)
-
+    collision_pairs = [
+        (
+            mink.get_subtree_geom_ids(model, model.body("right_link5").id),
+            mink.get_subtree_geom_ids(model, model.body("left_link5").id),
+        ),
+    ]
     tasks = [
-        end_effector_task := mink.FrameTask(
-            frame_name="attachment_site",
+        right_end_effector_task := mink.FrameTask(
+            frame_name="right_attachment_site",
+            frame_type="site",
+            position_cost=100.0,
+            orientation_cost=1.0,
+            lm_damping=1.0,
+        ),
+        left_end_effector_task := mink.FrameTask(
+            frame_name="left_attachment_site",
             frame_type="site",
             position_cost=100.0,
             orientation_cost=1.0,
@@ -166,15 +184,27 @@ if __name__ == "__main__":
     ]
     limits = [
         mink.ConfigurationLimit(model=model),
+        mink.CollisionAvoidanceLimit(
+            model=model,
+            geom_pairs=collision_pairs,
+            minimum_distance_from_collisions=0.1,
+            collision_detection_distance=0.2,
+        ),
     ]
 
     max_velocities = {
-        "joint1": np.pi,
-        "joint2": np.pi,
-        "joint3": np.pi,
-        "joint4": np.pi,
-        "joint5": np.pi,
-        "joint6": np.pi,
+        "right_joint1": np.pi,
+        "right_joint2": np.pi,
+        "right_joint3": np.pi,
+        "right_joint4": np.pi,
+        "right_joint5": np.pi,
+        "right_joint6": np.pi,
+        "left_joint1": np.pi,
+        "left_joint2": np.pi,
+        "left_joint3": np.pi,
+        "left_joint4": np.pi,
+        "left_joint5": np.pi,
+        "left_joint6": np.pi,
     }
 
     velocity_limit = mink.VelocityLimit(model, max_velocities)
@@ -198,7 +228,29 @@ if __name__ == "__main__":
     mujoco.mj_forward(model, data)
 
     # Initialize the mocap target at the end-effector site.
-    mink.move_mocap_to_frame(model, data, "target", "attachment_site", "site")
+    mink.move_mocap_to_frame(
+        model, data, "right_target", "right_attachment_site", "site"
+    )
+    mink.move_mocap_to_frame(model, data, "left_target", "left_attachment_site", "site")
+    target_name = "left_target" if use_left else "right_target"
+    other_target_name = "right_target" if use_left else "left_target"
+    end_effector_task = left_end_effector_task if use_left else right_end_effector_task
+    other_eef_task = right_end_effector_task if use_left else left_end_effector_task
+    gripper_idx = 6 + 7 if use_left else 6
+    # Now set the static target for the other arm.
+    other_arm_init_T_wt_with_rot = mink.SE3.from_mocap_name(
+        model, data, other_target_name
+    )
+    other_arm_rot_matrix = np.array([
+        [0, 0, 1],
+        [0, 1, 0],
+        [-1, 0, 0],
+    ])
+    other_arm_init_T_wt = mink.SE3.from_rotation_and_translation(
+        translation=other_arm_init_T_wt_with_rot.translation(),
+        rotation=mink.SO3.from_matrix(other_arm_rot_matrix),
+    )
+    other_eef_task.set_target(other_arm_init_T_wt)
 
     # We'll reuse this in both viewer or offscreen mode:
     def run_simulation_step(current_time, current_target_idx):
@@ -231,13 +283,23 @@ if __name__ == "__main__":
                 break
 
         data.ctrl[:6] = configuration.q[:6]
-        data.ctrl[6] = target_gripper
+        data.ctrl[7:13] = configuration.q[8:14]
+        data.ctrl[gripper_idx] = target_gripper
         mujoco.mj_step(model, data)
 
         return True, current_time, current_target_idx
 
     # Get initial target pose for reference:
-    init_T_wt = mink.SE3.from_mocap_name(model, data, "target")
+    init_T_wt_with_rot = mink.SE3.from_mocap_name(model, data, target_name)
+    rot_matrix = np.array([
+        [0, 0, 1],
+        [0, 1, 0],
+        [-1, 0, 0],
+    ])
+    init_T_wt = mink.SE3.from_rotation_and_translation(
+        translation=init_T_wt_with_rot.translation(),
+        rotation=mink.SO3.from_matrix(rot_matrix),
+    )
 
     if args.video_out is None:
         #

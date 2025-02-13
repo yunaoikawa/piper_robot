@@ -127,7 +127,10 @@
     <camera name="worldcam" pos="0.779 -1.146 0.725" xyaxes="0.866 0.500 0.000 -0.171 0.296 0.940" />
     <light pos="0 0 1.5" directional="true" />
     <geom name="floor" size="1 1 0.01" type="plane" material="grid" />
-    <body name="target" pos="0.5 0 .5" quat="0 1 0 0" mocap="true">
+    <body name="right_target" pos="0.5 0 .5" quat="0 1 0 0" mocap="true">
+      <geom type="box" size=".05 .05 .05" contype="0" conaffinity="0" rgba=".6 .3 .3 .2" />
+    </body>
+    <body name="left_target" pos="0.5 0 .5" quat="0 1 0 0" mocap="true">
       <geom type="box" size=".05 .05 .05" contype="0" conaffinity="0" rgba=".6 .3 .3 .2" />
     </body>
 
