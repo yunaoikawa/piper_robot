@@ -1,7 +1,6 @@
 import os
 import time
 import math
-from enum import Enum
 from typing import Tuple
 import numpy as np
 import threading
@@ -10,6 +9,7 @@ os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
+from robot.controller import CommandType
 from robot.constants import (
   POLICY_CONTROL_PERIOD,
   ENCODER_MAGNET_OFFSETS,
@@ -133,11 +133,6 @@ class DriveMotor:
     self.fx.set_control(self.neutral_request)
 
 
-class ControlMode(Enum):
-  POSITION = 1
-  VELOCITY = 2
-
-
 class Base:
   def __init__(self, max_vel=np.array((1.0, 1.0, 1.57)), max_accel=np.array((0.25, 0.25, 0.79))):
     self.max_vel = max_vel
@@ -171,12 +166,12 @@ class Base:
 
   def set_target_velocity(self, velocity: np.ndarray):
     with self._command_lock:
-      self._command = {"mode": ControlMode.VELOCITY, "target": velocity}
+      self._command = {"mode": CommandType.BASE_VELOCITY, "target": velocity}
     self.last_command_time = time.time()
 
   def set_target_position(self, position: np.ndarray):
     with self._command_lock:
-      self._command = {"mode": ControlMode.POSITION, "target": position}
+      self._command = {"mode": CommandType.BASE_POSITION, "target": position}
     self.last_command_time = time.time()
 
   def get_command(self):
@@ -230,12 +225,12 @@ class Base:
         d.set_neutral()
     else:
       phoenix6.unmanaged.feed_enable(0.1)
-      if command["mode"] == ControlMode.VELOCITY:
+      if command["mode"] == CommandType.BASE_VELOCITY:
         wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self._command["target"])
         for i in range(NUM_SWERVES):
           self.steer_motors[i].set_position(wheel_angles[i])
           self.drive_motors[i].set_velocity(wheel_speeds[i])
-      elif command["mode"] == ControlMode.POSITION:
+      elif command["mode"] == CommandType.BASE_POSITION:
         raise NotImplementedError("Position control not implemented yet")
 
   def get_encoder_offsets(self):
