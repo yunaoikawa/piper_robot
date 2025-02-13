@@ -75,14 +75,6 @@ parser = argparse.ArgumentParser(
     prog="Mink IK test",
 )
 parser.add_argument(
-    "--task",
-    type=str,
-    choices=TASKS.keys(),
-    help="Task to perform open-loop.",
-    required=True,
-    default="door",
-)
-parser.add_argument(
     "--seed",
     type=int,
     help="Seed for random trajectory selection.",
@@ -93,23 +85,6 @@ parser.add_argument(
     type=float,
     help="Frames per second in the input data",
     default=30.0,
-)
-parser.add_argument(
-    "--video-out",
-    type=str,
-    default=None,
-    help="If provided, run offscreen and save video to this file path.",
-)
-parser.add_argument(
-    "--visualize-every",
-    type=int,
-    default=10,
-    help="How often to visualize the target pose.",
-)
-parser.add_argument(
-    "--left",
-    action="store_true",
-    help="Use left arm instead of right arm.",
 )
 
 
@@ -286,7 +261,6 @@ def rollout_with_random_tasks_and_fixed_init(
     seed,
     n_rollouts_per_task,
     fps,
-    use_left,
 ):
     total_cost = 0.0
     for task in TASKS.keys():
@@ -295,24 +269,32 @@ def rollout_with_random_tasks_and_fixed_init(
             model = mujoco.MjModel.from_xml_path(_XML.as_posix())
             data = mujoco.MjData(model)
             # Get control ranges of all actuators
-            cost = rollout_with_random_init(
+            cost_left = rollout_with_random_init(
                 initial_position=initial_position,
                 model=model,
                 data=data,
                 random_traj=random_traj,
                 fps=fps,
-                use_left=use_left,
+                use_left=True,
             )
-            total_cost += cost
-            print(f"Task: {task}, Rollout: {i}, Cost: {cost}")
+            model = mujoco.MjModel.from_xml_path(_XML.as_posix())
+            data = mujoco.MjData(model)
+            cost_right = rollout_with_random_init(
+                initial_position=initial_position,
+                model=model,
+                data=data,
+                random_traj=random_traj,
+                fps=fps,
+                use_left=False,
+            )
+            total_cost += (cost_left + cost_right) / 2
+            print(f"Task: {task}, Rollout: {i}, Cost: {cost_left + cost_right}")
     return total_cost
 
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    random_traj = get_random_target_trajectory(task=args.task, seed=args.seed)
     fps = args.fps
-    use_left = args.left
 
     model = mujoco.MjModel.from_xml_path(_XML.as_posix())
     data = mujoco.MjData(model)
@@ -340,15 +322,14 @@ if __name__ == "__main__":
     ])
     # Nevergrad parametrization
     params = ng.p.Array(init=default_init_position, lower=ctrl_lower, upper=ctrl_upper)
-    optimizer = ng.optimizers.NGOpt(parametrization=params, budget=4)
+    optimizer = ng.optimizers.NGOpt(parametrization=params, budget=2)
     to_optimize = partial(
         rollout_with_random_tasks_and_fixed_init,
         seed=args.seed,
         n_rollouts_per_task=1,
         fps=fps,
-        use_left=use_left,
     )
-    with futures.ProcessPoolExecutor(max_workers=2) as executor:
+    with futures.ProcessPoolExecutor(max_workers=1) as executor:
         recommendation = optimizer.minimize(
             to_optimize, executor=executor, batch_mode=False
         )
