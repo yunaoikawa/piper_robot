@@ -23,6 +23,11 @@ TASKS = {
     "bag": "Bag_Pick_Up",
     "bottle": "Reorientation",
 }
+WORLD_TO_SITE = np.array([
+    [0, 0, 1],
+    [0, 1, 0],
+    [-1, 0, 0],
+])
 
 
 def add_3color_axes_to_viewer(pos, rotation, scene, length=0.25, opacity=0.1):
@@ -162,8 +167,8 @@ if __name__ == "__main__":
     configuration = mink.Configuration(model)
     collision_pairs = [
         (
-            mink.get_subtree_geom_ids(model, model.body("right_link5").id),
-            mink.get_subtree_geom_ids(model, model.body("left_link5").id),
+            mink.get_subtree_geom_ids(model, model.body("right_link3").id),
+            mink.get_subtree_geom_ids(model, model.body("left_link3").id),
         ),
     ]
     tasks = [
@@ -227,11 +232,12 @@ if __name__ == "__main__":
     configuration.update(data.qpos)
     mujoco.mj_forward(model, data)
 
-    # Initialize the mocap target at the end-effector site.
+    # Initialize the mocap target at the end-effector sites.
     mink.move_mocap_to_frame(
         model, data, "right_target", "right_attachment_site", "site"
     )
     mink.move_mocap_to_frame(model, data, "left_target", "left_attachment_site", "site")
+    # Make the IK solver arm-agnostic. We should be able to do the tasks with either arm
     target_name = "left_target" if use_left else "right_target"
     other_target_name = "right_target" if use_left else "left_target"
     end_effector_task = left_end_effector_task if use_left else right_end_effector_task
@@ -241,16 +247,13 @@ if __name__ == "__main__":
     other_arm_init_T_wt_with_rot = mink.SE3.from_mocap_name(
         model, data, other_target_name
     )
-    other_arm_rot_matrix = np.array([
-        [0, 0, 1],
-        [0, 1, 0],
-        [-1, 0, 0],
-    ])
     other_arm_init_T_wt = mink.SE3.from_rotation_and_translation(
         translation=other_arm_init_T_wt_with_rot.translation(),
-        rotation=mink.SO3.from_matrix(other_arm_rot_matrix),
+        rotation=mink.SO3.from_matrix(WORLD_TO_SITE),
     )
     other_eef_task.set_target(other_arm_init_T_wt)
+    other_eef_task.set_orientation_cost(0.0)
+    other_eef_task.set_position_cost(0.0)  # Let it move freely
 
     # We'll reuse this in both viewer or offscreen mode:
     def run_simulation_step(current_time, current_target_idx):
@@ -263,10 +266,8 @@ if __name__ == "__main__":
         # Update task target.
         target_SE3 = task_trajectory[current_target_idx]
         target_gripper = gripper_values[current_target_idx]
-
         # Build transform from stored SE3
-        target_T_wt = init_T_wt.copy().multiply(mink.SE3.from_matrix(target_SE3))
-
+        target_T_wt = init_T_wt.multiply(mink.SE3.from_matrix(target_SE3))
         # Send the new target to the IK solver
         end_effector_task.set_target(target_T_wt)
 
@@ -291,14 +292,9 @@ if __name__ == "__main__":
 
     # Get initial target pose for reference:
     init_T_wt_with_rot = mink.SE3.from_mocap_name(model, data, target_name)
-    rot_matrix = np.array([
-        [0, 0, 1],
-        [0, 1, 0],
-        [-1, 0, 0],
-    ])
     init_T_wt = mink.SE3.from_rotation_and_translation(
         translation=init_T_wt_with_rot.translation(),
-        rotation=mink.SO3.from_matrix(rot_matrix),
+        rotation=mink.SO3.from_matrix(WORLD_TO_SITE),
     )
 
     if args.video_out is None:
@@ -347,10 +343,8 @@ if __name__ == "__main__":
         #
         # == Offscreen Video Recording Mode ==
         #
-        # For example, 640x480
         WIDTH = 640
         HEIGHT = 480
-
         # Initialize scene, camera, and context for offscreen
         viewer = mujoco_viewer.MujocoViewer(
             model, data, mode="offscreen", width=WIDTH, height=HEIGHT
@@ -358,16 +352,9 @@ if __name__ == "__main__":
         cam_id = mujoco.mj_name2id(
             model, type=mujoco.mju_str2Type("camera"), name="worldcam"
         )
-
         # Create a writer
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(args.video_out, fourcc, fps, (WIDTH, HEIGHT))
-
-        # viewport = mujoco.MjrRect(0, 0, WIDTH, HEIGHT)
-        rgb_buffer = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-        # depth_buffer = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
-
-        frame_count = 0
         while True:
             is_ok, current_time, current_target_idx = run_simulation_step(
                 current_time, current_target_idx
@@ -376,13 +363,11 @@ if __name__ == "__main__":
                 break
 
             # Read the RGB pixels from the current buffer
-            # mujoco.mjr_readPixels(rgb_buffer, depth_buffer, viewport, ctx)
             rgb_buffer = viewer.read_pixels(camid=cam_id)
             # Convert RGB -> BGR for OpenCV
             rgb_buffer = cv2.resize(rgb_buffer, (WIDTH, HEIGHT))
             bgr_frame = cv2.cvtColor(rgb_buffer, cv2.COLOR_RGB2BGR)
             out.write(bgr_frame)
-            frame_count += 1
 
         out.release()
         print(f"Video saved to {args.video_out}")
