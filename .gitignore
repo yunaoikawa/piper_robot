@@ -3,6 +3,7 @@ ctre_sim/
 notebooks/
 # log files
 robot/out
+data/
 
 .DS_Store
 *.swp
