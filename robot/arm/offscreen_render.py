@@ -1,19 +1,16 @@
 import argparse
-from dataclasses import dataclass
 from pathlib import Path
 
+import cv2  # For saving video
 import mink
+import mujoco_viewer
 import numpy as np
 import pandas as pd
-from dm_control.viewer import user_input
 from loop_rate_limiters import RateLimiter
 from scipy.spatial.transform import Rotation as R
 
 import mujoco
 import mujoco.viewer
-import mujoco_viewer
-
-import cv2  # For saving video
 
 _HERE = Path(__file__).parent
 _XML = _HERE / "mujoco_visual" / "scene_gripper.xml"
@@ -26,18 +23,6 @@ TASKS = {
     "bag": "Bag_Pick_Up",
     "bottle": "Reorientation",
 }
-
-
-@dataclass
-class KeyCallback:
-    fix_base: bool = False
-    pause: bool = False
-
-    def __call__(self, key: int) -> None:
-        if key == user_input.KEY_ENTER:
-            self.fix_base = not self.fix_base
-        elif key == user_input.KEY_SPACE:
-            self.pause = not self.pause
 
 
 def add_3color_axes_to_viewer(pos, rotation, scene, length=0.25, opacity=0.1):
@@ -199,7 +184,6 @@ if __name__ == "__main__":
     pos_threshold = 1e-3
     ori_threshold = 1e-3
     max_iters = 10
-    key_callback = KeyCallback()
 
     # For playing back data at real-time, we typically step at ~200 Hz in simulation
     # and fetch a new target from the trajectory at 'fps'.
@@ -264,7 +248,6 @@ if __name__ == "__main__":
             data=data,
             show_left_ui=False,
             show_right_ui=False,
-            key_callback=key_callback,
         ) as viewer:
             viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
             mujoco.mjv_defaultFreeCamera(model, viewer.cam)
