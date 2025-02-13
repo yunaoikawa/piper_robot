@@ -1,16 +1,16 @@
 import argparse
+import pickle
+from concurrent import futures
+from functools import partial
 from pathlib import Path
 
-import cv2  # For saving video
 import mink
-import mujoco_viewer
+import nevergrad as ng
 import numpy as np
 import pandas as pd
-from loop_rate_limiters import RateLimiter
 from scipy.spatial.transform import Rotation as R
 
 import mujoco
-import mujoco.viewer
 
 _HERE = Path(__file__).parent
 _XML = _HERE / "mujoco_visual" / "shoulder_mounted_pipers.xml"
@@ -30,47 +30,6 @@ WORLD_TO_SITE = np.array([
 ])
 
 
-def add_3color_axes_to_viewer(pos, rotation, scene, length=0.25, opacity=0.1):
-    if scene.ngeom >= scene.maxgeom:
-        return
-    scene.ngeom += 3  # increment ngeom
-    # X-axis (Red)
-    R_local_to_world = np.column_stack([rotation[:, 1], rotation[:, 2], rotation[:, 0]])
-    mujoco.mjv_initGeom(
-        geom=scene.geoms[scene.ngeom - 3],
-        type=mujoco.mjtGeom.mjGEOM_ARROW,
-        size=np.array([0.01, 0.01, length]),
-        rgba=np.array([1, 0, 0, opacity]),
-        pos=pos,
-        mat=R_local_to_world.flatten(),  # Rotate to align with X
-    )
-
-    # Y-axis (Green)
-    R_local_to_world_y = np.column_stack([
-        -rotation[:, 0],
-        -rotation[:, 2],
-        rotation[:, 1],
-    ])
-    mujoco.mjv_initGeom(
-        geom=scene.geoms[scene.ngeom - 2],
-        type=mujoco.mjtGeom.mjGEOM_ARROW,
-        size=np.array([0.01, 0.01, length]),
-        rgba=np.array([0, 1, 0, opacity]),
-        pos=pos,
-        mat=R_local_to_world_y.flatten(),  # Rotate 90° to align with Y
-    )
-
-    # Z-axis (Blue)
-    mujoco.mjv_initGeom(
-        geom=scene.geoms[scene.ngeom - 1],
-        type=mujoco.mjtGeom.mjGEOM_ARROW,
-        size=np.array([0.01, 0.01, length]),
-        rgba=np.array([0, 0, 1, opacity]),
-        pos=pos,
-        mat=rotation.flatten(),  # Identity matrix for alignment
-    )
-
-
 def transform_gripper_values(gripper_values: np.ndarray) -> np.ndarray:
     HIGH = -0.04
     LOW = 0
@@ -86,12 +45,14 @@ DATA_TRANSFORM = np.array([
 ])
 
 
-def get_random_target_trajectory(task, seed=424242):
+def get_random_target_trajectory(task, seed=424242, index=0):
     np.random.seed(seed)
     target_task = TASKS[task]
     parquet_path_glob = (DATASET_PATH / target_task).glob("**/*.parquet")
     parquet_path_list = list(parquet_path_glob)
-    parquet_path = np.random.choice(parquet_path_list)
+    np.random.shuffle(parquet_path_list)
+    assert 0 <= index < len(parquet_path_list), f"Not enough data found for {task}"
+    parquet_path = parquet_path_list[index]
     trajectory_df = pd.read_parquet(parquet_path)
     gripper_values = trajectory_df["gripper"].values
     xyz = trajectory_df[["x", "y", "z"]].values
@@ -114,14 +75,6 @@ parser = argparse.ArgumentParser(
     prog="Mink IK test",
 )
 parser.add_argument(
-    "--task",
-    type=str,
-    choices=TASKS.keys(),
-    help="Task to perform open-loop.",
-    required=True,
-    default="door",
-)
-parser.add_argument(
     "--seed",
     type=int,
     help="Seed for random trajectory selection.",
@@ -133,42 +86,23 @@ parser.add_argument(
     help="Frames per second in the input data",
     default=30.0,
 )
-parser.add_argument(
-    "--video-out",
-    type=str,
-    default=None,
-    help="If provided, run offscreen and save video to this file path.",
-)
-parser.add_argument(
-    "--visualize-every",
-    type=int,
-    default=10,
-    help="How often to visualize the target pose.",
-)
-parser.add_argument(
-    "--left",
-    action="store_true",
-    help="Use left arm instead of right arm.",
-)
 
-if __name__ == "__main__":
-    args = parser.parse_args()
-    random_traj = get_random_target_trajectory(task=args.task, seed=args.seed)
-    fps = args.fps
-    vis_frequency = args.visualize_every
-    use_left = args.left
 
-    model = mujoco.MjModel.from_xml_path(_XML.as_posix())
-    data = mujoco.MjData(model)
-
+def main(
+    model,
+    data,
+    random_traj,
+    fps: int = 30,
+    use_left: bool = False,
+):
     # =================== #
     # Setup IK.
     # =================== #
     configuration = mink.Configuration(model)
     collision_pairs = [
         (
-            mink.get_subtree_geom_ids(model, model.body("right_link3").id),
-            mink.get_subtree_geom_ids(model, model.body("left_link3").id),
+            mink.get_subtree_geom_ids(model, model.body("right_link5").id),
+            mink.get_subtree_geom_ids(model, model.body("left_link5").id),
         ),
     ]
     tasks = [
@@ -222,11 +156,12 @@ if __name__ == "__main__":
 
     # For playing back data at real-time, we typically step at ~200 Hz in simulation
     # and fetch a new target from the trajectory at 'fps'.
-    rate = RateLimiter(frequency=200.0, warn=False)
+    # rate = RateLimiter(frequency=200.0, warn=False)
+    dt = 1.0 / 200.0
     task_trajectory, gripper_values = random_traj
     current_target_idx = 0
     current_time = 0
-    mujoco.mj_resetDataKeyframe(model, data, model.key("tasks").id)
+    # mujoco.mj_resetDataKeyframe(model, data, model.key("tasks").id)
     mujoco.mj_step(model, data)
 
     configuration.update(data.qpos)
@@ -257,11 +192,17 @@ if __name__ == "__main__":
 
     # We'll reuse this in both viewer or offscreen mode:
     def run_simulation_step(current_time, current_target_idx):
-        current_time += rate.dt
+        cost = 0.0
+        current_time += dt
         if (current_time * fps) >= current_target_idx:
             current_target_idx += 1
             if current_target_idx >= len(task_trajectory):
-                return False, current_time, current_target_idx  # signals we are done
+                return (
+                    False,
+                    current_time,
+                    current_target_idx,
+                    cost,
+                )  # signals we are done
 
         # Update task target.
         target_SE3 = task_trajectory[current_target_idx]
@@ -272,14 +213,13 @@ if __name__ == "__main__":
         end_effector_task.set_target(target_T_wt)
 
         # Solve IK in a few iterations
-        for i in range(max_iters):
-            vel = mink.solve_ik(
-                configuration, tasks, rate.dt, solver, 1e-3, limits=limits
-            )
-            configuration.integrate_inplace(vel, rate.dt)
+        for _ in range(max_iters):
+            vel = mink.solve_ik(configuration, tasks, dt, solver, 1e-3, limits=limits)
+            configuration.integrate_inplace(vel, dt)
             err = end_effector_task.compute_error(configuration)
             pos_achieved = np.linalg.norm(err[:3]) <= pos_threshold
             ori_achieved = np.linalg.norm(err[3:]) <= ori_threshold
+            cost = np.linalg.norm(err)
             if pos_achieved and ori_achieved:
                 break
 
@@ -288,7 +228,7 @@ if __name__ == "__main__":
         data.ctrl[gripper_idx] = target_gripper
         mujoco.mj_step(model, data)
 
-        return True, current_time, current_target_idx
+        return True, current_time, current_target_idx, cost
 
     # Get initial target pose for reference:
     init_T_wt_with_rot = mink.SE3.from_mocap_name(model, data, target_name)
@@ -296,78 +236,102 @@ if __name__ == "__main__":
         translation=init_T_wt_with_rot.translation(),
         rotation=mink.SO3.from_matrix(WORLD_TO_SITE),
     )
+    total_cost = 0.0
 
-    if args.video_out is None:
-        #
-        # == Interactive Viewer Mode ==
-        #
-        with mujoco.viewer.launch_passive(
-            model=model,
-            data=data,
-            show_left_ui=False,
-            show_right_ui=False,
-        ) as viewer:
-            viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
-            mujoco.mjv_defaultFreeCamera(model, viewer.cam)
-
-            frame_count = 0
-
-            while viewer.is_running():
-                # Step the simulation
-                is_ok, current_time, current_target_idx = run_simulation_step(
-                    current_time, current_target_idx
-                )
-                if not is_ok:
-                    break
-
-                # Optionally add debug axes to the viewer
-                if frame_count % vis_frequency == 0 and current_target_idx < len(
-                    task_trajectory
-                ):
-                    target_SE3 = task_trajectory[current_target_idx]
-                    target_T_wt = init_T_wt.copy().multiply(
-                        mink.SE3.from_matrix(target_SE3)
-                    )
-                    add_3color_axes_to_viewer(
-                        target_T_wt.translation(),
-                        target_T_wt.rotation().as_matrix(),
-                        viewer.user_scn,
-                    )
-
-                # Render
-                viewer.sync()
-                rate.sleep()
-                frame_count += 1
-
-    else:
-        #
-        # == Offscreen Video Recording Mode ==
-        #
-        WIDTH = 640
-        HEIGHT = 480
-        # Initialize scene, camera, and context for offscreen
-        viewer = mujoco_viewer.MujocoViewer(
-            model, data, mode="offscreen", width=WIDTH, height=HEIGHT
+    while True:
+        is_ok, current_time, current_target_idx, cost = run_simulation_step(
+            current_time, current_target_idx
         )
-        cam_id = mujoco.mj_name2id(
-            model, type=mujoco.mju_str2Type("camera"), name="worldcam"
-        )
-        # Create a writer
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(args.video_out, fourcc, fps, (WIDTH, HEIGHT))
-        while True:
-            is_ok, current_time, current_target_idx = run_simulation_step(
-                current_time, current_target_idx
+        total_cost += cost
+        if not is_ok:
+            break
+    return total_cost
+
+
+def rollout_with_random_init(initial_position, model, data, random_traj, fps, use_left):
+    # Set initial position
+    for _ in range(100):
+        data.ctrl = initial_position
+        mujoco.mj_step(model, data)
+    return main(model, data, random_traj, fps, use_left)
+
+
+def rollout_with_random_tasks_and_fixed_init(
+    initial_position,
+    seed,
+    n_rollouts_per_task,
+    fps,
+):
+    total_cost = 0.0
+    for task in TASKS.keys():
+        for i in range(n_rollouts_per_task):
+            random_traj = get_random_target_trajectory(task=task, seed=seed, index=i)
+            model = mujoco.MjModel.from_xml_path(_XML.as_posix())
+            data = mujoco.MjData(model)
+            # Get control ranges of all actuators
+            cost_left = rollout_with_random_init(
+                initial_position=initial_position,
+                model=model,
+                data=data,
+                random_traj=random_traj,
+                fps=fps,
+                use_left=True,
             )
-            if not is_ok:
-                break
+            model = mujoco.MjModel.from_xml_path(_XML.as_posix())
+            data = mujoco.MjData(model)
+            cost_right = rollout_with_random_init(
+                initial_position=initial_position,
+                model=model,
+                data=data,
+                random_traj=random_traj,
+                fps=fps,
+                use_left=False,
+            )
+            total_cost += (cost_left + cost_right) / 2
+            print(f"Task: {task}, Rollout: {i}, Cost: {cost_left + cost_right}")
+    return total_cost
 
-            # Read the RGB pixels from the current buffer
-            rgb_buffer = viewer.read_pixels(camid=cam_id)
-            # Convert RGB -> BGR for OpenCV
-            rgb_buffer = cv2.resize(rgb_buffer, (WIDTH, HEIGHT))
-            bgr_frame = cv2.cvtColor(rgb_buffer, cv2.COLOR_RGB2BGR)
-            out.write(bgr_frame)
 
-        out.release()
-        print(f"Video saved to {args.video_out}")
+if __name__ == "__main__":
+    args = parser.parse_args()
+    fps = args.fps
+
+    model = mujoco.MjModel.from_xml_path(_XML.as_posix())
+    data = mujoco.MjData(model)
+
+    # Get control ranges of all actuators
+    control_ranges = model.actuator_ctrlrange
+    ctrl_upper = control_ranges[:, 1].copy()
+    ctrl_lower = control_ranges[:, 0].copy()
+
+    default_init_position = np.array([
+        0,
+        0.502701,
+        -0.414997,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0.502701,
+        -0.414997,
+        0,
+        0,
+        0,
+        0,
+    ])
+    # Nevergrad parametrization
+    params = ng.p.Array(init=default_init_position, lower=ctrl_lower, upper=ctrl_upper)
+    optimizer = ng.optimizers.NGOpt(parametrization=params, budget=2)
+    to_optimize = partial(
+        rollout_with_random_tasks_and_fixed_init,
+        seed=args.seed,
+        n_rollouts_per_task=1,
+        fps=fps,
+    )
+    with futures.ProcessPoolExecutor(max_workers=1) as executor:
+        recommendation = optimizer.minimize(
+            to_optimize, executor=executor, batch_mode=False
+        )
+    print(recommendation.value)
+    pickle.dump(recommendation, open("recommendation.pkl", "wb"))
