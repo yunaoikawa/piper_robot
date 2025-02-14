@@ -1,7 +1,7 @@
 import os
 import time
 import math
-from typing import Tuple
+from typing import Tuple, cast
 import numpy as np
 import threading
 
@@ -9,9 +9,9 @@ os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
-from robot.controller import CommandType
+from robot.msgs import Command, CommandType, ns
 from robot.constants import (
-    POLICY_CONTROL_PERIOD,
+    POLICY_CONTROL_PERIOD_NS,
     ENCODER_MAGNET_OFFSETS,
     TWO_PI,
     DRIVE_GEAR_RATIO,
@@ -162,17 +162,22 @@ class Base:
 
         self._command = None
         self._command_lock = threading.Lock()
-        self.last_command_time = time.time()
+        self.last_command_time = cast(ns, time.perf_counter_ns())
 
-    def set_target_velocity(self, velocity: np.ndarray):
+    def set_target(self, command: Command):
         with self._command_lock:
-            self._command = {"mode": CommandType.BASE_VELOCITY, "target": velocity}
-        self.last_command_time = time.time()
+            self._command = command
+        self.last_command_time = command.timestamp
 
-    def set_target_position(self, position: np.ndarray):
-        with self._command_lock:
-            self._command = {"mode": CommandType.BASE_POSITION, "target": position}
-        self.last_command_time = time.time()
+    # def set_target_velocity(self, velocity: np.ndarray):
+    #     with self._command_lock:
+    #         self._command = {"mode": CommandType.BASE_VELOCITY, "target": velocity}
+    #     self.last_command_time = time.time()
+
+    # def set_target_position(self, position: np.ndarray):
+    #     with self._command_lock:
+    #         self._command = {"mode": CommandType.BASE_POSITION, "target": position}
+    #     self.last_command_time = time.time()
 
     def get_command(self):
         with self._command_lock:
@@ -216,7 +221,7 @@ class Base:
         # TODO: Set real-time scheduling policy
         self.update_state()
 
-        if time.time() - self.last_command_time > 2 * POLICY_CONTROL_PERIOD:
+        if (time.perf_counter_ns() - self.last_command_time) > 2 * POLICY_CONTROL_PERIOD_NS:
             with self._command_lock:
                 self._command = None
 
@@ -227,8 +232,10 @@ class Base:
                 d.set_neutral()
         else:
             phoenix6.unmanaged.feed_enable(0.1)
-            if command["mode"] == CommandType.BASE_VELOCITY:
-                wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self._command["target"])
+            if command is None:
+                return
+            if command.type == CommandType.BASE_VELOCITY:
+                wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(command.target)
                 for i in range(NUM_SWERVES):
                     self.steer_motors[i].set_position(wheel_angles[i])
                     self.drive_motors[i].set_velocity(wheel_speeds[i])

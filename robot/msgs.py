@@ -2,13 +2,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List
 import numpy as np
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, NewType
 
 import msgpack
-import msgpack_numpy as m
-m.patch()
+import msgpack_numpy
+msgpack_numpy.patch()
 
 T = TypeVar('T')
+ns = NewType('ns', int)
+meters = NewType('meters', float)
 
 class Serializable(Protocol):
     def serialize(self) -> bytes:
@@ -20,13 +22,13 @@ class Serializable(Protocol):
 
 @dataclass
 class Image:
-    timestamp: int
+    timestamp: ns
     image: np.ndarray
 
 
 @dataclass
 class EncodedImage:
-    timestamp: int
+    timestamp: ns
     image: np.ndarray
     encoding: str
 
@@ -40,7 +42,7 @@ class EncodedImage:
 
 @dataclass
 class EncodedDepth:
-    timestamp: int
+    timestamp: ns
     depth: np.ndarray
     confidence: np.ndarray
     focal: List[int]
@@ -56,7 +58,7 @@ class EncodedDepth:
 
 @dataclass
 class Pose:
-    timestamp: int
+    timestamp: ns
     pose: np.ndarray
 
     def serialize(self) -> bytes:
@@ -78,7 +80,7 @@ class CommandType(Enum):
 
 @dataclass
 class Command:
-    timestamp: float
+    timestamp: ns
     type: CommandType
     target: np.ndarray
 
@@ -102,7 +104,7 @@ class Command:
 
 @dataclass
 class RobotState:
-    timestamp: float
+    timestamp: ns
     base_pose: np.ndarray
     base_velocity: np.ndarray
 

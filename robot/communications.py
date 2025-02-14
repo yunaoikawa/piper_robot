@@ -10,11 +10,11 @@ ROBOT_STATE_PORT = 5556
 BASE_CAMERA_PORT = 9000
 
 class FrequencyTimer:
-    def __init__(self, name: str, frequency: int, delay_warn_threshold: int = -1):
+    def __init__(self, name: str, frequency: int, delay_warn_threshold_ns: int = -1):
         self.name = name
         self.interval = int(1e9 / frequency)
         self.last_time = time.perf_counter_ns()
-        self.delay_warn_threshold = delay_warn_threshold
+        self.delay_warn_threshold = delay_warn_threshold_ns
 
     def __enter__(self):
         self.last_time = time.perf_counter_ns()
@@ -50,6 +50,7 @@ class Subscriber:
         deserializer: List[Callable[[bytes], Serializable]],
         host: str = "localhost",
         conflate: bool = True,
+        no_block: bool = False,
     ):
         self.socket: zmq.Socket = ctx.socket(zmq.SUB)
         self.socket.connect(f"tcp://{host}:{port}")
@@ -59,12 +60,16 @@ class Subscriber:
             self.socket.setsockopt(zmq.CONFLATE, 1)
 
         self.deserializer = {topic: deserializer[i] for i, topic in enumerate(topics)}
+        self.no_block = zmq.NOBLOCK if no_block else 0
 
-    def receive(self) -> tuple[str, Any]:
-        payload = self.socket.recv_multipart()
-        topic = payload[0].decode("utf-8")
-        data = self.deserializer[topic](payload[1])
-        return topic, data
+    def receive(self) -> tuple[str | None, Any | None]:
+        try:
+            payload = self.socket.recv_multipart(flags=self.no_block)
+            topic = payload[0].decode("utf-8")
+            data = self.deserializer[topic](payload[1])
+            return topic, data
+        except zmq.error.Again:
+            return None, None
 
     def register_poller(self, poller: zmq.Poller):
         poller.register(self.socket, zmq.POLLIN)

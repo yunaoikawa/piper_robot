@@ -1,5 +1,6 @@
 import os
-os.environ['CTR_TARGET'] = 'Hardware'  # pylint: disable=wrong-import-position
+
+os.environ["CTR_TARGET"] = "Hardware"  # pylint: disable=wrong-import-position
 import time
 
 import phoenix6
@@ -7,13 +8,14 @@ import phoenix6.unmanaged
 
 from robot.controller.base import SteerMotor, DriveMotor
 
+
 def test_steer_motor():
     motor = SteerMotor(7)
     last_time = time.time()
-    CONTROL_PERIOD = 0.004 # 250Hz
+    CONTROL_PERIOD = 0.004  # 250Hz
 
     position_log = []
-    target = 0 # -math.pi / 2
+    target = 0  # -math.pi / 2
 
     try:
         motor.set_position(target)
@@ -26,15 +28,16 @@ def test_steer_motor():
 
             step_time = last_time - time.time()
             if step_time < CONTROL_PERIOD:
-                time.sleep(CONTROL_PERIOD-step_time)
+                time.sleep(CONTROL_PERIOD - step_time)
             last_time = time.time()
     finally:
         motor.set_neutral()
 
         import matplotlib.pyplot as plt
+
         plt.plot(position_log[::25])
         # draw horizontal line at target
-        plt.axhline(y=target, color='r', linestyle='--')
+        plt.axhline(y=target, color="r", linestyle="--")
         plt.legend(["TalonFX"])
 
         plt.savefig("position_plot.png")
@@ -44,7 +47,7 @@ def test_steer_motor():
 def test_drive_motor():
     motor = DriveMotor(8)
     last_time = time.time()
-    CONTROL_PERIOD = 0.004 # 250Hz
+    CONTROL_PERIOD = 0.004  # 250Hz
 
     vel_log = []
     target = 0.5
@@ -59,20 +62,20 @@ def test_drive_motor():
 
             step_time = last_time - time.time()
             if step_time < CONTROL_PERIOD:
-                time.sleep(CONTROL_PERIOD-step_time)
+                time.sleep(CONTROL_PERIOD - step_time)
             last_time = time.time()
     finally:
         motor.set_neutral()
 
         import matplotlib.pyplot as plt
+
         plt.plot(vel_log[::10])
         # draw horizontal line at target
-        plt.axhline(y=target, color='r', linestyle='--')
+        plt.axhline(y=target, color="r", linestyle="--")
         plt.legend(["TalonFX"])
 
         plt.savefig("velocity_plot.png")
         plt.close()
-
 
 
 if __name__ == "__main__":
