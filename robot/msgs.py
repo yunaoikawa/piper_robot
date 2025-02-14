@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
+from typing import List
 import numpy as np
 
 
@@ -7,6 +8,28 @@ import numpy as np
 class Image:
     timestamp: int
     image: np.ndarray
+
+
+@dataclass
+class EncodedImage:
+    timestamp: int
+    image: np.ndarray[np.uint8]
+    encoding: str
+
+
+@dataclass
+class EncodedDepth:
+    timestamp: int
+    depth: np.ndarray[np.uint8]
+    confidence: np.ndarray[np.uint8]
+    focal: List[int]
+    resolution: List[int]
+
+
+@dataclass
+class Pose:
+    timestamp: int
+    pose: np.ndarray
 
 
 class CommandType(Enum):
