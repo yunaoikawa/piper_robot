@@ -1,5 +1,4 @@
 import numpy as np
-import json
 from threading import Event
 import zmq
 import time
@@ -18,11 +17,6 @@ def on_new_frame():
 
 def on_stream_stopped():
     stop_event.set()
-
-
-def get_timestamp_from_misc_data(misc_data: np.ndarray) -> float:
-    metadata = misc_data.tobytes().decode("ascii")
-    return json.loads(metadata)["metadata"]["unixTimestampOnReceivedFrame"]
 
 
 def get_pose_array_from_pose(pose: CameraPose) -> np.ndarray:
@@ -76,6 +70,7 @@ def main(device_id: int):
                 timestamp=timestamp,
                 pose=pose
             ))
+            print(f"took {(time.perf_counter_ns() - timestamp)/1e6:.2f} ms")
 
         new_frame_event.clear()
 
