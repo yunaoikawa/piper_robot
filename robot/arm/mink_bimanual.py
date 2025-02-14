@@ -226,7 +226,7 @@ if __name__ == "__main__":
     task_trajectory, gripper_values = random_traj
     current_target_idx = 0
     current_time = 0
-    mujoco.mj_resetDataKeyframe(model, data, model.key("tasks").id)
+    mujoco.mj_resetDataKeyframe(model, data, model.key("optim").id)
     mujoco.mj_step(model, data)
 
     configuration.update(data.qpos)
