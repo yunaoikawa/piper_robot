@@ -2,7 +2,21 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List
 import numpy as np
+from typing import Protocol, TypeVar
 
+import msgpack
+import msgpack_numpy as m
+m.patch()
+
+T = TypeVar('T')
+
+class Serializable(Protocol):
+    def serialize(self) -> bytes:
+        ...
+
+    @classmethod
+    def deserialize(cls: T, data: bytes) -> T:
+        ...
 
 @dataclass
 class Image:
@@ -13,23 +27,44 @@ class Image:
 @dataclass
 class EncodedImage:
     timestamp: int
-    image: np.ndarray[np.uint8]
+    image: np.ndarray
     encoding: str
+
+    def serialize(self) -> bytes:
+        return msgpack.packb(self.__dict__)
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "EncodedImage":
+        return cls(**msgpack.unpackb(data))
 
 
 @dataclass
 class EncodedDepth:
     timestamp: int
-    depth: np.ndarray[np.uint8]
-    confidence: np.ndarray[np.uint8]
+    depth: np.ndarray
+    confidence: np.ndarray
     focal: List[int]
     resolution: List[int]
+
+    def serialize(self) -> bytes:
+        return msgpack.packb(self.__dict__)
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "EncodedDepth":
+        return cls(**msgpack.unpackb(data))
 
 
 @dataclass
 class Pose:
     timestamp: int
     pose: np.ndarray
+
+    def serialize(self) -> bytes:
+        return msgpack.packb(self.__dict__)
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "Pose":
+        return cls(**msgpack.unpackb(data))
 
 
 class CommandType(Enum):
@@ -47,9 +82,33 @@ class Command:
     type: CommandType
     target: np.ndarray
 
+    def serialize(self) -> bytes:
+        data = {
+            "timestamp": self.timestamp,
+            "type": self.type.value,
+            "target": self.target
+        }
+        return msgpack.packb(data)
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "Command":
+        data_unpacked = msgpack.unpackb(data)
+        return cls(
+            timestamp=data_unpacked["timestamp"],
+            type=CommandType(data_unpacked["type"]),
+            target=data_unpacked["target"]
+        )
+
 
 @dataclass
 class RobotState:
     timestamp: float
     base_pose: np.ndarray
     base_velocity: np.ndarray
+
+    def serialize(self) -> bytes:
+        return msgpack.packb(self.__dict__)
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "RobotState":
+        return cls(**msgpack.unpackb(data))

@@ -1,9 +1,7 @@
 import time
 import zmq
 from typing import Any, List, Callable
-import msgpack
-import msgpack_numpy as m
-m.patch()
+from robot.msgs import Serializable
 
 # Networking Constants
 ROBOT_IP = "100.96.33.32"  # tailscale ip
@@ -33,8 +31,8 @@ class Publisher:
         self.socket: zmq.Socket = ctx.socket(zmq.PUB)
         self.socket.bind(f"tcp://{host}:{port}")
 
-    def publish(self, topic: str, data: Any, copy: bool = True):
-        payload = msgpack.packb(data)
+    def publish(self, topic: str, data: Serializable, copy: bool = True):
+        payload = data.serialize()
         self.socket.send_string(topic, zmq.SNDMORE)
         self.socket.send(payload, copy=copy)
 
@@ -48,7 +46,7 @@ class Subscriber:
         ctx: zmq.Context,
         port: int,
         topics: List[str],
-        deserializer: Callable[[bytes], Any],
+        deserializer: Callable[[bytes], Serializable],
         host: str = "localhost",
         conflate: bool = True,
     ):
@@ -62,7 +60,7 @@ class Subscriber:
 
     def receive(self) -> tuple[str, Any]:
         topic, data = self.socket.recv_multipart()
-        return topic.decode("utf-8"), msgpack.unpackb(data)
+        return topic.decode("utf-8"), self.deserializer(data)
 
     def register_poller(self, poller: zmq.Poller):
         poller.register(self.socket, zmq.POLLIN)
