@@ -18,10 +18,6 @@ def on_stream_stopped():
     stop_event.set()
 
 
-def get_intrinsic_mat_from_coeffs(coeffs: np.ndarray) -> np.ndarray:
-    return np.array([[coeffs.fx, 0, coeffs.tx], [0, coeffs.fy, coeffs.ty], [0, 0, 1]])
-
-
 def get_timestamp_from_misc_data(misc_data: np.ndarray) -> float:
     metadata = misc_data.tobytes().decode("ascii")
     return json.loads(metadata)["metadata"]["unixTimestampOnReceivedFrame"]
@@ -59,9 +55,6 @@ def main(device_id: int):
             confidence = session.get_confidence_frame()
             pose = get_pose_array_from_pose(session.get_camera_pose())
             timestamp = str(get_timestamp_from_misc_data(session.get_misc_data()))
-
-            if depth.shape != rgb.shape:
-                pass  # TODO: resize depth map
 
             # RGB output
             node.send_output(
