@@ -47,7 +47,7 @@ class Subscriber:
         ctx: zmq.Context,
         port: int,
         topics: List[str],
-        deserializer: Callable[[bytes], Serializable],
+        deserializer: List[Callable[[bytes], Serializable]],
         host: str = "localhost",
         conflate: bool = True,
     ):
@@ -57,11 +57,14 @@ class Subscriber:
             self.socket.setsockopt_string(zmq.SUBSCRIBE, topic)
         if conflate:
             self.socket.setsockopt(zmq.CONFLATE, 1)
-        self.deserializer = deserializer
+
+        self.deserializer = {topic: deserializer[i] for i, topic in enumerate(topics)}
 
     def receive(self) -> tuple[str, Any]:
-        topic, data = self.socket.recv_multipart()
-        return topic.decode("utf-8"), self.deserializer(data)
+        payload = self.socket.recv_multipart()
+        topic = payload[0].decode("utf-8")
+        data = self.deserializer[topic](payload[1])
+        return topic, data
 
     def register_poller(self, poller: zmq.Poller):
         poller.register(self.socket, zmq.POLLIN)

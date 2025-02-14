@@ -70,7 +70,6 @@ def main(device_id: int):
                 timestamp=timestamp,
                 pose=pose
             ))
-            print(f"took {(time.perf_counter_ns() - timestamp)/1e6:.2f} ms")
 
         new_frame_event.clear()
 
