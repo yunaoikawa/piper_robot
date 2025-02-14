@@ -1,4 +1,5 @@
 import argparse
+import logging
 import pickle
 from concurrent import futures
 from functools import partial
@@ -15,6 +16,9 @@ import mujoco
 _HERE = Path(__file__).parent
 _XML = _HERE / "mujoco_visual" / "shoulder_mounted_pipers.xml"
 DATASET_PATH = Path("~/projects/local-code/robot-utility-model-data/train").expanduser()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 TASKS = {
     "door": "Door_Opening",
@@ -250,7 +254,7 @@ def main(
 
 def rollout_with_random_init(initial_position, model, data, random_traj, fps, use_left):
     # Set initial position
-    for _ in range(100):
+    for _ in range(30):
         data.ctrl = initial_position
         mujoco.mj_step(model, data)
     return main(model, data, random_traj, fps, use_left)
@@ -288,7 +292,7 @@ def rollout_with_random_tasks_and_fixed_init(
                 use_left=False,
             )
             total_cost += (cost_left + cost_right) / 2
-            print(f"Task: {task}, Rollout: {i}, Cost: {cost_left + cost_right}")
+    logger.info(f"Initial position: {initial_position}, Cost: {total_cost}")
     return total_cost
 
 
@@ -322,16 +326,16 @@ if __name__ == "__main__":
     ])
     # Nevergrad parametrization
     params = ng.p.Array(init=default_init_position, lower=ctrl_lower, upper=ctrl_upper)
-    optimizer = ng.optimizers.NGOpt(parametrization=params, budget=2)
+    optimizer = ng.optimizers.NGOpt(parametrization=params, budget=256, num_workers=32)
     to_optimize = partial(
         rollout_with_random_tasks_and_fixed_init,
         seed=args.seed,
-        n_rollouts_per_task=1,
+        n_rollouts_per_task=25,
         fps=fps,
     )
-    with futures.ProcessPoolExecutor(max_workers=1) as executor:
+    with futures.ProcessPoolExecutor(max_workers=optimizer.num_workers) as executor:
         recommendation = optimizer.minimize(
-            to_optimize, executor=executor, batch_mode=False
+            to_optimize, executor=executor, batch_mode=True
         )
     print(recommendation.value)
     pickle.dump(recommendation, open("recommendation.pkl", "wb"))
