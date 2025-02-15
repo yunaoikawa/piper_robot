@@ -1,4 +1,4 @@
-from pubsub import Subscriber, Publisher
+from .pubsub import Subscriber, Publisher
 
 # Networking Constants
 ROBOT_IP = "100.96.33.32"  # tailscale ip
