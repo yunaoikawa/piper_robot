@@ -1,5 +1,6 @@
 """
-To run joystick on Jetson Nano, one needs to install xpad drivers. Then, one needs to add the user to input group and create udev rules.
+To run joystick on Jetson Nano, one needs to install xpad drivers. Then, one needs to add the user to input group
+and create udev rules.
 """
 
 import time

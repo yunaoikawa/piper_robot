@@ -9,7 +9,8 @@ import msgpack_numpy
 msgpack_numpy.patch()
 
 T = TypeVar('T')
-ns = NewType('ns', int)
+s = NewType('s', float) # seconds
+ns = NewType('ns', int) # nanoseconds
 meters = NewType('meters', float)
 
 class Serializable(Protocol):
@@ -47,6 +48,8 @@ class EncodedDepth:
     confidence: np.ndarray
     focal: List[int]
     resolution: List[int]
+    width: int
+    height: int
 
     def serialize(self) -> bytes:
         return msgpack.packb(self.__dict__)

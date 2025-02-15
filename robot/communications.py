@@ -1,23 +1,24 @@
 import time
 import zmq
 from typing import Any, List, Callable
-from robot.msgs import Serializable
+from robot.msgs import Serializable, s, ns
 
 # Networking Constants
 ROBOT_IP = "100.96.33.32"  # tailscale ip
 COMMAND_PORT = 5555
 ROBOT_STATE_PORT = 5556
+VIZ_PORT = 8000
 BASE_CAMERA_PORT = 9000
 
 class FrequencyTimer:
-    def __init__(self, name: str, frequency: int, delay_warn_threshold_ns: int = -1):
+    def __init__(self, name: str, frequency: int, delay_warn_threshold: s = s(-1)):
         self.name = name
-        self.interval = int(1e9 / frequency)
-        self.last_time = time.perf_counter_ns()
-        self.delay_warn_threshold = delay_warn_threshold_ns
+        self.interval = ns(int(1e9 / frequency))
+        self.last_time = ns(time.perf_counter_ns())
+        self.delay_warn_threshold = ns(int(delay_warn_threshold * 1e9))
 
     def __enter__(self):
-        self.last_time = time.perf_counter_ns()
+        self.last_time = ns(time.perf_counter_ns())
 
     def __exit__(self, *args):
         elapsed = time.perf_counter_ns() - self.last_time
@@ -28,9 +29,11 @@ class FrequencyTimer:
 
 
 class Publisher:
-    def __init__(self, ctx: zmq.Context, port: int, host: str = "*"):
+    def __init__(self, ctx: zmq.Context, port: int, host: str = "*", HWM: int | None = None):
         self.socket: zmq.Socket = ctx.socket(zmq.PUB)
         self.socket.bind(f"tcp://{host}:{port}")
+        if HWM is not None:
+            self.socket.setsockopt(zmq.SNDHWM, HWM)
 
     def publish(self, topic: str, data: Serializable, copy: bool = True):
         payload = data.serialize()
