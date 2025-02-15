@@ -27,7 +27,10 @@ def main(cfg: omegaconf.DictConfig):
             print(f"Module {node['module']} not found.")
             exit(1)
 
-        p = Process(target=fn, kwargs=node["args"]) if "args" in node else Process(target=fn)
+        if "args" in node:
+            p = Process(target=fn, kwargs=node["args"], name=node["name"])
+        else:
+            p = Process(target=fn, name=node["name"])
         p.start()
         processes.append(p)
 
