@@ -1,6 +1,6 @@
 import time
 import zmq
-from typing import Any, List, Callable
+from typing import Any, List, Callable, Optional
 from robot.msgs import Serializable, s, ns
 
 # Networking Constants
@@ -29,7 +29,7 @@ class FrequencyTimer:
 
 
 class Publisher:
-    def __init__(self, ctx: zmq.Context, port: int, host: str = "*", HWM: int | None = None):
+    def __init__(self, ctx: zmq.Context, port: int, host: str = "*", HWM: Optional[int] = None):
         self.socket: zmq.Socket = ctx.socket(zmq.PUB)
         self.socket.bind(f"tcp://{host}:{port}")
         if HWM is not None:
@@ -65,7 +65,7 @@ class Subscriber:
         self.deserializer = {topic: deserializer[i] for i, topic in enumerate(topics)}
         self.no_block = zmq.NOBLOCK if no_block else 0
 
-    def receive(self) -> tuple[str | None, Any | None]:
+    def receive(self) -> tuple[Optional[str], Optional[Any]]:
         try:
             payload = self.socket.recv_multipart(flags=self.no_block)
             topic = payload[0].decode("utf-8")
