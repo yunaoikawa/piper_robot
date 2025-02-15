@@ -4,7 +4,7 @@ import zmq
 import time
 
 from record3d import Record3DStream, CameraPose
-from robot.msgs import EncodedImage, EncodedDepth, Pose
+from robot.msgs import EncodedImage, EncodedDepth, Pose, ns
 from robot.communications import Publisher, BASE_CAMERA_PORT, FrequencyTimer
 
 new_frame_event = Event()
@@ -40,7 +40,8 @@ def main(device_id: int):
 
     while True:
         with timer:
-            if stop_event.is_set(): break
+            if stop_event.is_set():
+                break
 
             if not new_frame_event.wait(0.1):
                 continue
@@ -51,27 +52,26 @@ def main(device_id: int):
             intrinsics = session.get_intrinsic_mat()
             pose = get_pose_array_from_pose(session.get_camera_pose())
 
-            timestamp = time.perf_counter_ns()
-            pub.publish("/base/image", EncodedImage(
-                timestamp=timestamp,
-                image=rgb,
-                encoding="jpg"
-            ))
+            timestamp = ns(time.perf_counter_ns())
+            pub.publish("/base/image", EncodedImage(timestamp=timestamp, image=rgb, encoding="jpg"))
 
-            pub.publish("/base/depth", EncodedDepth(
-                timestamp=timestamp,
-                depth=depth,
-                confidence=confidence,
-                focal=[int(intrinsics.fx), int(intrinsics.fy)],
-                resolution=[int(intrinsics.tx), int(intrinsics.ty)]
-            ))
+            pub.publish(
+                "/base/depth",
+                EncodedDepth(
+                    timestamp=timestamp,
+                    depth=depth,
+                    confidence=confidence,
+                    focal=[int(intrinsics.fx), int(intrinsics.fy)],
+                    resolution=[int(intrinsics.tx), int(intrinsics.ty)],
+                    width=256, # TODO: get from bindings
+                    height=192,
+                ),
+            )
 
-            pub.publish("/base/pose", Pose(
-                timestamp=timestamp,
-                pose=pose
-            ))
+            pub.publish("/base/pose", Pose(timestamp=timestamp, pose=pose))
 
         new_frame_event.clear()
+
 
 if __name__ == "__main__":
     main(0)
