@@ -1,3 +1,4 @@
+from typing import cast
 import zmq
 from robot.msgs import Command
 from robot.communications import Subscriber, FrequencyTimer, COMMAND_PORT
@@ -15,20 +16,8 @@ def main():
         with timer:
             _, command = command_sub.receive()
             if command is not None:
-                base.set_target(command)
+                base.set_target(cast(Command, command))
             base.step()
-    # for event in node:
-    #     if event["type"] == "INPUT":
-    #         if event["id"] == "command":
-    #             metadata = event["metadata"]
-    #             target = event["value"].to_numpy()
-    #             match metadata["command_type"]:
-    #                 case CommandType.BASE_VELOCITY.value:
-    #                     base.set_target_velocity(target)
-    #                 case CommandType.BASE_POSITION.value:
-    #                     base.set_target_position(target)
-    #         if event["id"] == "tick":
-    #             base.step()
 
 
 if __name__ == "__main__":

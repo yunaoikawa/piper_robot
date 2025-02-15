@@ -7,16 +7,13 @@ from enum import Enum
 from typing import List
 import numpy as np
 import numpy.typing as npt
-from typing import Protocol, TypeVar, NewType
+from typing import Protocol, TypeVar
 
 import msgpack
 import msgpack_numpy
 msgpack_numpy.patch()
 
 T = TypeVar('T')
-s = NewType('s', float) # seconds
-ns = NewType('ns', int) # nanoseconds
-meters = NewType('meters', float)
 
 Buffer = npt.NDArray
 U8Buffer = npt.NDArray[np.uint8]
@@ -24,6 +21,8 @@ F32Buffer = npt.NDArray[np.float32]
 F64Buffer = npt.NDArray[np.float64]
 
 class Message(Protocol):
+    timestamp: int
+
     def serialize(self) -> bytes:
         ...
 
