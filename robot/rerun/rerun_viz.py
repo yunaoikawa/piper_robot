@@ -5,8 +5,9 @@ import cv2
 import liblzfse
 import rerun as rr
 
-from robot.communications import Subscriber, FrequencyTimer, BASE_CAMERA_PORT, ROBOT_IP
-from robot.msgs import EncodedImage, EncodedDepth, Pose, Buffer
+from robot.network import Subscriber, BASE_CAMERA_PORT, ROBOT_IP
+from robot.network.timer import FrequencyTimer
+from robot.network.msgs import EncodedImage, EncodedDepth, Pose, Buffer
 from robot.nav.mapping import get_pcd_from_image_and_depth
 
 

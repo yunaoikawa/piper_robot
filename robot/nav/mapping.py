@@ -1,5 +1,6 @@
 from PIL import Image
 import numpy as np
+import cv2
 import open3d as o3d
 from quaternion import as_rotation_matrix, quaternion
 
@@ -7,7 +8,9 @@ from quaternion import as_rotation_matrix, quaternion
 def get_pcd_from_image_and_depth(
     image: np.ndarray, depth: np.ndarray, confidence: np.ndarray, pose: np.ndarray, focal: list, resolution: list
 ) -> np.ndarray:
-    rgb_width, rgb_height = image.shape[1], image.shape[0]
+    image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+    depth = cv2.rotate(depth, cv2.ROTATE_90_CLOCKWISE)
+    rgb_width, rgb_height = image.shape[0], image.shape[1]
     depth_scale = 1000.0
     # Resize depth and confidence maps to match RGB image dimensions
     depth = depth_scale * np.asarray(Image.fromarray(depth).resize((rgb_width, rgb_height)))
@@ -32,7 +35,7 @@ def get_pcd_from_image_and_depth(
     # Flip the pcd
     flip_transform = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
     # flip_transform_inverse = np.linalg.inv(flip_transform)
-    pcd.transform(flip_transform)
+    # pcd.transform(flip_transform)
 
     quat, translation = pose[:4], pose[4:7]
     qx, qy, qz, qw = quat

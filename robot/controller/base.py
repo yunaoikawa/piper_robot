@@ -9,8 +9,8 @@ os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
-from robot.msgs import Command, CommandType
-from robot.constants import (
+from robot.network.msgs import Command, CommandType
+from robot.controller.constants import (
     POLICY_CONTROL_PERIOD_NS,
     ENCODER_MAGNET_OFFSETS,
     TWO_PI,
