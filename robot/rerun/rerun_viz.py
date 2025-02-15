@@ -1,21 +1,27 @@
+from typing import Any, cast
 import numpy as np
-import cv2
-import blosc as bl
 import zmq
-import pickle
+import cv2
+import liblzfse
 import rerun as rr
-import time
+
+from robot.communications import Subscriber, FrequencyTimer, BASE_CAMERA_PORT, ROBOT_IP
+from robot.msgs import EncodedImage, EncodedDepth, Pose, Buffer
 from robot.nav.mapping import get_pcd_from_image_and_depth
+
+
+def check_timestamp(image_ts, depth_ts, pose_ts) -> bool:
+    return max(abs(image_ts - depth_ts), abs(image_ts - pose_ts), abs(depth_ts - pose_ts)) > 1e6  # 1ms
 
 
 def log_image(image):
     image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
-    rr.log("iphone/image", rr.Image(image))
+    rr.log("base/image", rr.Image(image))
 
 
 def log_depth(depth):
     depth = cv2.rotate(depth, cv2.ROTATE_90_CLOCKWISE)
-    rr.log("iphone/depth", rr.DepthImage(depth))
+    rr.log("base/depth", rr.DepthImage(depth))
 
 
 def log_pose(all_poses, event):
@@ -27,7 +33,16 @@ def log_pose(all_poses, event):
     return all_poses
 
 
-def log_map(curr_map, all_poses, image, depth, confidence, pose, focal, resolution):
+def log_map(
+    curr_map,
+    all_poses: list[Buffer],
+    image: Buffer,
+    depth: Buffer,
+    confidence: Buffer,
+    pose: Buffer,
+    focal: list,
+    resolution: list,
+):
     all_poses.append(pose)
     rr.log(
         "world/pose",
@@ -61,13 +76,15 @@ def log_map(curr_map, all_poses, image, depth, confidence, pose, focal, resoluti
 
 
 def main():
-    robot_ip = "100.96.33.32"
-    context = zmq.Context()
-    socket = context.socket(zmq.SUB)
-    socket.setsockopt(zmq.CONFLATE, 1)
-    socket.setsockopt(zmq.SUBSCRIBE, b"map_info")
-
-    socket.connect(f"tcp://{robot_ip}:5555")
+    ctx = zmq.Context()
+    sub = Subscriber(
+        ctx,
+        BASE_CAMERA_PORT,
+        ["/base/image", "/base/depth", "/base/pose"],
+        [EncodedImage.deserialize, EncodedDepth.deserialize, Pose.deserialize],
+        host=ROBOT_IP,
+    )
+    timer = FrequencyTimer("Rerun", 2, delay_warn_threshold=0.01)
 
     rr.init("rerun_visualizer", spawn=True)
     rr.log(
@@ -78,35 +95,40 @@ def main():
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Y_UP)
 
     curr_map = None
-    all_poses = []
-    init_timestamp = None
+    all_poses: list[Buffer] = []
 
     try:
         while True:
-            message = socket.recv()
-            message = message.lstrip(b"map_info")
-            data = pickle.loads(message)
+            with timer:
+                datum: dict[str, Any] = {}
+                while len(datum) < 3:
+                    topic, data = sub.receive()
+                    if topic is not None:
+                        datum[topic] = data
 
-            encoded_image = np.frombuffer(data["image"], np.uint8)
-            image = cv2.imdecode(encoded_image, 1)
-            depth = np.array(bl.unpack_array(data["depth"]), dtype=np.float32)
-            confidence = np.array(bl.unpack_array(data["confidence"]), dtype=np.uint8)
-            pose = np.array(data["pose"], dtype=np.float32)
-            focal = data["focal"]
-            resolution = data["resolution"]
+                image_msg = cast(EncodedImage, datum["/base/image"])
+                depth_msg = cast(EncodedDepth, datum["/base/depth"])
+                pose_msg = cast(Pose, datum["/base/pose"])
 
-            if init_timestamp is None:
-                init_timestamp = float(data["timestamp"])
-            print(
-                f"visualizing at timestamp: {data['timestamp']} | relative: {float(data['timestamp']) - init_timestamp}"
-            )
-            print(f"delay @ viz: {time.time() - float(data['timestamp']):.3f}s")
+                if check_timestamp(image_msg.timestamp, depth_msg.timestamp, pose_msg.timestamp):
+                    print("Timestamps do not match")
+                    continue
 
-            tic = time.time()
-            curr_map, all_poses = log_map(curr_map, all_poses, image, depth, confidence, pose, focal, resolution)
-            log_image(image)
-            log_depth(depth)
-            print(f"log_map elapsed time: {time.time() - tic:.3f}s")
+                image = cv2.cvtColor(cv2.imdecode(image_msg.image, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+                depth = np.frombuffer(liblzfse.decompress(depth_msg.depth), dtype=np.float32).reshape(
+                    depth_msg.width, depth_msg.height
+                )
+                confidence = np.frombuffer(liblzfse.decompress(depth_msg.confidence), dtype=np.uint8).reshape(
+                    depth_msg.width, depth_msg.height
+                )
+                pose = pose_msg.pose
+
+                curr_map, all_poses = log_map(
+                    curr_map, all_poses, image, depth, confidence, pose, depth_msg.focal, depth_msg.resolution
+                )
+
+                log_image(image)
+                log_depth(depth)
 
     finally:
         rr.disconnect()

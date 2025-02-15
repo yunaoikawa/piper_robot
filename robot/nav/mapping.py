@@ -3,7 +3,10 @@ import numpy as np
 import open3d as o3d
 from quaternion import as_rotation_matrix, quaternion
 
-def get_pcd_from_image_and_depth(image: np.ndarray, depth: np.ndarray, confidence: np.ndarray, pose: np.ndarray, focal: np.ndarray, resolution: np.ndarray) -> np.ndarray:
+
+def get_pcd_from_image_and_depth(
+    image: np.ndarray, depth: np.ndarray, confidence: np.ndarray, pose: np.ndarray, focal: list, resolution: list
+) -> np.ndarray:
     rgb_width, rgb_height = image.shape[1], image.shape[0]
     depth_scale = 1000.0
     # Resize depth and confidence maps to match RGB image dimensions
@@ -13,9 +16,7 @@ def get_pcd_from_image_and_depth(image: np.ndarray, depth: np.ndarray, confidenc
 
     depth_o3d = o3d.geometry.Image(np.ascontiguousarray(depth).astype(np.float32))
     rgb_o3d = o3d.geometry.Image(np.ascontiguousarray(image).astype(np.uint8))
-    rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
-        rgb_o3d, depth_o3d, convert_rgb_to_intensity=False
-    )
+    rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb_o3d, depth_o3d, convert_rgb_to_intensity=False)
 
     camera_intrinsics = o3d.camera.PinholeCameraIntrinsic(
         width=rgb_width,

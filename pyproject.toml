@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robot"
+version = "0.0.1"
+description = "Open source bimanual robot"
+authors = [
+    { name = "NYU GRAIL" }
+]
+readme = "README.md"
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License"
+]
+requires-python = ">=3.10"
+dependencies = [
+    "phoenix6",
+    "numpy",
+    "pyzmq",
+    "rerun-sdk",
+    "pygame",
+    "opencv-python",
+    "pyliblzfse",
+    "msgpack",
+    "msgpack-numpy",
+    "open3d",
+    "Pillow",
+    "numpy-quaternion",
+    "record3d @ git+ssh://git@github.com/eneserciyes/record3d.git"
+]
+
+[project.urls]
+Homepage = "https://github.com/NYU-robot-learning/robot.git"
+
+[tool.setuptools]
+packages = ["robot"]
+include-package-data = true
+
+[project.optional-dependencies]
+dev = []
