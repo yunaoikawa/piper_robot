@@ -1,7 +1,7 @@
 import os
 import time
 import math
-from typing import Tuple
+from typing import Tuple, cast
 import numpy as np
 import threading
 
@@ -23,7 +23,7 @@ from robot.constants import (
 )
 
 
-def diff_angle(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+def diff_angle(a: np.ndarray, b: np.ndarray | float) -> np.ndarray:
     return ((a - b) + np.pi) % (2 * np.pi) - np.pi
 
 
@@ -151,7 +151,10 @@ class Base:
         self.steer_motors = [SteerMotor(i * 2 + 1) for i in range(NUM_SWERVES)]
         self.drive_motors = [DriveMotor(i * 2 + 2) for i in range(NUM_SWERVES)]
 
-        self.status_signals = [s for m in self.steer_motors + self.drive_motors for s in m.status_signals]
+        self.status_signals = cast(
+            list[phoenix6.BaseStatusSignal],
+            [s for m in self.steer_motors + self.drive_motors for s in m.status_signals],
+        )
         phoenix6.BaseStatusSignal.set_update_frequency_for_all(CONTROL_FREQ, self.status_signals)
         self.status_timestamp = self.status_signals[0].timestamp
 
@@ -168,16 +171,6 @@ class Base:
         with self._command_lock:
             self._command = command
         self.last_command_time = command.timestamp
-
-    # def set_target_velocity(self, velocity: np.ndarray):
-    #     with self._command_lock:
-    #         self._command = {"mode": CommandType.BASE_VELOCITY, "target": velocity}
-    #     self.last_command_time = time.time()
-
-    # def set_target_position(self, position: np.ndarray):
-    #     with self._command_lock:
-    #         self._command = {"mode": CommandType.BASE_POSITION, "target": position}
-    #     self.last_command_time = time.time()
 
     def get_command(self):
         with self._command_lock:
