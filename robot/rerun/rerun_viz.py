@@ -11,6 +11,10 @@ from robot.msgs import EncodedImage, EncodedDepth, Pose, s
 from robot.nav.mapping import get_pcd_from_image_and_depth
 
 
+def check_timestamp(image_ts, depth_ts, pose_ts) -> bool:
+    return max(abs(image_ts - depth_ts), abs(image_ts - pose_ts), abs(depth_ts - pose_ts)) > 1e6  # 1ms
+
+
 def log_image(image: npt.NDArray[np.uint8]):
     image = cast(npt.NDArray[np.uint8], cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE))
     rr.log("base/image", rr.Image(image))
@@ -81,7 +85,7 @@ def main():
         [EncodedImage.deserialize, EncodedDepth.deserialize, Pose.deserialize],
         host=ROBOT_IP,
     )
-    timer = FrequencyTimer("Rerun", 10, delay_warn_threshold=s(0.01))
+    timer = FrequencyTimer("Rerun", 2, delay_warn_threshold=s(0.01))
 
     rr.init("rerun_visualizer", spawn=True)
     rr.log(
@@ -103,45 +107,32 @@ def main():
                     if topic is not None:
                         datum[topic] = data
 
-                image_buffer: np.ndarray = datum["/base/image"].image
-                image = cast(npt.NDArray[np.uint8], cv2.imdecode(image_buffer, cv2.IMREAD_COLOR))
+                image_msg = cast(EncodedImage, datum["/base/image"])
+                depth_msg = cast(EncodedDepth, datum["/base/depth"])
+                pose_msg = cast(Pose, datum["/base/pose"])
 
-                encoded_depth: EncodedDepth = datum["/base/depth"]
-                depth = np.frombuffer(liblzfse.decompress(encoded_depth.depth), dtype=np.float32).reshape(
-                    encoded_depth.width, encoded_depth.height
+                if check_timestamp(image_msg.timestamp, depth_msg.timestamp, pose_msg.timestamp):
+                    print("Timestamps do not match")
+                    continue
+
+                image = cast(
+                    npt.NDArray[np.uint8],
+                    cv2.cvtColor(cv2.imdecode(image_msg.image, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB),
                 )
-                confidence = np.frombuffer(liblzfse.decompress(encoded_depth.confidence), dtype=np.uint8).reshape(
-                    encoded_depth.width, encoded_depth.height
+                depth = np.frombuffer(liblzfse.decompress(depth_msg.depth), dtype=np.float32).reshape(
+                    depth_msg.width, depth_msg.height
                 )
-                pose = datum["/base/pose"].pose
+                confidence = np.frombuffer(liblzfse.decompress(depth_msg.confidence), dtype=np.uint8).reshape(
+                    depth_msg.width, depth_msg.height
+                )
+                pose = pose_msg.pose
 
                 curr_map, all_poses = log_map(
-                    curr_map, all_poses, image, depth, confidence, pose, encoded_depth.focal, encoded_depth.resolution
+                    curr_map, all_poses, image, depth, confidence, pose, depth_msg.focal, depth_msg.resolution
                 )
 
                 log_image(image)
                 log_depth(depth)
-
-            # encoded_image = np.frombuffer(data["image"], np.uint8)
-            # image = cv2.imdecode(encoded_image, 1)
-            # depth = np.array(bl.unpack_array(data["depth"]), dtype=np.float32)
-            # confidence = np.array(bl.unpack_array(data["confidence"]), dtype=np.uint8)
-            # pose = np.array(data["pose"], dtype=np.float32)
-            # focal = data["focal"]
-            # resolution = data["resolution"]
-
-            # if init_timestamp is None:
-            #     init_timestamp = float(data["timestamp"])
-            # print(
-            #     f"visualizing at timestamp: {data['timestamp']} | relative: {float(data['timestamp']) - init_timestamp}"
-            # )
-            # print(f"delay @ viz: {time.time() - float(data['timestamp']):.3f}s")
-
-            # tic = time.time()
-            # curr_map, all_poses = log_map(curr_map, all_poses, image, depth, confidence, pose, focal, resolution)
-            # log_image(image)
-            # log_depth(depth)
-            # print(f"log_map elapsed time: {time.time() - tic:.3f}s")
 
     finally:
         rr.disconnect()
