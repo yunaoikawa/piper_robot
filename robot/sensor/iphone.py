@@ -4,7 +4,7 @@ import zmq
 import time
 
 from record3d import Record3DStream, CameraPose
-from robot.msgs import EncodedImage, EncodedDepth, Pose, ns
+from robot.msgs import EncodedImage, EncodedDepth, Pose
 from robot.communications import Publisher, BASE_CAMERA_PORT, FrequencyTimer
 
 new_frame_event = Event()
@@ -52,7 +52,7 @@ def main(device_id: int):
             intrinsics = session.get_intrinsic_mat()
             pose = get_pose_array_from_pose(session.get_camera_pose())
 
-            timestamp = ns(time.perf_counter_ns())
+            timestamp = time.perf_counter_ns()
             pub.publish("/base/image", EncodedImage(timestamp=timestamp, image=rgb, encoding="jpg"))
 
             pub.publish(

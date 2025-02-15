@@ -1,7 +1,12 @@
+"""
+All the messages that are exchanged.
+All timestamps are in nanoseconds.
+"""
 from dataclasses import dataclass
 from enum import Enum
 from typing import List
 import numpy as np
+import numpy.typing as npt
 from typing import Protocol, TypeVar, NewType
 
 import msgpack
@@ -13,7 +18,12 @@ s = NewType('s', float) # seconds
 ns = NewType('ns', int) # nanoseconds
 meters = NewType('meters', float)
 
-class Serializable(Protocol):
+Buffer = npt.NDArray
+U8Buffer = npt.NDArray[np.uint8]
+F32Buffer = npt.NDArray[np.float32]
+F64Buffer = npt.NDArray[np.float64]
+
+class Message(Protocol):
     def serialize(self) -> bytes:
         ...
 
@@ -23,14 +33,14 @@ class Serializable(Protocol):
 
 @dataclass
 class Image:
-    timestamp: ns
-    image: np.ndarray
+    timestamp: int
+    image: U8Buffer
 
 
 @dataclass
 class EncodedImage:
-    timestamp: ns
-    image: np.ndarray
+    timestamp: int
+    image: U8Buffer
     encoding: str
 
     def serialize(self) -> bytes:
@@ -43,9 +53,9 @@ class EncodedImage:
 
 @dataclass
 class EncodedDepth:
-    timestamp: ns
-    depth: np.ndarray
-    confidence: np.ndarray
+    timestamp: int
+    depth: U8Buffer
+    confidence: U8Buffer
     focal: List[int]
     resolution: List[int]
     width: int
@@ -61,8 +71,8 @@ class EncodedDepth:
 
 @dataclass
 class Pose:
-    timestamp: ns
-    pose: np.ndarray
+    timestamp: int
+    pose: F64Buffer
 
     def serialize(self) -> bytes:
         return msgpack.packb(self.__dict__)
@@ -83,9 +93,9 @@ class CommandType(Enum):
 
 @dataclass
 class Command:
-    timestamp: ns
+    timestamp: int
     type: CommandType
-    target: np.ndarray
+    target: F64Buffer
 
     def serialize(self) -> bytes:
         data = {
@@ -107,9 +117,9 @@ class Command:
 
 @dataclass
 class RobotState:
-    timestamp: ns
-    base_pose: np.ndarray
-    base_velocity: np.ndarray
+    timestamp: int
+    base_pose: F64Buffer
+    base_velocity: F64Buffer
 
     def serialize(self) -> bytes:
         return msgpack.packb(self.__dict__)

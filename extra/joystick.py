@@ -4,14 +4,13 @@ and create udev rules.
 """
 
 import time
-from typing import cast
 import numpy as np
 import zmq
 import pygame
 from pygame.joystick import Joystick
 
 from robot.communications import Publisher, FrequencyTimer, COMMAND_PORT
-from robot.msgs import Command, CommandType, ns
+from robot.msgs import Command, CommandType
 
 
 def apply_deadzone(arr, deadzone_size=0.05):
@@ -61,7 +60,7 @@ def main():
                         pub.publish(
                             "/command",
                             Command(
-                                timestamp=cast(ns, time.perf_counter_ns()),
+                                timestamp=time.perf_counter_ns(),
                                 type=CommandType.BASE_VELOCITY,
                                 target=target_velocity.ravel(),
                             ),

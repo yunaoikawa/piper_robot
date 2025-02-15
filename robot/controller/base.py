@@ -1,7 +1,7 @@
 import os
 import time
 import math
-from typing import Tuple, cast
+from typing import Tuple
 import numpy as np
 import threading
 
@@ -9,7 +9,7 @@ os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
-from robot.msgs import Command, CommandType, ns
+from robot.msgs import Command, CommandType
 from robot.constants import (
     POLICY_CONTROL_PERIOD_NS,
     ENCODER_MAGNET_OFFSETS,
@@ -162,7 +162,7 @@ class Base:
 
         self._command = None
         self._command_lock = threading.Lock()
-        self.last_command_time = cast(ns, time.perf_counter_ns())
+        self.last_command_time = time.perf_counter_ns()
 
     def set_target(self, command: Command):
         with self._command_lock:
