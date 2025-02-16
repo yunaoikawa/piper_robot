@@ -5,6 +5,7 @@ notebooks/
 robot/out
 outputs/
 data/
+MUJOCO_LOG.TXT
 
 .DS_Store
 *.swp

@@ -2,64 +2,68 @@
     <asset>
         <material name="aluminum" shininess="0.8" specular="0.8" reflectance="0.8" rgba="0.7 0.7 0.7 1"/>
     </asset>
-	<worldbody>
-        <body name="chassis" pos="0 0 0.6" euler='0 0 0'>
+    <worldbody>
+        <body name="chassis" pos="0 0 0.3" euler="0 0 0">
             <joint type="free"/>
-            <geom type="box" size=".8 1.05 .15" material="aluminum" rgba="0.7 0.7 0.7 1" density="2000"/>
-            <body name="l-front" pos="0.525 0.78 -0.25" euler='0 0 0'>
-                <joint damping="0.1" name="l-front-steer" type="hinge" axis="0 0 1"/>
-                <geom type="cylinder" size=".05 0.25" rgba="0 0 0 1"/>
-                <body name="l-front-wheel" pos="0 0 -0.2" euler="90 0 0">
-                    <joint damping="0.1" name="l-front-wheel" type="hinge" axis="0 0 -1" limited="false"/>
-                    <geom type="cylinder" size=".2 0.15" rgba="0.8 0.8 0.8 0.8"/>
+            <geom type="box" size="0.5 0.7 0.1" material="aluminum" rgba="0.7 0.7 0.7 1" density="5000"/>
+            <!-- Front Left Wheel Assembly -->
+            <body name="fl-module" pos="0.35 0.5 -0.1" euler="0 0 0">
+                <joint name="fl-steer" type="hinge" axis="0 0 1" damping="0.2"/>
+                <geom type="cylinder" size="0.05 0.1" rgba="0 0 0 1" density="3000"/>
+                <body name="fl-wheel" pos="0 0 -0.1" euler="90 0 0">
+                    <joint name="fl-wheel-joint" type="hinge" axis="0 0 -1" damping="0.2" limited="false"/>
+                    <geom type="cylinder" size="0.15 0.05" rgba="0.8 0.8 0.8 0.8" density="3000"/>
                 </body>
             </body>
-            <body name="r-front" pos="0.525 -0.78 -0.25 " euler='0 0 0'>
-                <joint damping="0.1" name="r-front-steer" type="hinge" axis="0 0 1"/>
-                <geom type="cylinder" size=".05 0.25" rgba="0 0 0 1"/>
-                <body name="r-front-wheel" pos="0.0 0 -0.2" euler="90 0 0">
-                    <joint damping="0.1" name="r-front-wheel" type="hinge" axis="0 0 -1" limited="false"/>
-                    <geom type="cylinder" size=".2 0.15" rgba="0.8 0.8 0.8 0.8"/>
+            <!-- Front Right Wheel Assembly -->
+            <body name="fr-module" pos="0.35 -0.5 -0.1" euler="0 0 0">
+                <joint name="fr-steer" type="hinge" axis="0 0 1" damping="0.2"/>
+                <geom type="cylinder" size="0.05 0.1" rgba="0 0 0 1" density="3000"/>
+                <body name="fr-wheel" pos="0 0 -0.1" euler="90 0 0">
+                    <joint name="fr-wheel-joint" type="hinge" axis="0 0 -1" damping="0.2" limited="false"/>
+                    <geom type="cylinder" size="0.15 0.05" rgba="0.8 0.8 0.8 0.8" density="3000"/>
                 </body>
             </body>
-            <body name="l-back" pos="-0.525 0.78 -0.25 " euler='0 0 0'>
-                <joint damping="0.1" name="l-back-steer" type="hinge" axis="0 0 1"/>
-                <geom type="cylinder" size=".05 0.25" rgba="0 0 0 1"/>
-                <body name="l-back-wheel" pos="0 0 -0.2" euler="90 0 0">
-                    <joint damping="0.1" name="l-back-wheel" type="hinge" axis="0 0 -1" limited="false"/>
-                    <geom type="cylinder" size=".2 0.15" rgba="0.8 0.8 0.8 0.8"/>
+            <!-- Rear Left Wheel Assembly -->
+            <body name="rl-module" pos="-0.35 0.5 -0.1" euler="0 0 0">
+                <joint name="rl-steer" type="hinge" axis="0 0 1" damping="0.2"/>
+                <geom type="cylinder" size="0.05 0.1" rgba="0 0 0 1" density="3000"/>
+                <body name="rl-wheel" pos="0 0 -0.1" euler="90 0 0">
+                    <joint name="rl-wheel-joint" type="hinge" axis="0 0 -1" damping="0.2" limited="false"/>
+                    <geom type="cylinder" size="0.15 0.05" rgba="0.8 0.8 0.8 0.8" density="3000"/>
                 </body>
             </body>
-            <body name="r-back" pos="-0.525 -0.78 -0.25" euler='0 0 0'>
-                <joint damping="0.1" name="r-back-steer" type="hinge" axis="0 0 1"/>
-                <geom type="cylinder" size=".05 0.25" rgba="0 0 0 1"/>
-                <body name="r-back-wheel" pos="0 0 -0.2" euler="90 0 0">
-                    <joint damping="0.1" name="r-back-wheel" type="hinge" axis="0 0 -1" limited="false"/>
-                    <geom type="cylinder" size=".2 0.15" rgba="0.8 0.8 0.8 0.8"/>
+            <!-- Rear Right Wheel Assembly -->
+            <body name="rr-module" pos="-0.35 -0.5 -0.1" euler="0 0 0">
+                <joint name="rr-steer" type="hinge" axis="0 0 1" damping="0.2"/>
+                <geom type="cylinder" size="0.05 0.1" rgba="0 0 0 1" density="3000"/>
+                <body name="rr-wheel" pos="0 0 -0.1" euler="90 0 0">
+                    <joint name="rr-wheel-joint" type="hinge" axis="0 0 -1" damping="0.2" limited="false"/>
+                    <geom type="cylinder" size="0.15 0.05" rgba="0.8 0.8 0.8 0.8" density="3000"/>
                 </body>
             </body>
         </body>
-	</worldbody>
-	<actuator>
-        <position name="l-front-steer-servo" joint="l-front-steer" ctrlrange="-3.14 3.14" kp="100"/>
-        <position name="r-front-steer-servo" joint="r-front-steer" ctrlrange="-3.14 3.14" kp="100"/>
-        <position name="l-back-steer-servo" joint="l-back-steer" ctrlrange="-3.14 3.14" kp="100"/>
-        <position name="r-back-steer-servo" joint="r-back-steer" ctrlrange="-3.14 3.14" kp="100"/>
+    </worldbody>
+    <actuator>
+        <position name="fl-steer-servo" joint="fl-steer" ctrlrange="-3.14 3.14" kp="3000"/>
+        <position name="fr-steer-servo" joint="fr-steer" ctrlrange="-3.14 3.14" kp="3000"/>
+        <position name="rl-steer-servo" joint="rl-steer" ctrlrange="-3.14 3.14" kp="3000"/>
+        <position name="rr-steer-servo" joint="rr-steer" ctrlrange="-3.14 3.14" kp="3000"/>
 
-        <velocity name="l-front-wheel-servo" joint="l-front-wheel" kv="20"/>
-        <velocity name="r-front-wheel-servo" joint="r-front-wheel" kv="20"/>
-        <velocity name="l-back-wheel-servo" joint="l-back-wheel" kv="20"/>
-        <velocity name="r-back-wheel-servo" joint="r-back-wheel" kv="20"/>
-	</actuator>
+        <velocity name="fl-wheel-servo" joint="fl-wheel-joint" kv="1200"/>
+        <velocity name="fr-wheel-servo" joint="fr-wheel-joint" kv="1200"/>
+        <velocity name="rl-wheel-servo" joint="rl-wheel-joint" kv="1200"/>
+        <velocity name="rr-wheel-servo" joint="rr-wheel-joint" kv="1000"/>
+    </actuator>
     <sensor>
-        <jointvel name="l-front-wheel-vel" joint="l-front-wheel"/>
-        <jointvel name="r-front-wheel-vel" joint="r-front-wheel"/>
-        <jointvel name="l-back-wheel-vel" joint="l-back-wheel"/>
-        <jointvel name="r-back-wheel-vel" joint="r-back-wheel"/>
+        <jointvel name="fl-wheel-vel" joint="fl-wheel-joint"/>
+        <jointvel name="fr-wheel-vel" joint="fr-wheel-joint"/>
+        <jointvel name="rl-wheel-vel" joint="rl-wheel-joint"/>
+        <jointvel name="rr-wheel-vel" joint="rr-wheel-joint"/>
 
-        <jointpos name="l-front-steer-pos" joint="l-front-steer"/>
-        <jointpos name="r-front-steer-pos" joint="r-front-steer"/>
-        <jointpos name="l-back-steer-pos" joint="l-back-steer"/>
-        <jointpos name="r-back-steer-pos" joint="r-back-steer"/>
+        <jointpos name="fl-steer-pos" joint="fl-steer"/>
+        <jointpos name="fr-steer-pos" joint="fr-steer"/>
+        <jointpos name="rl-steer-pos" joint="rl-steer"/>
+        <jointpos name="rr-steer-pos" joint="rr-steer"/>
     </sensor>
 </mujoco>
