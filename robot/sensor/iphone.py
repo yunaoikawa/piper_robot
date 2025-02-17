@@ -4,8 +4,9 @@ import zmq
 import time
 
 from record3d import Record3DStream, CameraPose
-from robot.msgs import EncodedImage, EncodedDepth, Pose
-from robot.communications import Publisher, BASE_CAMERA_PORT, FrequencyTimer
+from robot.network import Publisher, BASE_CAMERA_PORT
+from robot.network.msgs import EncodedImage, EncodedDepth, Pose
+from robot.network.timer import FrequencyTimer
 
 new_frame_event = Event()
 stop_event = Event()

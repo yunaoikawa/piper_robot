@@ -9,8 +9,8 @@ os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
-from robot.msgs import Command, CommandType
-from robot.constants import (
+from robot.network.msgs import Command, CommandType
+from robot.controller.constants import (
     POLICY_CONTROL_PERIOD_NS,
     ENCODER_MAGNET_OFFSETS,
     TWO_PI,
@@ -55,8 +55,8 @@ class SteerMotor:
         self.fx_cfg.slot0.k_p = 60
         self.fx_cfg.slot0.k_i = 0.0
         self.fx_cfg.slot0.k_d = 6
-        self.fx_cfg.torque_current.peak_forward_torque_current = 40  # Amperes
-        self.fx_cfg.torque_current.peak_reverse_torque_current = -40
+        self.fx_cfg.torque_current.peak_forward_torque_current = 10  # Amperes
+        self.fx_cfg.torque_current.peak_reverse_torque_current = -10
         self.fx_cfg.audio.beep_on_boot = False
         self.fx_cfg.feedback.feedback_remote_sensor_id = self.cc.device_id
         self.fx_cfg.feedback.feedback_sensor_source = signals.FeedbackSensorSourceValue.FUSED_CANCODER
@@ -109,8 +109,8 @@ class DriveMotor:
         self.fx_cfg.slot0.k_p = 3
         self.fx_cfg.slot0.k_i = 0
         self.fx_cfg.slot0.k_d = 0.1
-        self.fx_cfg.torque_current.peak_forward_torque_current = 10  # Amperes
-        self.fx_cfg.torque_current.peak_reverse_torque_current = -10
+        self.fx_cfg.torque_current.peak_forward_torque_current = 5  # Amperes
+        self.fx_cfg.torque_current.peak_reverse_torque_current = -5
         self.fx_cfg.audio.beep_on_boot = False
 
         for _ in range(3):

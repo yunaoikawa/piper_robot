@@ -1,0 +1,8 @@
+- name: base_camera
+  module: robot.sensor.iphone
+  args:
+    device_id: 0
+
+- name: controller
+  module: robot.controller.controller_node
+

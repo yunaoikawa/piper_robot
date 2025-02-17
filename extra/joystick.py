@@ -9,8 +9,9 @@ import zmq
 import pygame
 from pygame.joystick import Joystick
 
-from robot.communications import Publisher, FrequencyTimer, COMMAND_PORT
-from robot.msgs import Command, CommandType
+from robot.network import Publisher, COMMAND_PORT
+from robot.network.timer import FrequencyTimer
+from robot.network.msgs import Command, CommandType
 
 
 def apply_deadzone(arr, deadzone_size=0.05):

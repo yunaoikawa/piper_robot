@@ -1,7 +1,9 @@
 from typing import cast
 import zmq
-from robot.msgs import Command
-from robot.communications import Subscriber, FrequencyTimer, COMMAND_PORT
+
+from robot.network import Subscriber, COMMAND_PORT
+from robot.network.msgs import Command
+from robot.network.timer import FrequencyTimer
 from robot.controller.base import Base
 
 
