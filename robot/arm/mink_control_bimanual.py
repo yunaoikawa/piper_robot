@@ -1,14 +1,44 @@
+import argparse
+import signal
 import time
 from pathlib import Path
 
-import constants
 import mink
 import numpy as np
 from loop_rate_limiters import RateLimiter
 from piper_sdk import C_PiperInterface
 
+import constants
 import mujoco
 import mujoco.viewer
+
+
+class SignalBlocker:
+    def __enter__(self):
+        """Block SIGINT (CTRL+C) and SIGTERM, but store if any were received."""
+        self.received_signal = None  # Store interrupted signal
+
+        def handler(signum, frame):
+            """Custom handler to store the received signal instead of acting immediately."""
+            print(
+                f"\nSignal {signum} received, delaying execution until after the block."
+            )
+            self.received_signal = (signum, frame)
+
+        # Save original handlers
+        self.original_sigint = signal.signal(signal.SIGINT, handler)
+        self.original_sigterm = signal.signal(signal.SIGTERM, handler)
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Restore original signal handlers and re-raise the signal if one was captured."""
+        signal.signal(signal.SIGINT, self.original_sigint)
+        signal.signal(signal.SIGTERM, self.original_sigterm)
+
+        if self.received_signal:
+            signum, frame = self.received_signal
+            print(f"\nReplaying signal {signum} now...")
+            self.original_sigint(signum, frame)  # Re-execute the original handler
+
 
 _HERE = Path(__file__).parent
 _XML = _HERE / "mujoco_visual" / "shoulder_mounted_pipers.xml"
@@ -65,7 +95,12 @@ def scale_and_clip_control(q: np.ndarray) -> np.ndarray:
     return clipped_q.astype(int)
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--real", action="store_true")
+
 if __name__ == "__main__":
+    args = parser.parse_args()
+    use_real = args.real
     model = mujoco.MjModel.from_xml_path(_XML.as_posix())
     data = mujoco.MjData(model)
 
@@ -197,15 +232,16 @@ if __name__ == "__main__":
         rotation=mink.SO3.from_matrix(WORLD_TO_SITE),
     )
 
-    # Start the piper controllers.
-    piper_left = C_PiperInterface("can_left")
-    piper_left.ConnectPort()
-    piper_left.EnableArm(7)
-    enable_fun(piper=piper_left)
-    piper_right = C_PiperInterface("can_right")
-    piper_right.ConnectPort()
-    piper_right.EnableArm(7)
-    enable_fun(piper=piper_right)
+    if use_real:
+        # Start the piper controllers.
+        piper_left = C_PiperInterface("can_left")
+        piper_left.ConnectPort()
+        piper_left.EnableArm(7)
+        enable_fun(piper=piper_left)
+        piper_right = C_PiperInterface("can_right")
+        piper_right.ConnectPort()
+        piper_right.EnableArm(7)
+        enable_fun(piper=piper_right)
 
     with mujoco.viewer.launch_passive(
         model=model,
@@ -224,18 +260,20 @@ if __name__ == "__main__":
             if not is_ok:
                 break
 
-            right_q, left_q = q[:6], q[8:14]
-            right_joint_values = scale_and_clip_control(right_q).tolist()
-            piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
-            piper_right.JointCtrl(*right_joint_values[:6])
-            # piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
-            piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+            if use_real:
+                with SignalBlocker():
+                    right_q, left_q = q[:6], q[8:14]
+                    right_joint_values = scale_and_clip_control(right_q).tolist()
+                    piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+                    piper_right.JointCtrl(*right_joint_values[:6])
+                    # piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
+                    piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
 
-            left_joint_values = scale_and_clip_control(left_q).tolist()
-            piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
-            piper_left.JointCtrl(*left_joint_values[:6])
-            # piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
-            piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+                    left_joint_values = scale_and_clip_control(left_q).tolist()
+                    piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+                    piper_left.JointCtrl(*left_joint_values[:6])
+                    # piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
+                    piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
 
             # Render
             viewer.sync()
