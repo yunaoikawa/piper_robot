@@ -135,7 +135,7 @@
     </body>
 
     <body name="angled_block_right" pos="0 -0.125 0.25">
-      <geom name="right_shoulder" type="box" size="0.1 0.1 0.01" rgba="0.2 0.3 0.8 1"
+      <geom name="right_shoulder" type="box" size="0.1 0.1 0.01" rgba="0.8 0.3 0.2 1"
         euler="0.785398 0 0" />
       <body name="right_base_link" pos="0 0 0.015" euler="0.785398 0 0">
         <inertial pos="-0.00979275 1.82906e-06 0.04101" quat="0.692988 -0.137524 -0.137826 0.69416"
