@@ -168,7 +168,7 @@ if __name__ == "__main__":
     rate = RateLimiter(frequency=200.0, warn=False)
     current_target_idx = 0
     current_time = 0
-    mujoco.mj_resetDataKeyframe(model, data, model.key("optim").id)
+    mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
     mujoco.mj_step(model, data)
 
     configuration.update(data.qpos)
