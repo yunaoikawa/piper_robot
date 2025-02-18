@@ -8,6 +8,7 @@ import threading
 os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
+from ruckig import InputParameter, OutputParameter, Result, Ruckig, ControlInterface
 
 from robot.network.msgs import Command, CommandType
 from robot.controller.constants import (
@@ -16,6 +17,7 @@ from robot.controller.constants import (
     TWO_PI,
     DRIVE_GEAR_RATIO,
     CONTROL_FREQ,
+    CONTROL_PERIOD,
     NUM_SWERVES,
     LENGTH,
     WIDTH,
@@ -163,6 +165,14 @@ class Base:
         self.x = np.zeros(3)  # x, y, θ
         self.dx = np.zeros(3)  # vx, vy, ω
 
+        # Ruckig
+        self.otg = Ruckig(3, CONTROL_PERIOD)
+        self.otg_inp = InputParameter(3)
+        self.otg_out = OutputParameter(3)
+        self.otg_res = Result.Working
+        self.otg_inp.max_velocity = self.max_vel
+        self.otg_inp.max_acceleration = self.max_accel
+
         self._command = None
         self._command_lock = threading.Lock()
         self.last_command_time = time.perf_counter_ns()
@@ -213,27 +223,43 @@ class Base:
     def step(self):
         # TODO: Set real-time scheduling policy
         self.update_state()
+        command = self.get_command()
+
+        if command is not None:
+            if command.type == CommandType.BASE_VELOCITY:
+                self.otg_inp.control_interface = ControlInterface.Position
+                self.otg_inp.target_velocity = np.clip(command.target, -self.max_vel, self.max_vel)
+            elif command.type == CommandType.BASE_POSITION:
+                raise NotImplementedError("Position control not implemented yet")
+
+            self.otg_res = Result.Working
 
         if (time.perf_counter_ns() - self.last_command_time) > 2 * POLICY_CONTROL_PERIOD_NS:
+            self.otg_inp.target_velocity = np.zeros_like(self.dx)
+            self.otg_inp.current_velocity = self.dx
+            self.otg_res = Result.Working
             with self._command_lock:
                 self._command = None
 
-        command = self.get_command()
+        if self.otg_res == Result.Working:
+            self.otg_inp.current_position = self.x
+            self.otg_res = self.otg.update(self.otg_inp, self.otg_out)
+            self.otg_out.pass_to_input(self.otg_inp)
+
         if command is None:
             for s, d in zip(self.steer_motors, self.drive_motors):
                 s.set_neutral()
                 d.set_neutral()
         else:
             phoenix6.unmanaged.feed_enable(0.1)
-            if command is None:
-                return
-            if command.type == CommandType.BASE_VELOCITY:
-                wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(command.target)
-                for i in range(NUM_SWERVES):
-                    self.steer_motors[i].set_position(wheel_angles[i])
-                    self.drive_motors[i].set_velocity(wheel_speeds[i])
-            elif command["mode"] == CommandType.BASE_POSITION:
-                raise NotImplementedError("Position control not implemented yet")
+            # if command.type == CommandType.BASE_VELOCITY:
+            dx_d = self.otg_out.new_velocity # TODO: do we need to rotate this?
+            wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(dx_d)
+            for i in range(NUM_SWERVES):
+                self.steer_motors[i].set_position(wheel_angles[i])
+                self.drive_motors[i].set_velocity(wheel_speeds[i])
+            # elif command["mode"] == CommandType.BASE_POSITION:
+                # raise NotImplementedError("Position control not implemented yet")
 
     def get_encoder_offsets(self):
         offsets = []
