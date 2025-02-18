@@ -136,7 +136,7 @@ class DriveMotor:
 
 
 class Base:
-    def __init__(self, max_vel=np.array((1.0, 1.0, 1.57)), max_accel=np.array((0.25, 0.25, 0.79))):
+    def __init__(self, max_vel=np.array((1.0, 1.0, 1.57)), max_accel=np.array((0.25, 0.25, 0.78))):
         self.max_vel = max_vel
         self.max_accel = max_accel
         self.C = np.array([
@@ -175,18 +175,14 @@ class Base:
 
         self._command_queue: Queue[Command] = Queue(1)
         self._disable_motors = True
-        # self._command_lock = threading.Lock()
         self.last_command_time = time.perf_counter_ns()
+
+        self._log_counter = 0
 
     def set_target(self, command: Command):
         if self._command_queue.full():
             print("warning: command queue is full")
         self._command_queue.put(command, block=False)
-        self.last_command_time = command.timestamp
-
-    # def get_command(self):
-    #     with self._command_lock:
-    #         return self._command
 
     def update_state(self) -> None:
         phoenix6.BaseStatusSignal.refresh_all(self.status_signals)
@@ -225,7 +221,6 @@ class Base:
     def step(self):
         # TODO: Set real-time scheduling policy
         self.update_state()
-        # Global to local frame conversion
         theta = self.x[2]
         R = np.array([
             [math.cos(theta), math.sin(theta), 0.0],
@@ -235,21 +230,19 @@ class Base:
 
         if not self._command_queue.empty():
             command = self._command_queue.get()
-            last_command_time = time.perf_counter_ns()
+            self.last_command_time = time.perf_counter_ns()
 
             if command.type == CommandType.BASE_VELOCITY:
                 target = R.T @ command.target
-                self.otg_inp.control_interface = ControlInterface.Position
+                self.otg_inp.control_interface = ControlInterface.Velocity
                 self.otg_inp.target_velocity = np.clip(target, -self.max_vel, self.max_vel)
-                # print("OTG target velocity: ", self.otg_inp.target_velocity)
-                # print("OTG current velocity:", self.otg_inp.current_velocity)
             elif command.type == CommandType.BASE_POSITION:
                 raise NotImplementedError("Position control not implemented yet")
 
             self.otg_res = Result.Working
             self._disable_motors = False
 
-        if (time.perf_counter_ns() - last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
+        if (time.perf_counter_ns() - self.last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
             self.otg_inp.target_position = self.otg_out.new_position
             self.otg_inp.target_velocity = np.zeros_like(self.dx)
             self.otg_inp.current_velocity = self.dx
@@ -267,16 +260,12 @@ class Base:
                 d.set_neutral()
         else:
             phoenix6.unmanaged.feed_enable(0.1)
-            # if command.type == CommandType.BASE_VELOCITY:
-            dx_d = self.otg_out.new_velocity # TODO: do we need to rotate this?
-            print("dx_d", dx_d)
+            dx_d = self.otg_out.new_velocity
             dx_d_local = R @ dx_d
             wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(dx_d_local)
             for i in range(NUM_SWERVES):
                 self.steer_motors[i].set_position(wheel_angles[i])
                 self.drive_motors[i].set_velocity(wheel_speeds[i])
-            # elif command["mode"] == CommandType.BASE_POSITION:
-                # raise NotImplementedError("Position control not implemented yet")
 
     def get_encoder_offsets(self):
         offsets = []
