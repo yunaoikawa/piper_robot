@@ -19,7 +19,7 @@ class SignalBlocker:
         self.received_signal = None  # Store interrupted signal
 
         def handler(signum, frame):
-            """Custom handler to store the received signal instead of acting immediately."""
+            """Custom handler to store received signal instead of acting immediately."""
             print(
                 f"\nSignal {signum} received, delaying execution until after the block."
             )
@@ -30,7 +30,7 @@ class SignalBlocker:
         self.original_sigterm = signal.signal(signal.SIGTERM, handler)
 
     def __exit__(self, exc_type, exc_value, traceback):
-        """Restore original signal handlers and re-raise the signal if one was captured."""
+        """Restore original signal handlers and re-raise signal if one was captured."""
         signal.signal(signal.SIGINT, self.original_sigint)
         signal.signal(signal.SIGTERM, self.original_sigterm)
 
