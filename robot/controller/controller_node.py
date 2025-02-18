@@ -9,7 +9,7 @@ from robot.controller.base import Base
 
 def main():
     ctx = zmq.Context()
-    command_sub = Subscriber(ctx, COMMAND_PORT, ["/command"], [Command.deserialize])
+    command_sub = Subscriber(ctx, COMMAND_PORT, ["/command"], [Command.deserialize], no_block=True)
     timer = FrequencyTimer("Controller", 250)
 
     base = Base()

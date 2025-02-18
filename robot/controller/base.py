@@ -3,6 +3,7 @@ import time
 import math
 from typing import Tuple, cast
 import numpy as np
+import queue
 import threading
 
 os.environ["CTR_TARGET"] = "Hardware"
@@ -173,7 +174,7 @@ class Base:
         self.otg_inp.max_velocity = self.max_vel
         self.otg_inp.max_acceleration = self.max_accel
 
-        self._command = None
+        self._command = queue.Queue()
         self._command_lock = threading.Lock()
         self.last_command_time = time.perf_counter_ns()
 
@@ -234,9 +235,11 @@ class Base:
 
         if command is not None:
             if command.type == CommandType.BASE_VELOCITY:
+                target = R.T @ command.target
                 self.otg_inp.control_interface = ControlInterface.Position
-                print(f"Target velocity: {command.target}")
-                self.otg_inp.target_velocity = np.clip(command.target, -self.max_vel, self.max_vel)
+                self.otg_inp.target_velocity = np.clip(target, -self.max_vel, self.max_vel)
+                print(f"OTG target velocity: ", self.otg_inp.target_velocity)
+                print(f"OTG current velocity:", self.otg_inp.current_velocity)
             elif command.type == CommandType.BASE_POSITION:
                 raise NotImplementedError("Position control not implemented yet")
 
@@ -263,8 +266,8 @@ class Base:
             # if command.type == CommandType.BASE_VELOCITY:
             dx_d = self.otg_out.new_velocity # TODO: do we need to rotate this?
             print("dx_d", dx_d)
-            dx_d_local = R @ dx_d
-            wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(dx_d_local)
+            # dx_d_local = R @ dx_d
+            wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(dx_d)
             for i in range(NUM_SWERVES):
                 self.steer_motors[i].set_position(wheel_angles[i])
                 self.drive_motors[i].set_velocity(wheel_speeds[i])
