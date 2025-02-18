@@ -223,11 +223,19 @@ class Base:
     def step(self):
         # TODO: Set real-time scheduling policy
         self.update_state()
+        # Global to local frame conversion
+        theta = self.x[2]
+        R = np.array([
+            [math.cos(theta), math.sin(theta), 0.0],
+            [-math.sin(theta), math.cos(theta), 0.0],
+            [0.0, 0.0, 1.0]
+        ])
         command = self.get_command()
 
         if command is not None:
             if command.type == CommandType.BASE_VELOCITY:
                 self.otg_inp.control_interface = ControlInterface.Position
+                print(f"Target velocity: {command.target}")
                 self.otg_inp.target_velocity = np.clip(command.target, -self.max_vel, self.max_vel)
             elif command.type == CommandType.BASE_POSITION:
                 raise NotImplementedError("Position control not implemented yet")
@@ -254,7 +262,9 @@ class Base:
             phoenix6.unmanaged.feed_enable(0.1)
             # if command.type == CommandType.BASE_VELOCITY:
             dx_d = self.otg_out.new_velocity # TODO: do we need to rotate this?
-            wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(dx_d)
+            print("dx_d", dx_d)
+            dx_d_local = R @ dx_d
+            wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(dx_d_local)
             for i in range(NUM_SWERVES):
                 self.steer_motors[i].set_position(wheel_angles[i])
                 self.drive_motors[i].set_velocity(wheel_speeds[i])
