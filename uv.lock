@@ -1580,6 +1580,7 @@ dependencies = [
     { name = "pyzmq" },
     { name = "record3d" },
     { name = "rerun-sdk" },
+    { name = "ruckig" },
 ]
 
 [package.metadata]
@@ -1599,6 +1600,7 @@ requires-dist = [
     { name = "pyzmq" },
     { name = "record3d", git = "ssh://git@github.com/eneserciyes/record3d.git" },
     { name = "rerun-sdk" },
+    { name = "ruckig", specifier = ">=0.14.0" },
 ]
 provides-extras = ["dev"]
 
@@ -1686,6 +1688,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/8d/63/79c3602afd14d501f751e615a74a59040328da5ef29ed5754ae80d236b84/rpds_py-0.22.3-pp310-pypy310_pp73-musllinux_1_2_x86_64.whl", hash = "sha256:26fd7cac7dd51011a245f29a2cc6489c4608b5a8ce8d75661bb4a1066c52dfbe", size = 553619 },
     { url = "https://files.pythonhosted.org/packages/9f/2e/c5c1689e80298d4e94c75b70faada4c25445739d91b94c211244a3ed7ed1/rpds_py-0.22.3-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:177c7c0fce2855833819c98e43c262007f42ce86651ffbb84f37883308cb0e7d", size = 233338 },
 ]
+
+[[package]]
+name = "ruckig"
+version = "0.14.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/69/1d/d32c9a109b2b433c9b4da8f23bd69a0c4667c978629b3598107481fc8e5e/ruckig-0.14.0.tar.gz", hash = "sha256:6ecedd7207db0dc0d632d825525090c0544fcef6af19656accf226eb508e0e81", size = 870741 }
 
 [[package]]
 name = "scikit-learn"
