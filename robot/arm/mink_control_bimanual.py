@@ -18,11 +18,12 @@ WORLD_TO_SITE = np.array([
     [-1, 0, 0],
 ])
 
+ALLOWED_TASKS = list(utils.TASKS.keys()) + ["test"]
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--real", action="store_true")
 parser.add_argument("--headless", action="store_true")
-parser.add_argument("--task", type=str, default=None, choices=utils.TASKS.keys())
+parser.add_argument("--task", type=str, default=None, choices=ALLOWED_TASKS)
 parser.add_argument("--use_left", action="store_true")
 parser.add_argument("--demo_fps", type=int, default=30)
 parser.add_argument("--arm_move_time", type=int, default=1)
@@ -130,7 +131,15 @@ if __name__ == "__main__":
 
     # If task is given, use task target.
     if args.task:
-        trajectory, gripper_trajectory = utils.get_random_target_trajectory(args.task)
+        if args.task == "test":
+            # Generate a static trajectory to test "getting to start position"
+            # on the real robot.
+            trajectory = np.stack([np.eye(4) for _ in range(fps)], axis=0)
+            gripper_trajectory = np.zeros(fps)
+        else:
+            trajectory, gripper_trajectory = utils.get_random_target_trajectory(
+                args.task
+            )
     else:
         trajectory, gripper_trajectory = None, None
 
