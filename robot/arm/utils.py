@@ -50,7 +50,7 @@ def scale_and_clip_control(q: np.ndarray) -> np.ndarray:
     return clipped_q.astype(int)
 
 
-DATASET_PATH = Path("~/projects/local-code/robot-utility-model-data/train").expanduser()
+DATASET_PATH = Path("data/robot-actions/train").expanduser()
 
 TASKS = {
     "door": "Door_Opening",
