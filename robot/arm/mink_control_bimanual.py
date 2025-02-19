@@ -25,6 +25,9 @@ parser.add_argument("--headless", action="store_true")
 parser.add_argument("--task", type=str, default=None, choices=utils.TASKS.keys())
 parser.add_argument("--use_left", action="store_true")
 parser.add_argument("--demo_fps", type=int, default=30)
+parser.add_argument("--arm_move_time", type=int, default=1)
+parser.add_argument("--frequency", type=float, default=200.0)
+parser.add_argument("--debug", action="store_true")
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -32,6 +35,12 @@ if __name__ == "__main__":
     fps = args.demo_fps
     model = mujoco.MjModel.from_xml_path(_XML.as_posix())
     data = mujoco.MjData(model)
+
+    def send_to_arms(piper_left, piper_right, q):
+        if not args.debug:
+            piper_utils.send_to_arms(piper_left, piper_right, q)
+        else:
+            print(q)
 
     # =================== #
     # Setup IK.
@@ -94,7 +103,7 @@ if __name__ == "__main__":
 
     # For playing back data at real-time, we typically step at ~200 Hz in simulation
     # and fetch a new target from the trajectory at 'fps'.
-    rate = RateLimiter(frequency=200.0, warn=False)
+    rate = RateLimiter(frequency=args.frequency, warn=False)
     current_target_idx = 0
     current_time = 0
     mujoco.mj_resetDataKeyframe(model, data, model.key("optim").id)
@@ -138,6 +147,7 @@ if __name__ == "__main__":
         translation=init_T_wt_with_rot.translation(),
         rotation=mink.SO3.from_matrix(WORLD_TO_SITE),
     )
+    end_effector_task.set_target(init_T_wt)
 
     def run_simulation_step(target_SE3=None, other_target_SE3=None):
         if target_SE3 is None:
@@ -169,11 +179,27 @@ if __name__ == "__main__":
 
         return True, configuration.q
 
+    def move_to_zero():
+        print(init_T_wt)
+        end_effector_task.set_target(init_T_wt)
+        other_eef_task.set_target(other_arm_init_T_wt)
+        vel = mink.solve_ik(configuration, tasks, rate.dt, solver, 1e-3, limits=limits)
+        configuration.integrate_inplace(vel, rate.dt)
+        data.ctrl[:6] = configuration.q[:6]
+        data.ctrl[7:13] = configuration.q[8:14]
+        data.ctrl[left_gripper_idx] = data.ctrl[right_gripper_idx] = 0.0
+        mujoco.mj_step(model, data)
+        rate.sleep()
+        return True, configuration.q
+
     if use_real:
         # Start the piper controllers.
-        piper_left, piper_right = piper_utils.setup_arms(
-            left_name="can_left", right_name="can_right"
-        )
+        if not args.debug:
+            piper_left, piper_right = piper_utils.setup_arms(
+                left_name="can_left", right_name="can_right"
+            )
+        else:
+            piper_left, piper_right = None, None
 
     current_t = 0
 
@@ -188,6 +214,11 @@ if __name__ == "__main__":
             mujoco.mjv_defaultFreeCamera(model, viewer.cam)
 
             frame_count = 0
+
+            if use_real:
+                for _ in range(int(args.arm_move_time * args.frequency)):
+                    is_ok, q = move_to_zero()
+                    send_to_arms(piper_left, piper_right, q)
 
             while viewer.is_running():
                 # Step the simulation
@@ -208,9 +239,42 @@ if __name__ == "__main__":
 
                 if use_real:
                     # with SignalBlocker():
-                    piper_utils.send_to_arms(piper_left, piper_right, q)
+                    send_to_arms(piper_left, piper_right, q)
 
                 # Render
                 viewer.sync()
                 rate.sleep()
                 frame_count += 1
+
+    else:
+        assert trajectory is not None, "Must provide a trajectory in headless mode."
+        # Run in headless mode.
+        if use_real:
+            for _ in range(int(args.arm_move_time * args.frequency)):
+                is_ok, q = move_to_zero()
+                send_to_arms(piper_left, piper_right, q)
+
+        while True:
+            current_t += rate.dt
+            current_target_SE3 = None
+            # If running on real, wait until arm_move_time until starting to move the
+            # arms through the trajectory path.
+            if trajectory is not None:
+                if len(trajectory) > int(current_t * fps):
+                    current_target = trajectory[int(current_t * fps)]
+                    current_target_SE3 = init_T_wt.multiply(
+                        mink.SE3.from_matrix(current_target)
+                    )
+                else:
+                    break
+
+            is_ok, q = run_simulation_step(current_target_SE3)
+            if not is_ok:
+                break
+
+            if use_real:
+                send_to_arms(piper_left, piper_right, q)
+
+            rate.sleep()
+            if trajectory is not None and len(trajectory) <= int(current_t * fps):
+                break
