@@ -10,11 +10,12 @@ def get_pcd_from_image_and_depth(
 ) -> np.ndarray:
     image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
     depth = cv2.rotate(depth, cv2.ROTATE_90_CLOCKWISE)
+
     rgb_width, rgb_height = image.shape[0], image.shape[1]
     depth_scale = 1000.0
     # Resize depth and confidence maps to match RGB image dimensions
-    depth = depth_scale * np.asarray(Image.fromarray(depth).resize((rgb_width, rgb_height)))
-    confidence = np.asarray(Image.fromarray(confidence).resize((rgb_width, rgb_height)))
+    depth = depth_scale * np.asarray(Image.fromarray(depth).resize((rgb_height, rgb_width)))
+    confidence = np.asarray(Image.fromarray(confidence).resize((rgb_height, rgb_width)))
     depth[confidence != 2] = np.nan
 
     depth_o3d = o3d.geometry.Image(np.ascontiguousarray(depth).astype(np.float32))

@@ -94,7 +94,7 @@ def main():
         rr.Transform3D(translation=[0, 0, 0], rotation=rr.Quaternion(xyzw=[1, 0, 0, 0]), axis_length=0.5),
         static=True,
     )
-    rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Y_UP)
+    rr.log("world", rr.ViewCoordinates.RIGHT_HAND_X_DOWN)
 
     curr_map = None
     all_poses: list[NDArray] = []
@@ -111,6 +111,8 @@ def main():
                 image_msg = cast(EncodedImage, datum["/base/image"])
                 depth_msg = cast(EncodedDepth, datum["/base/depth"])
                 pose_msg = cast(Pose, datum["/base/pose"])
+
+                print("Received data with timestamp: ", image_msg.timestamp)
 
                 if check_timestamp(image_msg.timestamp, depth_msg.timestamp, pose_msg.timestamp):
                     print("Timestamps do not match")

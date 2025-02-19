@@ -27,7 +27,7 @@ def get_pose_array_from_pose(pose: CameraPose) -> np.ndarray:
 def main(device_id: int):
     # create publisher
     ctx = zmq.Context()
-    pub = Publisher(ctx, BASE_CAMERA_PORT)
+    pub = Publisher(ctx, BASE_CAMERA_PORT, HWM=1)
     timer = FrequencyTimer("Camera", 50)
 
     # start stream
