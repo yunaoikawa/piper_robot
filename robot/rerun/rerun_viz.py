@@ -4,10 +4,11 @@ import zmq
 import cv2
 import liblzfse
 import rerun as rr
+from numpy.typing import NDArray
 
 from robot.network import Subscriber, BASE_CAMERA_PORT, ROBOT_IP
 from robot.network.timer import FrequencyTimer
-from robot.network.msgs import EncodedImage, EncodedDepth, Pose, Buffer
+from robot.network.msgs import EncodedImage, EncodedDepth, Pose
 from robot.nav.mapping import get_pcd_from_image_and_depth
 
 
@@ -36,11 +37,11 @@ def log_pose(all_poses, event):
 
 def log_map(
     curr_map,
-    all_poses: list[Buffer],
-    image: Buffer,
-    depth: Buffer,
-    confidence: Buffer,
-    pose: Buffer,
+    all_poses: list[NDArray],
+    image: NDArray,
+    depth: NDArray,
+    confidence: NDArray,
+    pose: NDArray,
     focal: list,
     resolution: list,
 ):
@@ -96,7 +97,7 @@ def main():
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Y_UP)
 
     curr_map = None
-    all_poses: list[Buffer] = []
+    all_poses: list[NDArray] = []
 
     try:
         while True:
@@ -115,7 +116,8 @@ def main():
                     print("Timestamps do not match")
                     continue
 
-                image = cv2.cvtColor(cv2.imdecode(image_msg.image, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+                decoded_image = cv2.imdecode(image_msg.image, cv2.IMREAD_COLOR)
+                image = cv2.cvtColor(decoded_image, cv2.COLOR_BGR2RGB)
                 depth = np.frombuffer(liblzfse.decompress(depth_msg.depth), dtype=np.float32).reshape(
                     depth_msg.width, depth_msg.height
                 )
