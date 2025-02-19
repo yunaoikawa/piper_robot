@@ -43,7 +43,7 @@ if __name__ == "__main__":
             print(q)
 
     # =================== #
-    # Setup IK.
+    # Setup IK tasks.
     # =================== #
     configuration = mink.Configuration(model)
     collision_pairs = [
@@ -106,6 +106,10 @@ if __name__ == "__main__":
     rate = RateLimiter(frequency=args.frequency, warn=False)
     current_target_idx = 0
     current_time = 0
+
+    # =================== #
+    # Setup initial poses.
+    # =================== #
     mujoco.mj_resetDataKeyframe(model, data, model.key("optim").id)
     mujoco.mj_step(model, data)
 
