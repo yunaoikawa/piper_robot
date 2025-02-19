@@ -24,6 +24,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--real", action="store_true")
 parser.add_argument("--headless", action="store_true")
 parser.add_argument("--task", type=str, default=None, choices=ALLOWED_TASKS)
+parser.add_argument("--seed", type=int, default=424242)
 parser.add_argument("--use_left", action="store_true")
 parser.add_argument("--demo_fps", type=int, default=30)
 parser.add_argument("--arm_move_time", type=int, default=1)
@@ -138,7 +139,7 @@ if __name__ == "__main__":
             gripper_trajectory = np.zeros(fps)
         else:
             trajectory, gripper_trajectory = utils.get_random_target_trajectory(
-                args.task
+                task=args.task, seed=args.seed
             )
     else:
         trajectory, gripper_trajectory = None, None
