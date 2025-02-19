@@ -238,7 +238,7 @@ if __name__ == "__main__":
         piper_left.ConnectPort()
         piper_left.EnableArm(7)
         enable_fun(piper=piper_left)
-        piper_right = C_PiperInterface("can_right")
+        piper_right = C_PiperInterface("can_right", can_auto_init=False)
         piper_right.ConnectPort()
         piper_right.EnableArm(7)
         enable_fun(piper=piper_right)
@@ -261,19 +261,20 @@ if __name__ == "__main__":
                 break
 
             if use_real:
-                with SignalBlocker():
-                    right_q, left_q = q[:6], q[8:14]
-                    right_joint_values = scale_and_clip_control(right_q).tolist()
-                    piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
-                    piper_right.JointCtrl(*right_joint_values[:6])
-                    # piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
-                    piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+                # with SignalBlocker():
+                right_q, left_q = q[:6].copy(), q[8:14].copy()
 
-                    left_joint_values = scale_and_clip_control(left_q).tolist()
-                    piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
-                    piper_left.JointCtrl(*left_joint_values[:6])
-                    # piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
-                    piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+                right_joint_values = scale_and_clip_control(right_q).tolist()
+                piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+                piper_right.JointCtrl(*right_joint_values[:6])
+                # piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
+                piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+
+                left_joint_values = scale_and_clip_control(left_q).tolist()
+                piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+                piper_left.JointCtrl(*left_joint_values[:6])
+                # piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
+                piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
 
             # Render
             viewer.sync()

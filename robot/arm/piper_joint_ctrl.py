@@ -47,7 +47,7 @@ def enable_fun(piper: C_PiperInterface):
 
 
 if __name__ == "__main__":
-    piper = C_PiperInterface("can0")
+    piper = C_PiperInterface("can_left")
     piper.ConnectPort()
     piper.EnableArm(7)
     enable_fun(piper=piper)
