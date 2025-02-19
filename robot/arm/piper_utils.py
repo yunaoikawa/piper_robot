@@ -51,16 +51,22 @@ def setup_arms(left_name="can_left", right_name="can_right"):
 
 
 def send_to_arms(
-    piper_left: C_PiperInterface, piper_right: C_PiperInterface, q: np.ndarray
+    piper_left: C_PiperInterface,
+    piper_right: C_PiperInterface,
+    q: np.ndarray,
+    disable_right: bool = False,
+    disable_left: bool = False,
 ):
     right_q, left_q = q[:6].copy(), q[8:14].copy()
-    right_joint_values = scale_and_clip_control(right_q).tolist()
-    piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
-    piper_right.JointCtrl(*right_joint_values[:6])
-    piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+    if not disable_right:
+        right_joint_values = scale_and_clip_control(right_q).tolist()
+        piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+        piper_right.JointCtrl(*right_joint_values[:6])
+        piper_right.MotionCtrl_2(0x01, 0x01, 50, 0x00)
 
-    left_joint_values = scale_and_clip_control(left_q).tolist()
-    piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
-    piper_left.JointCtrl(*left_joint_values[:6])
-    piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+    if not disable_left:
+        left_joint_values = scale_and_clip_control(left_q).tolist()
+        piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+        piper_left.JointCtrl(*left_joint_values[:6])
+        piper_left.MotionCtrl_2(0x01, 0x01, 50, 0x00)
     return True
