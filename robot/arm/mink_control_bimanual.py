@@ -192,7 +192,6 @@ if __name__ == "__main__":
         return True, configuration.q
 
     def move_to_zero():
-        print(init_T_wt)
         end_effector_task.set_target(init_T_wt)
         other_eef_task.set_target(other_arm_init_T_wt)
         vel = mink.solve_ik(configuration, tasks, rate.dt, solver, 1e-3, limits=limits)
