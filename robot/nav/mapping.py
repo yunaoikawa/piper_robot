@@ -34,7 +34,7 @@ def get_pcd_from_image_and_depth(
     pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, camera_intrinsics)
 
     # Flip the pcd
-    flip_transform = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+    # flip_transform = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
     # flip_transform_inverse = np.linalg.inv(flip_transform)
     # pcd.transform(flip_transform)
 
