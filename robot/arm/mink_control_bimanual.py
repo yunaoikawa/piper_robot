@@ -104,8 +104,6 @@ if __name__ == "__main__":
     # For playing back data at real-time, we typically step at ~200 Hz in simulation
     # and fetch a new target from the trajectory at 'fps'.
     rate = RateLimiter(frequency=args.frequency, warn=False)
-    current_target_idx = 0
-    current_time = 0
 
     # =================== #
     # Setup initial poses.
