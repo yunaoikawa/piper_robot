@@ -86,7 +86,7 @@ def main():
         [EncodedImage.deserialize, EncodedDepth.deserialize, Pose.deserialize],
         host=ROBOT_IP,
     )
-    timer = FrequencyTimer("Rerun", 2, delay_warn_threshold=0.01)
+    timer = FrequencyTimer("Rerun", 1, delay_warn_threshold=0.01)
 
     rr.init("rerun_visualizer", spawn=True)
     rr.log(

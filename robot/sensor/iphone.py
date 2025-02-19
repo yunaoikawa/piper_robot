@@ -64,8 +64,8 @@ def main(device_id: int):
                     confidence=confidence,
                     focal=[int(intrinsics.fx), int(intrinsics.fy)],
                     resolution=[int(intrinsics.tx), int(intrinsics.ty)],
-                    width=256, # TODO: get from bindings
-                    height=192,
+                    width=192, # TODO: get from bindings
+                    height=256,
                 ),
             )
 
