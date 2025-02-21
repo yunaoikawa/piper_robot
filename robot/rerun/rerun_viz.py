@@ -1,10 +1,11 @@
-from typing import Any, cast
+from typing import cast
 import numpy as np
 import zmq
 import cv2
 import liblzfse
 import rerun as rr
 from numpy.typing import NDArray
+from threading import Thread, Lock
 
 from robot.network import Subscriber, BASE_CAMERA_PORT, ROBOT_IP
 from robot.network.timer import FrequencyTimer
@@ -77,6 +78,17 @@ def log_map(
     return curr_map, all_poses
 
 
+def listener_thread(sub, data_lock, shared_data):
+    while True:
+        topic, data = sub.receive()
+        with data_lock:
+            if topic == "/base/image":
+                shared_data["image"] = cast(EncodedImage, data)
+            elif topic == "/base/depth":
+                shared_data["depth"] = cast(EncodedDepth, data)
+            elif topic == "/base/pose":
+                shared_data["pose"] = cast(Pose, data)
+
 def main():
     ctx = zmq.Context()
     sub = Subscriber(
@@ -85,6 +97,7 @@ def main():
         ["/base/image", "/base/depth", "/base/pose"],
         [EncodedImage.deserialize, EncodedDepth.deserialize, Pose.deserialize],
         host=ROBOT_IP,
+        no_block=False,
     )
     timer = FrequencyTimer("Rerun", 1, delay_warn_threshold=0.01)
 
@@ -98,45 +111,51 @@ def main():
 
     curr_map = None
     all_poses: list[NDArray] = []
+    data_lock = Lock()
+    shared_data = {"image": None, "depth": None, "pose": None}
+
+    listener = Thread(target=listener_thread, args=(sub, data_lock, shared_data))
+    listener.start()
 
     try:
         while True:
             with timer:
-                datum: dict[str, Any] = {}
-                while len(datum) < 3:
-                    topic, data = sub.receive()
-                    if topic is not None:
-                        datum[topic] = data
+                with data_lock:
+                    curr_image_msg = shared_data["image"]
+                    curr_depth_msg = shared_data["depth"]
+                    curr_pose_msg = shared_data["pose"]
 
-                image_msg = cast(EncodedImage, datum["/base/image"])
-                depth_msg = cast(EncodedDepth, datum["/base/depth"])
-                pose_msg = cast(Pose, datum["/base/pose"])
+                if curr_image_msg is not None and curr_depth_msg is not None and curr_pose_msg is not None:
+                    if check_timestamp(curr_image_msg.timestamp, curr_depth_msg.timestamp, curr_pose_msg.timestamp):
+                        print("Timestamps do not match")
+                        continue
+                    decoded_image = cv2.imdecode(curr_image_msg.image, cv2.IMREAD_COLOR)
+                    image = cv2.cvtColor(decoded_image, cv2.COLOR_BGR2RGB)
+                    depth = np.frombuffer(liblzfse.decompress(curr_depth_msg.depth), dtype=np.float32).reshape(
+                        curr_depth_msg.width, curr_depth_msg.height
+                    )
+                    confidence = np.frombuffer(liblzfse.decompress(curr_depth_msg.confidence), dtype=np.uint8).reshape(
+                        curr_depth_msg.width, curr_depth_msg.height
+                    )
+                    pose = curr_pose_msg.pose
 
-                print("Received data with timestamp: ", image_msg.timestamp)
+                    curr_map, all_poses = log_map(
+                        curr_map,
+                        all_poses,
+                        image,
+                        depth,
+                        confidence,
+                        pose,
+                        curr_depth_msg.focal,
+                        curr_depth_msg.resolution,
+                    )
 
-                if check_timestamp(image_msg.timestamp, depth_msg.timestamp, pose_msg.timestamp):
-                    print("Timestamps do not match")
-                    continue
-
-                decoded_image = cv2.imdecode(image_msg.image, cv2.IMREAD_COLOR)
-                image = cv2.cvtColor(decoded_image, cv2.COLOR_BGR2RGB)
-                depth = np.frombuffer(liblzfse.decompress(depth_msg.depth), dtype=np.float32).reshape(
-                    depth_msg.width, depth_msg.height
-                )
-                confidence = np.frombuffer(liblzfse.decompress(depth_msg.confidence), dtype=np.uint8).reshape(
-                    depth_msg.width, depth_msg.height
-                )
-                pose = pose_msg.pose
-
-                curr_map, all_poses = log_map(
-                    curr_map, all_poses, image, depth, confidence, pose, depth_msg.focal, depth_msg.resolution
-                )
-
-                log_image(image)
-                log_depth(depth)
+                    log_image(image)
+                    log_depth(depth)
 
     finally:
         rr.disconnect()
+        listener.join()
 
 
 if __name__ == "__main__":
