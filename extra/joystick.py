@@ -13,6 +13,28 @@ from robot.network import Publisher, COMMAND_PORT
 from robot.network.timer import FrequencyTimer
 from robot.network.msgs import Command, CommandType
 
+XBOX_CONTROLLER_MAP = {
+    "start": 7,
+    "back": 6,
+    "l1": 4,
+    "r1": 5,
+    "left_horizontal_axis": 0,
+    "left_vertical_axis": 1,
+    "right_horizontal_axis": 4,
+    "right_vertical_axis": 3,
+}
+
+PS4_CONTROLLER_MAP = {
+    "start": 2,
+    "back": 3,    # square button
+    "l1": 9,
+    "r1": 10,
+    "left_horizontal_axis": 0,
+    "right_horizontal_axis": 2,
+    "right_vertical_axis": 5,
+}
+
+controller_map = XBOX_CONTROLLER_MAP
 
 def apply_deadzone(arr, deadzone_size=0.05):
     return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))
@@ -32,26 +54,27 @@ def main():
     while True:
         with timer:
             pygame.event.pump()
-            if not control_loop_running and joy.get_button(7):
+            if not control_loop_running and joy.get_button(controller_map["start"]):
                 last_enabled = False
                 control_loop_running = True
                 print("Control started")
 
-            if control_loop_running and joy.get_button(6):
+            if control_loop_running and joy.get_button(controller_map["back"]):
                 control_loop_running = False
                 print("Control stopped")
 
             if control_loop_running:
-                left_bumper = joy.get_button(4)
-                right_bumper = joy.get_button(5)
+                left_bumper = joy.get_button(controller_map["l1"])
+                right_bumper = joy.get_button(controller_map["r1"])
                 if left_bumper:
                     max_vel_setting = (max_vel_setting + 1) % 3
+                    print("Max velocity setting: ", max_vel_setting)
                 if right_bumper:
                     if not last_enabled:
                         last_enabled = True
-                    vy = -joy.get_axis(3)
-                    vx = -joy.get_axis(4)  # Right analog stick
-                    w = -joy.get_axis(0)  # Left analog stick
+                    vy = -joy.get_axis(controller_map["right_vertical_axis"])  # Right analog stick
+                    vx = -joy.get_axis(controller_map["right_horizontal_axis"])  # Right analog stick
+                    w = -joy.get_axis(controller_map["left_horizontal_axis"])  # Left analog stick
                     target_velocity = np.array([vx, vy, w])
                     target_velocity = apply_deadzone(target_velocity)
 
