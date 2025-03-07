@@ -20,8 +20,8 @@ XBOX_CONTROLLER_MAP = {
     "r1": 5,
     "left_horizontal_axis": 0,
     "left_vertical_axis": 1,
-    "right_horizontal_axis": 4,
-    "right_vertical_axis": 3,
+    "right_horizontal_axis": 3,
+    "right_vertical_axis": 4,
 }
 
 PS4_CONTROLLER_MAP = {
@@ -73,8 +73,8 @@ def main():
                 if right_bumper:
                     if not last_enabled:
                         last_enabled = True
-                    vy = -joy.get_axis(controller_map["right_vertical_axis"])  # Right analog stick
-                    vx = -joy.get_axis(controller_map["right_horizontal_axis"])  # Right analog stick
+                    vy = -joy.get_axis(controller_map["right_horizontal_axis"])  # Right analog stick
+                    vx = -joy.get_axis(controller_map["right_vertical_axis"])  # Right analog stick
                     w = -joy.get_axis(controller_map["left_horizontal_axis"])  # Left analog stick
                     target_velocity = np.array([vx, vy, w])
                     target_velocity = apply_deadzone(target_velocity)
