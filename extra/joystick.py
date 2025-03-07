@@ -69,6 +69,7 @@ def main():
                 if left_bumper:
                     max_vel_setting = (max_vel_setting + 1) % 3
                     print("Max velocity setting: ", max_vel_setting)
+                    time.sleep(0.1)
                 if right_bumper:
                     if not last_enabled:
                         last_enabled = True
