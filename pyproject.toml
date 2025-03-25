@@ -33,6 +33,9 @@ dependencies = [
     "open3d==0.18.0",
     "mujoco>=3.2.7",
     "ruckig>=0.14.0",
+    "pure-python-adb>=0.3.0.dev0",
+    "casadi>=3.6.7",
+    "meshcat>=0.3.2",
 ]
 
 [project.urls]
