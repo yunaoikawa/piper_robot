@@ -117,3 +117,24 @@ class RobotState:
     @classmethod
     def deserialize(cls, data: bytes) -> "RobotState":
         return cls(**msgpack.unpackb(data))
+
+
+@dataclass
+class ArmCommand:
+    timestamp: int
+    left_target: npt.NDArray
+    left_gripper_value: float  # left index trigger
+    left_start_teleop: bool  # button A
+    left_pause_teleop: bool  # button B
+
+    right_target: npt.NDArray
+    right_gripper_value: float  # right index trigger
+    right_start_teleop: bool  # button X
+    right_pause_teleop: bool  # button Y
+
+    def serialize(self) -> bytes:
+        return msgpack.packb(self.__dict__)
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "ArmCommand":
+        return cls(**msgpack.unpackb(data))
