@@ -9,9 +9,9 @@ import zmq
 from ppadb.client import Client as AdbClient
 
 from robot.arm.fps_counter import FPSCounter
-from robot.network import Publisher, ARM_COMMAND_PORT
+from robot.network import Publisher, ARM_COMMAND_PORT, COMMAND_PORT
 from robot.network.timer import FrequencyTimer
-from robot.network.msgs import ArmCommand
+from robot.network.msgs import ArmCommand, Command, CommandType
 
 def parse_buttons(text):
     split_text = text.split(",")
@@ -272,13 +272,18 @@ class OculusReader:
         file_obj.close()
         connection.close()
 
+def apply_deadzone(arr, deadzone_size=0.05):
+    return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))
+
 
 def main():
     ctx = zmq.Context()
+    base_command_pub = Publisher(ctx, COMMAND_PORT)
     arm_command_pub = Publisher(ctx, ARM_COMMAND_PORT)
     oculus_reader = OculusReader(ip_address="10.19.165.216")
     timer = FrequencyTimer(name="oculus_reader", frequency=20)
     running = True
+    max_velocity = np.array([0.5, 0.5, 0.78])
 
     def signal_handler(signum, frame):
         nonlocal running
@@ -289,8 +294,8 @@ def main():
     while running:
         with timer:
             transforms, buttons = oculus_reader.get_transformations_and_buttons()
-            msg = ArmCommand(
-                timestamp=time.time_ns(),
+            arm_msg = ArmCommand(
+                timestamp=time.perf_counter_ns(),
                 left_target=transforms.get('l', np.eye(4)),
                 left_gripper_value=buttons.get('leftTrig', (0,))[0],
                 left_start_teleop=buttons.get('X', False),
@@ -300,9 +305,22 @@ def main():
                 right_start_teleop=buttons.get('A', False),
                 right_pause_teleop=buttons.get('B', False),
             )
-            arm_command_pub.publish("/arm_command", msg)
+
+            vy, vx = buttons.get('rightJS', (0.0, 0.0))
+            w = buttons.get('leftJS', (0.0, 0.0))[0]
+            target_velocity = apply_deadzone(np.array([vx, -vy, -w])) * max_velocity
+
+            arm_command_pub.publish("/arm_command", arm_msg)
+            if sum(np.abs(target_velocity)) > 0.0:
+                base_msg = Command(
+                    timestamp = time.perf_counter_ns(),
+                    type = CommandType.BASE_VELOCITY,
+                    target = target_velocity.ravel()
+                )
+                base_command_pub.publish("/command", base_msg)
 
     arm_command_pub.stop()
+    base_command_pub.stop()
     oculus_reader.stop()
     ctx.term()
 
