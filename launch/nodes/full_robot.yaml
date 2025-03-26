@@ -9,3 +9,6 @@
 - name: controller
   module: robot.controller.controller_node
 
+- name: oculus
+  module: robot.teleop.oculus_node
+

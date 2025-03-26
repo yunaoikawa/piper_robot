@@ -113,7 +113,10 @@ class ArmNode:
                 r_gripper_value,
             )
 
-
-if __name__ == "__main__":
+def main():
     arm_node = ArmNode()
     arm_node.run()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,5 @@
+- name: arm
+  module: robot.arm.arm_node
+
+- name: oculus
+  module: robot.teleop.oculus_node

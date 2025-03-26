@@ -23,7 +23,7 @@ class ArmIK:
     def __init__(self):
         np.set_printoptions(precision=5, suppress=True, linewidth=200)
 
-        urdf_path = os.path.join("models", "piper.urdf")
+        urdf_path = os.path.join(os.path.dirname(__file__), "models", "piper-right.urdf")
         self.robot = pin.RobotWrapper.BuildFromURDF(urdf_path)
         self.reduced_robot = self.robot.buildReducedRobot(
             list_of_joints_to_lock=["joint7", "joint8"],
@@ -273,7 +273,9 @@ if __name__ == "__main__":
 
     sol_q = solve_ik(0.19, 0, 0.2, 0, 0, 0)
 
+    input("show gripper pose")
 
+    arm_ik.vis.display(np.array([0.78, 0, 0, 0, 0, 0]))
 
     while True:
         time.sleep(1)

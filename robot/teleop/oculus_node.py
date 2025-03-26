@@ -1,13 +1,16 @@
 import sys
 import numpy as np
 import threading
-import time
 import os
+import time
+import zmq
 
 from ppadb.client import Client as AdbClient
 
 from robot.arm.fps_counter import FPSCounter
-
+from robot.network import Publisher, ARM_COMMAND_PORT
+from robot.network.timer import FrequencyTimer
+from robot.network.msgs import ArmCommand
 
 def parse_buttons(text):
     split_text = text.split(",")
@@ -270,12 +273,26 @@ class OculusReader:
 
 
 def main():
-    oculus_reader = OculusReader()
+    ctx = zmq.Context()
+    arm_command_pub = Publisher(ctx, ARM_COMMAND_PORT)
 
+    oculus_reader = OculusReader(ip_address="10.19.165.216")
+    timer = FrequencyTimer(name="oculus_reader", frequency=60)
     while True:
-        time.sleep(0.3)
-        print(oculus_reader.get_transformations_and_buttons())
-
+        with timer:
+            transforms, buttons = oculus_reader.get_transformations_and_buttons()
+            msg = ArmCommand(
+                timestamp=time.time_ns(),
+                left_target=transforms["l"],
+                left_gripper_value=buttons['leftTrig'][0],
+                left_start_teleop=buttons['X'],
+                left_pause_teleop=buttons['Y'],
+                right_target=transforms["r"],
+                right_gripper_value=buttons['rightTrig'][0],
+                right_start_teleop=buttons['A'],
+                right_pause_teleop=buttons['B'],
+            )
+            arm_command_pub.publish("/arm_command", msg)
 
 if __name__ == "__main__":
     main()
