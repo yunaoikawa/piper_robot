@@ -301,10 +301,12 @@ def main():
                 left_gripper_value=buttons.get('leftTrig', (0,))[0],
                 left_start_teleop=buttons.get('X', False),
                 left_pause_teleop=buttons.get('Y', False),
+                left_home=buttons.get('rightGrip', (0,))[0] > 0.5,
                 right_target=transforms.get('r', np.eye(4)),
                 right_gripper_value=buttons.get('rightTrig', (0,))[0],
                 right_start_teleop=buttons.get('A', False),
                 right_pause_teleop=buttons.get('B', False),
+                right_home=buttons.get('leftGrip', (0,))[0] > 0.5,
             )
 
             vy, vx = buttons.get('rightJS', (0.0, 0.0))

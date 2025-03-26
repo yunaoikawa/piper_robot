@@ -88,6 +88,69 @@ class ArmNode:
                     self.right_piper_control.joint_control(np.zeros(7))
                 is_first_frame = False
 
+
+            if self.left_start_teleop:
+                relative_affine = self.get_relative_affine(self.left_init_affine, arm_command.left_target)
+                relative_pos, relative_rot = (
+                    relative_affine[:3, 3],
+                    relative_affine[:3, :3],
+                )
+
+                left_target_pos = left_home_pose[:3, 3] + relative_pos
+                left_target_rot = left_home_pose[:3, :3] @ relative_rot
+
+                left_target = np.eye(4)
+                left_target[:3, 3] = left_target_pos
+                left_target[:3, :3] = left_target_rot
+
+                l_gripper_value = arm_command.left_gripper_value * 0.07
+                LL_ = matrix_to_xyzrpy(left_target)
+                print(f"LL: {LL_[0].item():.3f}, {LL_[1].item():.3f}, {LL_[2].item():.3f}, {LL_[3]:.3f}, {LL_[4]:.3f}, {LL_[5]:.3f}") # noqa
+                self.get_left_ik_solution(
+                    LL_[0],
+                    LL_[1],
+                    LL_[2],
+                    LL_[3],
+                    LL_[4],
+                    LL_[5],
+                    l_gripper_value,
+                )
+
+            else:
+                pass
+                # left_target = left_home_pose.copy()
+
+            if self.right_start_teleop:
+                relative_affine = self.get_relative_affine(self.right_init_affine, arm_command.right_target)
+                relative_pos, relative_rot = (
+                    relative_affine[:3, 3],
+                    relative_affine[:3, :3],
+                )
+
+                right_target_pos = right_home_pose[:3, 3] + relative_pos
+                right_target_rot = right_home_pose[:3, :3] @ relative_rot
+
+                right_target = np.eye(4)
+                right_target[:3, 3] = right_target_pos
+                right_target[:3, :3] = right_target_rot
+
+                r_gripper_value = arm_command.right_gripper_value * 0.07
+
+                RR_ = matrix_to_xyzrpy(right_target)
+                print(f"RR: {RR_[0].item():.3f}, {RR_[1].item():.3f}, {RR_[2].item():.3f}, {RR_[3]:.3f}, {RR_[4]:.3f}, {RR_[5]:.3f}") # noqa
+                self.get_right_ik_solution(
+                    RR_[0],
+                    RR_[1],
+                    RR_[2],
+                    RR_[3],
+                    RR_[4],
+                    RR_[5],
+                    r_gripper_value,
+                )
+            else:
+                # right_target = right_home_pose.copy()
+                pass
+
             if arm_command.left_start_teleop:
                 self.left_start_teleop = True
                 self.left_init_affine = arm_command.left_target
@@ -106,68 +169,13 @@ class ArmNode:
                 self.right_init_affine = None
                 right_home_pose = right_target.copy()
 
-            # if buttons["rightGrip"][0] > 0.5:
-            #     home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
+            if arm_command.left_home:
+                left_home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
+                self.left_init_affine = None
 
-            if self.left_start_teleop:
-                relative_affine = self.get_relative_affine(self.left_init_affine, arm_command.left_target)
-                relative_pos, relative_rot = (
-                    relative_affine[:3, 3],
-                    relative_affine[:3, :3],
-                )
-
-                left_target_pos = left_home_pose[:3, 3] + relative_pos
-                left_target_rot = left_home_pose[:3, :3] @ relative_rot
-
-                left_target = np.eye(4)
-                left_target[:3, 3] = left_target_pos
-                left_target[:3, :3] = left_target_rot
-            else:
-                left_target = left_home_pose.copy()
-
-            if self.right_start_teleop:
-                relative_affine = self.get_relative_affine(self.right_init_affine, arm_command.right_target)
-                relative_pos, relative_rot = (
-                    relative_affine[:3, 3],
-                    relative_affine[:3, :3],
-                )
-
-                right_target_pos = right_home_pose[:3, 3] + relative_pos
-                right_target_rot = right_home_pose[:3, :3] @ relative_rot
-
-                right_target = np.eye(4)
-                right_target[:3, 3] = right_target_pos
-                right_target[:3, :3] = right_target_rot
-            else:
-                right_target = right_home_pose.copy()
-
-            LL_ = matrix_to_xyzrpy(left_target)
-            RR_ = matrix_to_xyzrpy(right_target)
-            print(f"LL: {LL_[0].item():.3f}, {LL_[1].item():.3f}, {LL_[2].item():.3f}, {LL_[3]:.3f}, {LL_[4]:.3f}, {LL_[5]:.3f}") # noqa
-            print(f"RR: {RR_[0].item():.3f}, {RR_[1].item():.3f}, {RR_[2].item():.3f}, {RR_[3]:.3f}, {RR_[4]:.3f}, {RR_[5]:.3f}") # noqa
-
-            l_gripper_value = arm_command.left_gripper_value * 0.07
-            r_gripper_value = arm_command.right_gripper_value * 0.07
-
-            self.get_left_ik_solution(
-                LL_[0],
-                LL_[1],
-                LL_[2],
-                LL_[3],
-                LL_[4],
-                LL_[5],
-                l_gripper_value,
-            )
-
-            self.get_right_ik_solution(
-                RR_[0],
-                RR_[1],
-                RR_[2],
-                RR_[3],
-                RR_[4],
-                RR_[5],
-                r_gripper_value,
-            )
+            if arm_command.right_home:
+                right_home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
+                self.right_init_affine = None
 
     def stop(self):
         self.arm_command_sub.stop()

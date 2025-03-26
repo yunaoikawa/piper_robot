@@ -126,11 +126,13 @@ class ArmCommand:
     left_gripper_value: float  # left index trigger
     left_start_teleop: bool  # button A
     left_pause_teleop: bool  # button B
+    left_home: bool  # left grip trigger
 
     right_target: npt.NDArray
     right_gripper_value: float  # right index trigger
     right_start_teleop: bool  # button X
     right_pause_teleop: bool  # button Y
+    right_home: bool  # right grip trigger
 
     def serialize(self) -> bytes:
         return msgpack.packb(self.__dict__)
