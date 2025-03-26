@@ -1,5 +1,8 @@
 - name: arm
   module: robot.arm.arm_node
 
-- name: oculus
-  module: robot.teleop.oculus_node
+# - name: oculus
+#   module: robot.teleop.oculus_node
+
+- name: oculus_open_teach
+  module: robot.teleop.oculus_open_teach_node

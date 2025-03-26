@@ -16,7 +16,7 @@ from robot.arm.tools import (
     quaternion_from_euler,
 )
 
-VISUALIZE = False
+VISUALIZE = True
 
 
 class ArmIK:

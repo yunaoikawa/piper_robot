@@ -8,6 +8,7 @@ import zmq
 
 from ppadb.client import Client as AdbClient
 
+from robot.arm.tools import matrix_to_xyzrpy
 from robot.arm.fps_counter import FPSCounter
 from robot.network import Publisher, ARM_COMMAND_PORT, COMMAND_PORT
 from robot.network.timer import FrequencyTimer
@@ -325,4 +326,16 @@ def main():
     ctx.term()
 
 if __name__ == "__main__":
-    main()
+    oculus_reader = OculusReader(ip_address="10.19.165.216")
+    try:
+        while True:
+            transforms, buttons = oculus_reader.get_transformations_and_buttons()
+            if 'l' in transforms:
+                print('left: ', matrix_to_xyzrpy(transforms['l']))
+            if 'r' in transforms:
+                print('right: ', matrix_to_xyzrpy(transforms['r']))
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass
+
+    oculus_reader.stop()
