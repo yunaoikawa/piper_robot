@@ -1,4 +1,5 @@
 import sys
+import signal
 import numpy as np
 import threading
 import os
@@ -275,24 +276,35 @@ class OculusReader:
 def main():
     ctx = zmq.Context()
     arm_command_pub = Publisher(ctx, ARM_COMMAND_PORT)
-
     oculus_reader = OculusReader(ip_address="10.19.165.216")
     timer = FrequencyTimer(name="oculus_reader", frequency=60)
-    while True:
+    running = True
+
+    def signal_handler(signum, frame):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    while running:
         with timer:
             transforms, buttons = oculus_reader.get_transformations_and_buttons()
             msg = ArmCommand(
                 timestamp=time.time_ns(),
-                left_target=transforms["l"],
-                left_gripper_value=buttons['leftTrig'][0],
-                left_start_teleop=buttons['X'],
-                left_pause_teleop=buttons['Y'],
-                right_target=transforms["r"],
-                right_gripper_value=buttons['rightTrig'][0],
-                right_start_teleop=buttons['A'],
-                right_pause_teleop=buttons['B'],
+                left_target=transforms.get('l', np.eye(4)),
+                left_gripper_value=buttons.get('leftTrig', (0,))[0],
+                left_start_teleop=buttons.get('X', False),
+                left_pause_teleop=buttons.get('Y', False),
+                right_target=transforms.get('r', np.eye(4)),
+                right_gripper_value=buttons.get('rightTrig', (0,))[0],
+                right_start_teleop=buttons.get('A', False),
+                right_pause_teleop=buttons.get('B', False),
             )
             arm_command_pub.publish("/arm_command", msg)
+
+    arm_command_pub.stop()
+    oculus_reader.stop()
+    ctx.term()
 
 if __name__ == "__main__":
     main()

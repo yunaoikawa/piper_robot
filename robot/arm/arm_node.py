@@ -1,4 +1,5 @@
 import numpy as np
+import signal
 from typing import cast
 
 import pinocchio as pin
@@ -33,6 +34,7 @@ class ArmNode:
             no_block=False,
         )
 
+        self.running = True
         self.start_teleop = False
         self.init_affine = None
 
@@ -58,7 +60,7 @@ class ArmNode:
         is_first_frame = True
         target = home_pose.copy()
 
-        while True:
+        while self.running:
             _, arm_command = self.arm_command_sub.receive()
             arm_command = cast(ArmCommand, arm_command)
 
@@ -113,10 +115,19 @@ class ArmNode:
                 r_gripper_value,
             )
 
+    def stop(self):
+        self.arm_command_sub.stop()
+        del self.arm_ik.vis
+
+
 def main():
     arm_node = ArmNode()
+
+    def signal_handler(signum, frame):
+        arm_node.running = False
+        arm_node.stop()
+
+    signal.signal(signal.SIGINT, signal_handler)
     arm_node.run()
-
-
 if __name__ == "__main__":
     main()

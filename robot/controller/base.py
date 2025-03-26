@@ -276,3 +276,8 @@ class Base:
             curr_position = steer_motor.cc.get_absolute_position().value
             offsets.append(f"{round(4096 * (curr_offset - curr_position))}.0 / 4096")
         print(f"ENCODER_MAGNET_OFFSETS = [{', '.join(offsets)}]")
+
+
+    def stop(self):
+        # TODO: Stop the motors
+        pass
