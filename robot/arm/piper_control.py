@@ -4,15 +4,15 @@ import numpy as np
 
 
 class PiperControl:
-    def __init__(self) -> None:
-        self.can_port = "can0"
+    def __init__(self, can_port="can_right") -> None:
+        self.can_port = can_port
         self.auto_enable = True
         self.gripper_exist = True
         self.gripper_val_mutiple = 1
         self.enable_flag_ = False
         self.piper = C_PiperInterface(can_name=self.can_port)
         self.piper.ConnectPort()
-        self.piper.MotionCtrl_2(0x01, 0x01, 30, 0xAD)
+        self.piper.MotionCtrl_2(0x01, 0x01, 100, 0x00)
 
     def enable_piper(self):
         enable_flag = False
@@ -65,11 +65,11 @@ class PiperControl:
                     vel_all = round(joint_vel[6])
                     vel_all = max(0, min(vel_all, 100))
                     print("vel_all: %d", vel_all)
-                    self.piper.MotionCtrl_2(0x01, 0x01, vel_all, 0xAD)
+                    self.piper.MotionCtrl_2(0x01, 0x01, vel_all, 0x00)
                 else:
-                    self.piper.MotionCtrl_2(0x01, 0x01, 50, 0xAD)
+                    self.piper.MotionCtrl_2(0x01, 0x01, 100, 0x00)
             else:
-                self.piper.MotionCtrl_2(0x01, 0x01, 50, 0xAD)
+                self.piper.MotionCtrl_2(0x01, 0x01, 100, 0x00)
 
             self.piper.JointCtrl(joint_0, joint_1, joint_2, joint_3, joint_4, joint_5)
             if self.gripper_exist and gripper_pos != -1:

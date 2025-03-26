@@ -108,8 +108,8 @@ fi
 # 预定义的 USB 端口、目标接口名称及其比特率（在多个 CAN 模块时使用）
 if [ "$EXPECTED_CAN_COUNT" -ne 1 ]; then
     declare -A USB_PORTS
-    USB_PORTS["1-4:1.0"]="can_left:1000000" # can1
-    USB_PORTS["1-3:1.0"]="can_right:1000000" # can0
+    USB_PORTS["1-4:1.0"]="can_right:1000000" # can1
+    USB_PORTS["1-3:1.0"]="can_left:1000000" # can0
 fi
 
 # 获取当前系统中的 CAN 模块数量

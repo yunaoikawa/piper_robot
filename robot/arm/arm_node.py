@@ -15,12 +15,12 @@ from robot.network.msgs import ArmCommand
 from robot.arm.piper_control import PiperControl
 from robot.arm.arm_ik import ArmIK
 
-HARDWARE = False
+HARDWARE = True
 
 class ArmNode:
-    def __init__(self):
+    def __init__(self, can_port="can_right"):
         if HARDWARE:
-            self.piper_control = PiperControl()
+            self.piper_control = PiperControl(can_port=can_port)
             self.piper_control.enable_piper()
 
         self.arm_ik = ArmIK()
@@ -51,6 +51,7 @@ class ArmNode:
 
     def get_relative_affine(self, init_affine, current_affine):
         H = np.array([[0, -1, 0, 0], [0, 0, 1, 0], [-1, 0, 0, 0], [0, 0, 0, 1]])
+        # H = np.array([[0, 1, 0, 0], [0, 0, 1, 0], [1, 0, 0, 0], [0, 0, 0, 1]])
         delta_affine = np.linalg.pinv(init_affine) @ current_affine
         relative_affine = np.linalg.pinv(H) @ delta_affine @ H
         return relative_affine
@@ -129,5 +130,6 @@ def main():
 
     signal.signal(signal.SIGINT, signal_handler)
     arm_node.run()
+
 if __name__ == "__main__":
     main()
