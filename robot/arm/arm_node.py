@@ -16,7 +16,6 @@ from robot.arm.arm_ik import ArmIK
 
 HARDWARE = False
 
-
 class ArmNode:
     def __init__(self):
         if HARDWARE:

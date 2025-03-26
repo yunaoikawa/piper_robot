@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import math
+import time
 
 import casadi
 import meshcat.geometry as mg
@@ -12,6 +13,7 @@ from robot.arm.tools import (
     quaternion_from_matrix,
     create_transformation_matrix,
     matrix_to_xyzrpy,
+    quaternion_from_euler,
 )
 
 VISUALIZE = True
@@ -252,3 +254,26 @@ class ArmIK:
         )
         end_pose = np.dot(end_pose, self.last_matrix)
         return matrix_to_xyzrpy(end_pose)
+
+
+if __name__ == "__main__":
+    arm_ik = ArmIK()
+    def solve_ik(x,y,z,roll,pitch,yaw):
+        q = quaternion_from_euler(roll, pitch, yaw)
+        target = pin.SE3(
+            pin.Quaternion(q[3], q[0], q[1], q[2]),
+            np.array([x, y, z]),
+        )
+        sol_q, _, is_collision = arm_ik.ik_fun(target.homogeneous, 0)
+        return sol_q
+
+    sol_q = solve_ik(0.29, 0, 0.2, 0, 0, 0)
+
+    input("Press Enter to continue...")
+
+    sol_q = solve_ik(0.19, 0, 0.2, 0, 0, 0)
+
+
+
+    while True:
+        time.sleep(1)
