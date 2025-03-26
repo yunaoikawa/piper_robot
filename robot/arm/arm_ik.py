@@ -16,15 +16,15 @@ from robot.arm.tools import (
     quaternion_from_euler,
 )
 
-VISUALIZE = True
+VISUALIZE = False
 
 
 class ArmIK:
-    def __init__(self):
+    def __init__(self, urdf_file):
         np.set_printoptions(precision=5, suppress=True, linewidth=200)
 
-        urdf_path = os.path.join(os.path.dirname(__file__), "models", "piper-right.urdf")
-        self.robot = pin.RobotWrapper.BuildFromURDF(urdf_path)
+        urdf_file = os.path.join(os.path.dirname(__file__), "models", urdf_file)
+        self.robot = pin.RobotWrapper.BuildFromURDF(urdf_file)
         self.reduced_robot = self.robot.buildReducedRobot(
             list_of_joints_to_lock=["joint7", "joint8"],
             reference_configuration=np.array([0] * self.robot.model.nq),
@@ -51,7 +51,7 @@ class ArmIK:
             )
         )
 
-        self.geom_model = pin.buildGeomFromUrdf(self.robot.model, urdf_path, pin.GeometryType.COLLISION)
+        self.geom_model = pin.buildGeomFromUrdf(self.robot.model, urdf_file, pin.GeometryType.COLLISION)
         for i in range(4, 9):
             for j in range(0, 3):
                 self.geom_model.addCollisionPair(pin.CollisionPair(i, j))
