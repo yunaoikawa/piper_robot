@@ -30,8 +30,8 @@ PS4_CONTROLLER_MAP = {
     "l1": 4,
     "r1": 5,
     "left_horizontal_axis": 0,
-    "right_horizontal_axis": 2,
-    "right_vertical_axis": 5,
+    "right_horizontal_axis": 3,
+    "right_vertical_axis": 4,
 }
 
 controller_map = PS4_CONTROLLER_MAP
