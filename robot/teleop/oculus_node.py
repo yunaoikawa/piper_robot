@@ -277,7 +277,7 @@ def main():
     ctx = zmq.Context()
     arm_command_pub = Publisher(ctx, ARM_COMMAND_PORT)
     oculus_reader = OculusReader(ip_address="10.19.165.216")
-    timer = FrequencyTimer(name="oculus_reader", frequency=60)
+    timer = FrequencyTimer(name="oculus_reader", frequency=20)
     running = True
 
     def signal_handler(signum, frame):
