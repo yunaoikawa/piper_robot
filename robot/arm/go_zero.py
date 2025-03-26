@@ -41,15 +41,17 @@ def enable_fun(piper: C_PiperInterface_V2):
 
 
 if __name__ == "__main__":
-    piper = C_PiperInterface_V2("can_right")
-    piper.ConnectPort()
+    piper_left = C_PiperInterface_V2("can_left")
+    # piper_right = C_PiperInterface_V2("can_right")
+    piper_left.ConnectPort()
+    # piper_right.ConnectPort()
 
-    enable_fun(piper)
-    piper.MotionCtrl_2(0x01, 0x01, 100, 0x00)
-    piper.JointCtrl(0, 0, 0, 0, 0, 0)
+    enable_fun(piper_left)
+    # enable_fun(piper_right)
 
-    # while True:
-    #     gripper_range = int(input("Enter gripper range: "))
+    piper_left.MotionCtrl_2(0x01, 0x01, 100, 0x00)
+    # piper_right.MotionCtrl_2(0x01, 0x01, 100, 0x00)
 
-    #     piper.GripperCtrl(abs(gripper_range * 1000), 1000, 0x01, 0)
-    #     time.sleep(0.1)
+    piper_left.JointCtrl(0, 0, 0, 0, 0, 0)
+    # piper_right.JointCtrl(0, 0, 0, 0, 0, 0)
+
