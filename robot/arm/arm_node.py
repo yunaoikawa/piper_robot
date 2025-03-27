@@ -15,7 +15,7 @@ from robot.network.msgs import ArmCommand
 from robot.arm.piper_control import PiperControl
 from robot.arm.arm_ik import ArmIK
 
-HARDWARE = False
+HARDWARE = True
 
 class ArmNode:
     def __init__(self):

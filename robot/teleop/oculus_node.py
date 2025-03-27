@@ -279,8 +279,8 @@ def apply_deadzone(arr, deadzone_size=0.05):
 
 def main():
     ctx = zmq.Context()
-    base_command_pub = Publisher(ctx, COMMAND_PORT)
-    arm_command_pub = Publisher(ctx, ARM_COMMAND_PORT)
+    base_command_pub = Publisher(ctx, COMMAND_PORT, HWM=1)
+    arm_command_pub = Publisher(ctx, ARM_COMMAND_PORT, HWM=1)
     oculus_reader = OculusReader(ip_address="10.19.165.216")
     timer = FrequencyTimer(name="oculus_reader", frequency=20)
     running = True
