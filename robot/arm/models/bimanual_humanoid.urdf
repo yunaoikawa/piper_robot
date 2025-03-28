@@ -76,52 +76,18 @@
     <origin xyz="0 0 0.152" rpy="0 0 0"/> <!-- 0.15 + 0.002 height(lift_bottom_plate + lift_base) / 2 -->
   </joint>
 
-  <link name="lift_middle">
-    <inertial>
-      <mass value="0.8"/>
-      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
-    </inertial>
-    <visual>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry>
-        <box size="0.108 0.108 0.208"/>
-      </geometry>
-      <material name="aluminum"/>
-      <!-- <material name="red">
-        <color rgba="1.0 0.0 0.0 1"/>
-      </material> -->
-    </visual>
-    <collision>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry>
-        <box size="0.108 0.108 0.208"/>
-      </geometry>
-    </collision>
-  </link>
-
-  <joint name="lift_middle_joint" type="prismatic">
-    <parent link="lift_base"/>
-    <child link="lift_middle"/>
-    <origin xyz="0 0 0.046" rpy="0 0 0"/>
-    <axis xyz="0 0 1"/>
-    <limit lower="0" upper="0.208" effort="1000" velocity="0.5"/>
-  </joint>
-
   <link name="lift_top">
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.1 0.1 0.208"/>
+        <box size="0.1 0.1 0.3"/>
       </geometry>
       <material name="aluminum"/>
-      <!-- <material name="green">
-        <color rgba="0.0 1.0 0.0 1"/>
-      </material> -->
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.1 0.1 0.208"/>
+        <box size="0.1 0.1 0.3"/>
       </geometry>
     </collision>
     <inertial>
@@ -130,12 +96,12 @@
     </inertial>
   </link>
 
-  <joint name="lift_top_joint" type="prismatic">
-    <parent link="lift_middle"/>
+  <joint name="lift_joint" type="prismatic">
+    <parent link="lift_base"/>
     <child link="lift_top"/>
     <origin xyz="0 0 0.0" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
-    <limit lower="0" upper="0.208" effort="1000" velocity="0.5"/>
+    <limit lower="0" upper="0.3" effort="1000" velocity="0.5"/>
   </joint>
 
   <link name="lift_top_plate">
@@ -156,7 +122,7 @@
   <joint name="lift_top_plate_joint" type="fixed">
     <parent link="lift_top"/>
     <child link="lift_top_plate"/>
-    <origin xyz="0 0 0.106" rpy="0 0 0"/> <!-- 0.208 / 2 + 0.004 / 2 -->
+    <origin xyz="0 0 0.152" rpy="0 0 0"/> <!-- 0.15 + 0.002 height(lift_bottom_plate + lift_base) / 2 -->
   </joint>
 
   <!--Torso link that connects both arms-->

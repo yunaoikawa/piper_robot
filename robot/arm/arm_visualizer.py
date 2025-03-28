@@ -31,8 +31,7 @@ def main(urdf_name):
     # Build the robot with the package directories
     robot = pin.RobotWrapper.BuildFromURDF(urdf_file, package_dirs=[mesh_dir])
 
-    lift_middle_joint_id = robot.model.getJointId("lift_middle_joint")-1
-    lift_top_joint_id = robot.model.getJointId("lift_top_joint")-1
+    lift_joint_id = robot.model.getJointId("lift_joint")-1
     left_joint2_id = robot.model.getJointId("left_joint2")-1
     left_joint3_id = robot.model.getJointId("left_joint3")-1
     right_joint2_id = robot.model.getJointId("right_joint2")-1
@@ -43,8 +42,7 @@ def main(urdf_name):
     viz.loadViewerModel("pinocchio")
 
     neutral_config = pin.neutral(robot.model)
-    neutral_config[lift_middle_joint_id] = 0.1
-    neutral_config[lift_top_joint_id] = 0.1
+    neutral_config[lift_joint_id] = 0.15
     neutral_config[left_joint2_id] = 3.14
     neutral_config[left_joint3_id] = -2.967
     neutral_config[right_joint2_id] = 3.14
