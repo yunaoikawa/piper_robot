@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<robot name="bimanual_piper_description">
-  <!-- Base link that connects both arms -->
+<robot name="cony">
+  <!-- Material definitions -->
+  <material name="aluminum">
+    <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
+  </material>
+
+  <material name="torso_material">
+    <color rgba="0.827 0.749 0.898 1"/>
+  </material>
+
+  <material name="text_material">
+    <color rgba="0.494 0.247 0.596 1"/>
+  </material>
+
   <link name="base_link">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -9,17 +21,151 @@
     </inertial>
   </link>
 
+  <!-- Add telescoping lift links -->
+
+  <link name="lift_bottom_plate">
+    <!-- TODO: <inertial></inertial> -->
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.294 0.294 0.004"/>
+      </geometry>
+      <!-- <material name="aluminum"/> -->
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.294 0.294 0.004"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="lift_bottom_plate_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lift_bottom_plate"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="lift_base">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.118 0.118 0.3"/>
+      </geometry>
+      <material name="aluminum"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.118 0.118 0.3"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.0"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <joint name="lift_base_joint" type="fixed">
+    <parent link="lift_bottom_plate"/>
+    <child link="lift_base"/>
+    <origin xyz="0 0 0.152" rpy="0 0 0"/> <!-- 0.15 + 0.002 height(lift_bottom_plate + lift_base) / 2 -->
+  </joint>
+
+  <link name="lift_middle">
+    <inertial>
+      <mass value="0.8"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.108 0.108 0.208"/>
+      </geometry>
+      <material name="aluminum"/>
+      <!-- <material name="red">
+        <color rgba="1.0 0.0 0.0 1"/>
+      </material> -->
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.108 0.108 0.208"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="lift_middle_joint" type="prismatic">
+    <parent link="lift_base"/>
+    <child link="lift_middle"/>
+    <origin xyz="0 0 0.046" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="0.208" effort="1000" velocity="0.5"/>
+  </joint>
+
+  <link name="lift_top">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.1 0.1 0.208"/>
+      </geometry>
+      <material name="aluminum"/>
+      <!-- <material name="green">
+        <color rgba="0.0 1.0 0.0 1"/>
+      </material> -->
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.1 0.1 0.208"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.6"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <joint name="lift_top_joint" type="prismatic">
+    <parent link="lift_middle"/>
+    <child link="lift_top"/>
+    <origin xyz="0 0 0.0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="0.208" effort="1000" velocity="0.5"/>
+  </joint>
+
+  <link name="lift_top_plate">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.294 0.294 0.004"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.294 0.294 0.004"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="lift_top_plate_joint" type="fixed">
+    <parent link="lift_top"/>
+    <child link="lift_top_plate"/>
+    <origin xyz="0 0 0.106" rpy="0 0 0"/> <!-- 0.208 / 2 + 0.004 / 2 -->
+  </joint>
+
   <!--Torso link that connects both arms-->
   <link name="torso_link">
     <!--TODO: integrate inertial properties-->
     <visual>
-      <origin xyz="0.003 0.003 -0.034925" rpy="0 0 1.5708" />
+      <!-- <origin xyz="0.003 0.003 -0.034925" rpy="0 0 1.5708" /> -->
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="torso.STL" scale="0.001 0.001 0.001"/>
+        <!-- <mesh filename="torso.STL" scale="0.001 0.001 0.001"/> -->
+        <box size="0.10033 0.2921 0.10414"/>
       </geometry>
-      <material name="torso_material">
-        <color rgba="0.827 0.749 0.898 1"/>
-      </material>
+      <material name="torso_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -30,20 +176,18 @@
   </link>
 
   <joint name="torso_joint" type="fixed">
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <parent link="base_link"/>
+    <origin xyz="0 0 0.05407" rpy="0 0 0"/> <!-- 0.10414 / 2  + 0.004 / 2 -->
+    <parent link="lift_top_plate"/>
     <child link="torso_link"/>
   </joint>
 
   <link name="cony_text">
     <visual>
-      <origin xyz="0.001 0.001 -0.034925" rpy="0 0 1.5708" />
+      <origin xyz="0.001 0.001 -0.05207" rpy="0 0 1.5708" />
       <geometry>
         <mesh filename="cony_text.STL" scale="0.001 0.001 0.001"/>
       </geometry>
-      <material name="text_material">
-        <color rgba="0.494 0.247 0.596 1"/>
-      </material>
+      <material name="text_material"/>
     </visual>
   </link>
 
@@ -66,9 +210,7 @@
       <geometry>
         <mesh filename="base_link.STL"/>
       </geometry>
-      <material name="left_arm_material">
-        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
-      </material>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -80,6 +222,7 @@
 
   <joint name="left_base_joint" type="fixed">
     <origin xyz="0 0.14605 0" rpy="0 1.5708 1.5708"/>
+    <!-- <origin xyz="0 0 0" rpy="0 1.5708 1.5708"/> -->
     <parent link="torso_link"/>
     <child link="left_base_link"/>
   </joint>
@@ -96,7 +239,7 @@
       <geometry>
         <mesh filename="link1.STL"/>
       </geometry>
-      <material name="left_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -126,7 +269,7 @@
       <geometry>
         <mesh filename="link2.STL"/>
       </geometry>
-      <material name="left_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -156,7 +299,7 @@
       <geometry>
         <mesh filename="link3.STL"/>
       </geometry>
-      <material name="left_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -186,7 +329,7 @@
       <geometry>
         <mesh filename="link4.STL"/>
       </geometry>
-      <material name="left_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -216,7 +359,7 @@
       <geometry>
         <mesh filename="link5.STL"/>
       </geometry>
-      <material name="left_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -246,7 +389,7 @@
       <geometry>
         <mesh filename="link6.STL"/>
       </geometry>
-      <material name="left_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -276,7 +419,7 @@
       <geometry>
         <mesh filename="gripper_base.STL"/>
       </geometry>
-      <material name="left_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -303,7 +446,7 @@
       <geometry>
         <mesh filename="link7.STL"/>
       </geometry>
-      <material name="left_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -332,7 +475,7 @@
       <geometry>
         <mesh filename="link8.STL"/>
       </geometry>
-      <material name="left_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -362,9 +505,7 @@
       <geometry>
         <mesh filename="base_link.STL"/>
       </geometry>
-      <material name="right_arm_material">
-        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
-      </material>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -392,7 +533,7 @@
       <geometry>
         <mesh filename="link1.STL"/>
       </geometry>
-      <material name="right_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -422,7 +563,7 @@
       <geometry>
         <mesh filename="link2.STL"/>
       </geometry>
-      <material name="right_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -452,7 +593,7 @@
       <geometry>
         <mesh filename="link3.STL"/>
       </geometry>
-      <material name="right_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -482,7 +623,7 @@
       <geometry>
         <mesh filename="link4.STL"/>
       </geometry>
-      <material name="right_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -512,7 +653,7 @@
       <geometry>
         <mesh filename="link5.STL"/>
       </geometry>
-      <material name="right_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -542,7 +683,7 @@
       <geometry>
         <mesh filename="link6.STL"/>
       </geometry>
-      <material name="right_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -572,7 +713,7 @@
       <geometry>
         <mesh filename="gripper_base.STL"/>
       </geometry>
-      <material name="right_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -599,7 +740,7 @@
       <geometry>
         <mesh filename="link7.STL"/>
       </geometry>
-      <material name="right_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -628,7 +769,7 @@
       <geometry>
         <mesh filename="link8.STL"/>
       </geometry>
-      <material name="right_arm_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
