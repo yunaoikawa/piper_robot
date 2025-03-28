@@ -22,7 +22,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/base_link.STL" />
+          filename="base_link.STL" />
       </geometry>
       <material
         name="">
@@ -36,7 +36,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/base_link.STL" />
+          filename="base_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -62,7 +62,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link1.STL" />
+          filename="link1.STL" />
       </geometry>
       <material
         name="">
@@ -76,7 +76,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link1.STL" />
+          filename="link1.STL" />
       </geometry>
     </collision>
   </link>
@@ -120,7 +120,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link2.STL" />
+          filename="link2.STL" />
       </geometry>
       <material
         name="">
@@ -134,7 +134,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link2.STL" />
+          filename="link2.STL" />
       </geometry>
     </collision>
   </link>
@@ -178,7 +178,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link3.STL" />
+          filename="link3.STL" />
       </geometry>
       <material
         name="">
@@ -192,7 +192,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link3.STL" />
+          filename="link3.STL" />
       </geometry>
     </collision>
   </link>
@@ -236,7 +236,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link4.STL" />
+          filename="link4.STL" />
       </geometry>
       <material
         name="">
@@ -250,7 +250,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link4.STL" />
+          filename="link4.STL" />
       </geometry>
     </collision>
   </link>
@@ -294,7 +294,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link5.STL" />
+          filename="link5.STL" />
       </geometry>
       <material
         name="">
@@ -308,7 +308,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link5.STL" />
+          filename="link5.STL" />
       </geometry>
     </collision>
   </link>
@@ -352,7 +352,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link6.STL" />
+          filename="link6.STL" />
       </geometry>
       <material
         name="">
@@ -366,7 +366,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link6.STL" />
+          filename="link6.STL" />
       </geometry>
     </collision>
   </link>
@@ -410,7 +410,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/gripper_base.STL" />
+          filename="gripper_base.STL" />
       </geometry>
       <material
         name="">
@@ -424,7 +424,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/gripper_base.STL" />
+          filename="gripper_base.STL" />
       </geometry>
     </collision>
   </link>
@@ -461,7 +461,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link7.STL" />
+          filename="link7.STL" />
       </geometry>
       <material
         name="">
@@ -475,7 +475,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link7.STL" />
+          filename="link7.STL" />
       </geometry>
     </collision>
   </link>
@@ -519,7 +519,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link8.STL" />
+          filename="link8.STL" />
       </geometry>
       <material
         name="">
@@ -533,7 +533,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link8.STL" />
+          filename="link8.STL" />
       </geometry>
     </collision>
   </link>

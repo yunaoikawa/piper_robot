@@ -476,12 +476,12 @@
     </collision>
   </link>
 
-  <joint name="left_joint7" type="prismatic">
+  <joint name="left_joint7" type="fixed">
     <origin xyz="0 0 0.1358" rpy="1.5708 0 0"/>
     <parent link="left_gripper_base"/>
     <child link="left_link7"/>
-    <axis xyz="0 0 1"/>
-    <limit lower="0" upper="0.035" effort="10" velocity="1"/>
+    <!-- <axis xyz="0 0 1"/> -->
+    <!-- <limit lower="0" upper="0.035" effort="10" velocity="1"/> -->
   </joint>
 
   <link name="left_link8">
@@ -505,12 +505,12 @@
     </collision>
   </link>
 
-  <joint name="left_joint8" type="prismatic">
+  <joint name="left_joint8" type="fixed">
     <origin xyz="0 0 0.1358" rpy="1.5708 0 -3.1416"/>
     <parent link="left_gripper_base"/>
     <child link="left_link8"/>
-    <axis xyz="0 0 -1"/>
-    <limit lower="-0.035" upper="0" effort="10" velocity="1"/>
+    <!-- <axis xyz="0 0 -1"/> -->
+    <!-- <limit lower="-0.035" upper="0" effort="10" velocity="1"/> -->
   </joint>
 
   <!-- Right Arm -->
@@ -770,12 +770,12 @@
     </collision>
   </link>
 
-  <joint name="right_joint7" type="prismatic">
+  <joint name="right_joint7" type="fixed">
     <origin xyz="0 0 0.1358" rpy="1.5708 0 0"/>
     <parent link="right_gripper_base"/>
     <child link="right_link7"/>
-    <axis xyz="0 0 1"/>
-    <limit lower="0" upper="0.035" effort="10" velocity="1"/>
+    <!-- <axis xyz="0 0 1"/> -->
+    <!-- <limit lower="0" upper="0.035" effort="10" velocity="1"/> -->
   </joint>
 
   <link name="right_link8">
@@ -799,11 +799,11 @@
     </collision>
   </link>
 
-  <joint name="right_joint8" type="prismatic">
+  <joint name="right_joint8" type="fixed">
     <origin xyz="0 0 0.1358" rpy="1.5708 0 -3.1416"/>
     <parent link="right_gripper_base"/>
     <child link="right_link8"/>
-    <axis xyz="0 0 -1"/>
-    <limit lower="-0.035" upper="0" effort="10" velocity="1"/>
+    <!-- <axis xyz="0 0 -1"/> -->
+    <!-- <limit lower="-0.035" upper="0" effort="10" velocity="1"/> -->
   </joint>
 </robot>
