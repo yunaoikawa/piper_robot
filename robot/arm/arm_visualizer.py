@@ -37,6 +37,10 @@ def main(urdf_name):
 
     lift_middle_joint_id = reduced_robot.model.getJointId("lift_middle_joint")-1
     lift_top_joint_id = reduced_robot.model.getJointId("lift_top_joint")-1
+    left_joint2_id = reduced_robot.model.getJointId("left_joint2")-1
+    left_joint3_id = reduced_robot.model.getJointId("left_joint3")-1
+    right_joint2_id = reduced_robot.model.getJointId("right_joint2")-1
+    right_joint3_id = reduced_robot.model.getJointId("right_joint3")-1
 
     viz = MeshcatVisualizer(reduced_robot.model, reduced_robot.collision_model, reduced_robot.visual_model)
     viz.initViewer(open=False)
@@ -45,6 +49,10 @@ def main(urdf_name):
     neutral_config = pin.neutral(reduced_robot.model)
     neutral_config[lift_middle_joint_id] = 0.1
     neutral_config[lift_top_joint_id] = 0.1
+    neutral_config[left_joint2_id] = 3.14
+    neutral_config[left_joint3_id] = -2.967
+    neutral_config[right_joint2_id] = 3.14
+    neutral_config[right_joint3_id] = -2.967
     viz.display(neutral_config)
 
     # Display frame for torso_link with a visible axis length and width

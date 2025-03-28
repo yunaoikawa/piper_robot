@@ -6,11 +6,15 @@
   </material>
 
   <material name="torso_material">
-    <color rgba="0.827 0.749 0.898 1"/>
+    <color rgba="0.827 0.749 0.898 0.5"/>
   </material>
 
   <material name="text_material">
     <color rgba="0.494 0.247 0.596 1"/>
+  </material>
+
+  <material name="cony_head">
+    <color rgba="0.96 0.5137 0.1215 1"/>
   </material>
 
   <link name="base_link">
@@ -165,7 +169,7 @@
         <!-- <mesh filename="torso.STL" scale="0.001 0.001 0.001"/> -->
         <box size="0.10033 0.2921 0.10414"/>
       </geometry>
-      <material name="torso_material"/>
+      <material name="aluminum"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -195,6 +199,22 @@
     <origin xyz="0.0 0 0" rpy="0 0 0" />
     <parent link="torso_link" />
     <child link="cony_text" />
+  </joint>
+
+  <link name="cony_head">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 1.5708"/>
+      <geometry>
+        <mesh filename="cony_head.STL" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="cony_head"/>
+    </visual>
+  </link>
+
+  <joint name="cony_head_joint" type="fixed">
+    <origin xyz="0 0 0.05207" rpy="0 0 0"/>
+    <parent link="torso_link"/>
+    <child link="cony_head"/>
   </joint>
 
 
