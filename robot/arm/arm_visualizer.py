@@ -10,7 +10,10 @@ from pinocchio.visualize import MeshcatVisualizer
 @click.argument("urdf_name", type=str, default="bimanual")
 def main(urdf_name):
     urdf_file = os.path.join(os.path.dirname(__file__), "models", urdf_name+".urdf")
-    robot = pin.RobotWrapper.BuildFromURDF(urdf_file)
+    mesh_dir = os.path.join(os.path.dirname(__file__), "models", "meshes")
+
+    # Build the robot with the package directories
+    robot = pin.RobotWrapper.BuildFromURDF(urdf_file, package_dirs=[mesh_dir])
 
     reduced_robot = robot.buildReducedRobot(
         list_of_joints_to_lock=["left_joint7", "left_joint8", "right_joint7", "right_joint8"],

@@ -13,9 +13,9 @@
   <link name="torso_link">
     <!--TODO: integrate inertial properties-->
     <visual>
-      <origin xyz="0.001 0.001 -0.034925" rpy="0 0 1.5708" />
+      <origin xyz="0.003 0.003 -0.034925" rpy="0 0 1.5708" />
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/torso.STL" scale="0.001 0.001 0.001"/>
+        <mesh filename="torso.STL" scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="torso_material">
         <color rgba="0.827 0.749 0.898 1"/>
@@ -24,7 +24,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/torso.STL" scale="0.001 0.001 0.001"/>
+        <mesh filename="torso.STL" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -39,7 +39,7 @@
     <visual>
       <origin xyz="0.001 0.001 -0.034925" rpy="0 0 1.5708" />
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/cony_text.STL" scale="0.001 0.001 0.001"/>
+        <mesh filename="cony_text.STL" scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="text_material">
         <color rgba="0.494 0.247 0.596 1"/>
@@ -64,7 +64,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/base_link.STL"/>
+        <mesh filename="base_link.STL"/>
       </geometry>
       <material name="left_arm_material">
         <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
@@ -73,7 +73,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/base_link.STL"/>
+        <mesh filename="base_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -94,14 +94,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link1.STL"/>
+        <mesh filename="link1.STL"/>
       </geometry>
       <material name="left_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link1.STL"/>
+        <mesh filename="link1.STL"/>
       </geometry>
     </collision>
   </link>
@@ -124,14 +124,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link2.STL"/>
+        <mesh filename="link2.STL"/>
       </geometry>
       <material name="left_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link2.STL"/>
+        <mesh filename="link2.STL"/>
       </geometry>
     </collision>
   </link>
@@ -154,14 +154,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link3.STL"/>
+        <mesh filename="link3.STL"/>
       </geometry>
       <material name="left_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link3.STL"/>
+        <mesh filename="link3.STL"/>
       </geometry>
     </collision>
   </link>
@@ -184,14 +184,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link4.STL"/>
+        <mesh filename="link4.STL"/>
       </geometry>
       <material name="left_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link4.STL"/>
+        <mesh filename="link4.STL"/>
       </geometry>
     </collision>
   </link>
@@ -214,14 +214,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link5.STL"/>
+        <mesh filename="link5.STL"/>
       </geometry>
       <material name="left_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link5.STL"/>
+        <mesh filename="link5.STL"/>
       </geometry>
     </collision>
   </link>
@@ -244,14 +244,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link6.STL"/>
+        <mesh filename="link6.STL"/>
       </geometry>
       <material name="left_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link6.STL"/>
+        <mesh filename="link6.STL"/>
       </geometry>
     </collision>
   </link>
@@ -274,14 +274,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/gripper_base.STL"/>
+        <mesh filename="gripper_base.STL"/>
       </geometry>
       <material name="left_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/gripper_base.STL"/>
+        <mesh filename="gripper_base.STL"/>
       </geometry>
     </collision>
   </link>
@@ -301,14 +301,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link7.STL"/>
+        <mesh filename="link7.STL"/>
       </geometry>
       <material name="left_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link7.STL"/>
+        <mesh filename="link7.STL"/>
       </geometry>
     </collision>
   </link>
@@ -330,14 +330,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link8.STL"/>
+        <mesh filename="link8.STL"/>
       </geometry>
       <material name="left_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link8.STL"/>
+        <mesh filename="link8.STL"/>
       </geometry>
     </collision>
   </link>
@@ -360,7 +360,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/base_link.STL"/>
+        <mesh filename="base_link.STL"/>
       </geometry>
       <material name="right_arm_material">
         <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
@@ -369,7 +369,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/base_link.STL"/>
+        <mesh filename="base_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -390,14 +390,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link1.STL"/>
+        <mesh filename="link1.STL"/>
       </geometry>
       <material name="right_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link1.STL"/>
+        <mesh filename="link1.STL"/>
       </geometry>
     </collision>
   </link>
@@ -420,14 +420,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link2.STL"/>
+        <mesh filename="link2.STL"/>
       </geometry>
       <material name="right_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link2.STL"/>
+        <mesh filename="link2.STL"/>
       </geometry>
     </collision>
   </link>
@@ -450,14 +450,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link3.STL"/>
+        <mesh filename="link3.STL"/>
       </geometry>
       <material name="right_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link3.STL"/>
+        <mesh filename="link3.STL"/>
       </geometry>
     </collision>
   </link>
@@ -480,14 +480,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link4.STL"/>
+        <mesh filename="link4.STL"/>
       </geometry>
       <material name="right_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link4.STL"/>
+        <mesh filename="link4.STL"/>
       </geometry>
     </collision>
   </link>
@@ -510,14 +510,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link5.STL"/>
+        <mesh filename="link5.STL"/>
       </geometry>
       <material name="right_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link5.STL"/>
+        <mesh filename="link5.STL"/>
       </geometry>
     </collision>
   </link>
@@ -540,14 +540,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link6.STL"/>
+        <mesh filename="link6.STL"/>
       </geometry>
       <material name="right_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link6.STL"/>
+        <mesh filename="link6.STL"/>
       </geometry>
     </collision>
   </link>
@@ -570,14 +570,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/gripper_base.STL"/>
+        <mesh filename="gripper_base.STL"/>
       </geometry>
       <material name="right_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/gripper_base.STL"/>
+        <mesh filename="gripper_base.STL"/>
       </geometry>
     </collision>
   </link>
@@ -597,14 +597,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link7.STL"/>
+        <mesh filename="link7.STL"/>
       </geometry>
       <material name="right_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link7.STL"/>
+        <mesh filename="link7.STL"/>
       </geometry>
     </collision>
   </link>
@@ -626,14 +626,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link8.STL"/>
+        <mesh filename="link8.STL"/>
       </geometry>
       <material name="right_arm_material"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="/home/hello-robot/code/robot/robot/arm/models/meshes/link8.STL"/>
+        <mesh filename="link8.STL"/>
       </geometry>
     </collision>
   </link>
