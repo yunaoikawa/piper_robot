@@ -101,7 +101,7 @@
     <child link="lift_top"/>
     <origin xyz="0 0 0.0" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
-    <limit lower="0" upper="0.3" effort="1000" velocity="0.5"/>
+    <limit lower="0" upper="0.3" effort="100" velocity="0.05"/>
   </joint>
 
   <link name="lift_top_plate">
@@ -240,7 +240,7 @@
     <parent link="left_base_link"/>
     <child link="left_link1"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-2.618" upper="0.25" effort="100" velocity="5"/>
+    <limit lower="-2.618" upper="0.25" effort="100" velocity="3.14"/>
   </joint>
 
   <!-- Continue with remaining left arm links and joints -->
@@ -270,7 +270,7 @@
     <parent link="left_link1"/>
     <child link="left_link2"/>
     <axis xyz="0 0 1"/>
-    <limit lower="0" upper="3.14" effort="100" velocity="5"/>
+    <limit lower="0" upper="3.14" effort="100" velocity="3.4"/>
   </joint>
 
   <!-- Continue with remaining left arm links and joints -->
@@ -300,7 +300,7 @@
     <parent link="left_link2"/>
     <child link="left_link3"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-2.967" upper="0" effort="100" velocity="5"/>
+    <limit lower="-2.967" upper="0" effort="100" velocity="3.14"/>
   </joint>
 
   <!-- Continue with remaining left arm links and joints -->
@@ -330,7 +330,7 @@
     <parent link="left_link3"/>
     <child link="left_link4"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.745" upper="1.745" effort="100" velocity="5"/>
+    <limit lower="-1.745" upper="1.745" effort="100" velocity="3.9"/>
   </joint>
 
   <!-- Continue with remaining left arm links and joints -->
@@ -360,7 +360,7 @@
     <parent link="left_link4"/>
     <child link="left_link5"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.22" upper="1.22" effort="100" velocity="5"/>
+    <limit lower="-1.22" upper="1.22" effort="100" velocity="3.9"/>
   </joint>
 
   <!-- Continue with remaining left arm links and joints -->
@@ -390,7 +390,16 @@
     <parent link="left_link5"/>
     <child link="left_link6"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-2.0944" upper="2.0944" effort="100" velocity="3"/>
+    <limit lower="-2.0944" upper="2.0944" effort="100" velocity="3.9"/>
+  </joint>
+
+  <link name="ee_left">
+  </link>
+
+  <joint name="left_ee_joint" type="fixed">
+    <origin xyz="0 0 0.13" rpy="0 -1.5708 0"/>
+    <parent link="left_link6"/>
+    <child link="ee_left"/>
   </joint>
 
   <!-- Left Gripper -->
@@ -534,7 +543,7 @@
     <parent link="right_base_link"/>
     <child link="right_link1"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-0.25" upper="2.618" effort="100" velocity="5"/>
+    <limit lower="-0.25" upper="2.618" effort="100" velocity="3.14"/>
   </joint>
 
   <!-- Continue with remaining right arm links and joints -->
@@ -564,7 +573,7 @@
     <parent link="right_link1"/>
     <child link="right_link2"/>
     <axis xyz="0 0 1"/>
-    <limit lower="0" upper="3.14" effort="100" velocity="5"/>
+    <limit lower="0" upper="3.14" effort="100" velocity="3.4"/>
   </joint>
 
   <!-- Continue with remaining right arm links and joints -->
@@ -594,7 +603,7 @@
     <parent link="right_link2"/>
     <child link="right_link3"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-2.967" upper="0" effort="100" velocity="5"/>
+    <limit lower="-2.967" upper="0" effort="100" velocity="3.14"/>
   </joint>
 
   <!-- Continue with remaining right arm links and joints -->
@@ -624,7 +633,7 @@
     <parent link="right_link3"/>
     <child link="right_link4"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.745" upper="1.745" effort="100" velocity="5"/>
+    <limit lower="-1.745" upper="1.745" effort="100" velocity="3.9"/>
   </joint>
 
   <!-- Continue with remaining right arm links and joints -->
@@ -654,7 +663,7 @@
     <parent link="right_link4"/>
     <child link="right_link5"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.22" upper="1.22" effort="100" velocity="5"/>
+    <limit lower="-1.22" upper="1.22" effort="100" velocity="3.9"/>
   </joint>
 
   <!-- Continue with remaining right arm links and joints -->
@@ -684,7 +693,7 @@
     <parent link="right_link5"/>
     <child link="right_link6"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-2.0944" upper="2.0944" effort="100" velocity="3"/>
+    <limit lower="-2.0944" upper="2.0944" effort="100" velocity="3.9"/>
   </joint>
 
   <!-- Right Gripper -->
