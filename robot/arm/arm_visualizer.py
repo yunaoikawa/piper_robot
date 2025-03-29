@@ -1,5 +1,8 @@
 import os
 import click
+import threading
+from queue import Queue, Empty
+from typing import Tuple
 
 import meshcat_shapes
 import numpy as np
@@ -30,7 +33,18 @@ def print_frame_info(robot_model):
         print(f"Frame ID: {frame_id}, Name: {frame_name}")
 
 
-# Add this after creating the robot:
+def input_handler(queue: Queue[Tuple[float, float, float]]) -> None:
+    print("\nEnter target positions in format: x y z (e.g., 0.3 0.0 0.3)")
+    print("Press Ctrl+C to exit")
+    while True:
+        try:
+            user_input = input("Enter new target position: ")
+            x, y, z = map(float, user_input.split())
+            queue.put((x, y, z))
+        except ValueError:
+            print("Invalid input. Please enter three numbers separated by spaces.")
+        except KeyboardInterrupt:
+            break
 
 
 @click.command()
@@ -46,24 +60,16 @@ def main(urdf_name):
 
     viz = start_meshcat_visualizer(robot)
 
-    meshcat_shapes.frame(viz.viewer["lift"], opacity=1.0)
-    meshcat_shapes.frame(viz.viewer["lift_target"], opacity=0.5)
     meshcat_shapes.frame(viz.viewer["ee_left"], opacity=1.0)
     meshcat_shapes.frame(viz.viewer["ee_left_target"], opacity=0.5)
-
-    lift_task = FrameTask(
-        "lift_top",
-        position_cost=0.0,
-        orientation_cost=0.0,
-    )
 
     left_ee_task = FrameTask(
         "ee_left",
         position_cost=1.0,
-        orientation_cost=1.0,
+        orientation_cost=0.5,
     )
 
-    tasks = [lift_task, left_ee_task]
+    tasks = [left_ee_task]
 
     q_ref = custom_configuration_vector(
         robot,
@@ -80,8 +86,6 @@ def main(urdf_name):
         task.set_target_from_configuration(configuration)
     viz.display(configuration.q)
 
-    input("Press Enter to continue...")
-
     # Select the solver
     solver = qpsolvers.available_solvers[0]
     if "quadprog" in qpsolvers.available_solvers:
@@ -91,26 +95,38 @@ def main(urdf_name):
     dt = rate.period
     t = 0.0  # [s]
 
-    while True:
-        # lift_target = lift_task.transform_target_to_world
-        # lift_target.translation[2] = 0.3 + 0.15 * np.sin(2 * np.pi * 0.5 * t)  # Oscillates between 0 and 0.3 at 0.5 Hz
+    # Set up input handling
+    input_queue: Queue[Tuple[float, float, float]] = Queue()
+    input_thread = threading.Thread(target=input_handler, args=(input_queue,))
+    input_thread.daemon = True
+    input_thread.start()
 
-        left_ee_target = left_ee_task.transform_target_to_world
-        left_ee_target.translation[1] = 0.4
-        left_ee_target.translation[2] = 0.3 + 0.15 * 1# np.sin(2 * np.pi * 0.5 * t)  # Match the lift target's height
+    try:
+        while True:
+            # Check for new target positions
+            try:
+                while not input_queue.empty():
+                    x, y, z = input_queue.get_nowait()
+                    left_ee_target = left_ee_task.transform_target_to_world
+                    left_ee_target.translation = np.array([x, y, z])
+                    print(f"\nNew target position set: x={x:.3f}, y={y:.3f}, z={z:.3f}")
+            except Empty:
+                pass
 
-        # viz.viewer["lift_target"].set_transform(lift_target.np)
-        viz.viewer["lift"].set_transform(configuration.get_transform_frame_to_world(lift_task.frame).np)
+            left_ee_target = left_ee_task.transform_target_to_world
+            viz.viewer["ee_left_target"].set_transform(left_ee_target.np)
+            viz.viewer["ee_left"].set_transform(configuration.get_transform_frame_to_world(left_ee_task.frame).np)
 
-        viz.viewer["ee_left_target"].set_transform(left_ee_target.np)
-        viz.viewer["ee_left"].set_transform(configuration.get_transform_frame_to_world(left_ee_task.frame).np)
+            velocity = solve_ik(configuration, tasks, dt, solver=solver)
+            configuration.integrate_inplace(velocity, dt)
 
-        velocity = solve_ik(configuration, tasks, dt, solver=solver)
-        configuration.integrate_inplace(velocity, dt)
+            viz.display(configuration.q)
+            rate.sleep()
+            t += dt
 
-        viz.display(configuration.q)
-        rate.sleep()
-        t += dt
+    except KeyboardInterrupt:
+        print("\nExiting...")
+        input_thread.join(timeout=0.1)
 
 
 if __name__ == "__main__":
