@@ -16,6 +16,8 @@ from pink.tasks import FrameTask
 from pink.utils import custom_configuration_vector
 from pink.visualization import start_meshcat_visualizer
 
+from robot.arm.tools import create_transformation_matrix
+
 
 def print_joint_info(robot_model):
     print("\nJoint Information:")
@@ -34,13 +36,13 @@ def print_frame_info(robot_model):
 
 
 def input_handler(queue: Queue[Tuple[float, float, float]]) -> None:
-    print("\nEnter target positions in format: x y z (e.g., 0.3 0.0 0.3)")
+    print("\nEnter target positions in format: x y z r p y (e.g., 0.3 0.0 0.3 0 0 0)")
     print("Press Ctrl+C to exit")
     while True:
         try:
             user_input = input("Enter new target position: ")
-            x, y, z = map(float, user_input.split())
-            queue.put((x, y, z))
+            x, y, z, r, p, y = map(float, user_input.split())
+            queue.put((x, y, z, r, p, y))
         except ValueError:
             print("Invalid input. Please enter three numbers separated by spaces.")
         except KeyboardInterrupt:
@@ -66,7 +68,7 @@ def main(urdf_name):
     left_ee_task = FrameTask(
         "ee_left",
         position_cost=1.0,
-        orientation_cost=0.5,
+        orientation_cost=0.1,
     )
 
     tasks = [left_ee_task]
@@ -96,7 +98,7 @@ def main(urdf_name):
     t = 0.0  # [s]
 
     # Set up input handling
-    input_queue: Queue[Tuple[float, float, float]] = Queue()
+    input_queue: Queue[Tuple[float, float, float, float, float, float]] = Queue()
     input_thread = threading.Thread(target=input_handler, args=(input_queue,))
     input_thread.daemon = True
     input_thread.start()
@@ -106,9 +108,10 @@ def main(urdf_name):
             # Check for new target positions
             try:
                 while not input_queue.empty():
-                    x, y, z = input_queue.get_nowait()
+                    x, y, z, r, p, y = input_queue.get_nowait()
                     left_ee_target = left_ee_task.transform_target_to_world
                     left_ee_target.translation = np.array([x, y, z])
+                    left_ee_target.rotation = create_transformation_matrix(0, 0, 0, r, p, y)[:3, :3]
                     print(f"\nNew target position set: x={x:.3f}, y={y:.3f}, z={z:.3f}")
             except Empty:
                 pass
