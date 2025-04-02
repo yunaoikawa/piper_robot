@@ -97,6 +97,9 @@ class DriveMotor:
     def __init__(self, num: int):
         self.num = num
         assert num % 2 == 0, "Drive motors must have even numbers"
+        if num == 8:
+            self.status_signals = []
+            return
         self.fx = hardware.TalonFX(self.num, canbus="Drivetrain")
         assert self.fx.get_is_pro_licensed()  # Must be Phoenix Pro licensed for FOC
 
@@ -125,13 +128,19 @@ class DriveMotor:
         self.fx.set_position(0)
 
     def get_velocity(self) -> float:
+        if self.num == 8:
+            return 0
         return (TWO_PI * TIRE_RADIUS) * self.velocity_signal.value / DRIVE_GEAR_RATIO
 
     def set_velocity(self, velocity: float) -> None:  # m/s
+        if self.num == 8:
+            return
         velocity = DRIVE_GEAR_RATIO * (velocity / (TWO_PI * TIRE_RADIUS))
         self.fx.set_control(self.velocity_request.with_velocity(velocity))
 
     def set_neutral(self):
+        if self.num == 8:
+            return
         self.fx.set_control(self.neutral_request)
 
 
@@ -189,6 +198,8 @@ class Base:
         for i in range(NUM_SWERVES):
             self.steer_pos[i] = self.steer_motors[i].get_position()
             self.drive_vel[i] = self.drive_motors[i].get_velocity()
+
+        self.drive_vel[3] = self.drive_vel[2] # TODO: Remove this once we got the fuse fixed
 
         dt = self.status_signals[0].timestamp.time - self.status_timestamp.time
         self.status_timestamp = self.status_signals[0].timestamp
@@ -276,7 +287,6 @@ class Base:
             curr_position = steer_motor.cc.get_absolute_position().value
             offsets.append(f"{round(4096 * (curr_offset - curr_position))}.0 / 4096")
         print(f"ENCODER_MAGNET_OFFSETS = [{', '.join(offsets)}]")
-
 
     def stop(self):
         # TODO: Stop the motors
