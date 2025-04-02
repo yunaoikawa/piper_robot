@@ -48,7 +48,7 @@ class SteerMotor:
         self.position_signal = self.fx.get_position()
         self.status_signals = [self.position_signal]
         self.position_request = controls.PositionTorqueCurrentFOC(0)
-        self.neutral_request = controls.NeutralOut()
+        self.neutral_request = controls.NeutralOut() # controls.StaticBrake()
 
         # Motor configuration
         self.fx_cfg = configs.TalonFXConfiguration()

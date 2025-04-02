@@ -79,5 +79,5 @@ def test_drive_motor():
 
 
 if __name__ == "__main__":
-    # test_steer_motor()
-    test_drive_motor()
+    test_steer_motor()
+    # test_drive_motor()
