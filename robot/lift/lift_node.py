@@ -1,4 +1,6 @@
 import os
+import zmq
+import signal
 from typing import cast
 import time
 from queue import Queue
@@ -9,13 +11,16 @@ import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware
 
 from robot.network.timer import FrequencyTimer
+from robot.network import Subscriber, COMMAND_PORT
+from robot.network.msgs import LiftCommand
 from robot.controller.constants import CONTROL_FREQ, POLICY_CONTROL_PERIOD_NS, POLICY_CONTROL_FREQ
 
 class Lift:
     def __init__(self):
         self.lift_motor = hardware.TalonFX(9, canbus="Drivetrain")
-
-        time.sleep(0.2)
+        time.sleep(0.2)  # wait for CAN bus to be ready
+        supply_voltage = self.lift_motor.get_supply_voltage().value
+        print(f"Motor supply voltage: {supply_voltage:.2f} V")
 
         assert self.lift_motor.get_is_pro_licensed()
 
@@ -33,10 +38,10 @@ class Lift:
         self.lift_motor_cfg.torque_current.peak_reverse_torque_current = -100
         self.lift_motor_cfg.audio.beep_on_boot = False
 
-        self.lift_motor_cfg.motion_magic.motion_magic_cruise_velocity = 15.0 # [rev/s]
+        self.lift_motor_cfg.motion_magic.motion_magic_cruise_velocity = 5.0 # [rev/s]
         self.lift_motor_cfg.motion_magic.motion_magic_acceleration = 25.0 # [rev/s^2]
 
-        self.min_pos, self.max_pos = 0.0, 0.39 # [m]
+        self.min_pos, self.max_pos = 0, 0.39 # [m]
 
         phoenix6.BaseStatusSignal.set_update_frequency_for_all(CONTROL_FREQ, self.status_signals)
 
@@ -65,7 +70,8 @@ class Lift:
         return -self.velocity_signal.value * 0.004 # [m/s]
 
     def set_target_position(self, position: float) -> None:
-        assert self.min_pos <= position <= self.max_pos
+        # assert self.min_pos <= position <= self.max_pos
+        position = max(self.min_pos, min(position, self.max_pos))
         self._command_queue.put(position)
 
     def update_state(self):
@@ -93,6 +99,7 @@ class Lift:
                     self.lift_motor.set_control(self.neutral_request)
                 else:
                     phoenix6.unmanaged.feed_enable(0.1)
+                    print(f"Setting lift target position to {command} m")
                     self.lift_motor.set_control(self.position_request.with_position(-command / 0.004))
 
     def start_control(self):
@@ -112,6 +119,26 @@ class Lift:
 
 
 def main():
+    ctx = zmq.Context()
+    command_sub = Subscriber(ctx, COMMAND_PORT, ["/lift_command"], [LiftCommand.deserialize])
+    # timer = FrequencyTimer(name="lift_control_loop", frequency=POLICY_CONTROL_FREQ)
+
+    lift = Lift()
+    lift.start_control()
+    print("Lift initialized")
+    print(f"Lift position: {lift.get_position()} m")
+
+    try:
+        while True:
+            _, command = command_sub.receive()
+            vel = cast(LiftCommand, command).target
+            target = lift.get_position() + vel * POLICY_CONTROL_PERIOD_NS / 1e9
+            print(f"Lift current position: {lift.get_position()} m, target position: {target} m")
+            lift.set_target_position(target)
+    except KeyboardInterrupt:
+        pass
+
+def control_pos():
     lift = Lift()
     lift.start_control()
 
@@ -134,4 +161,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    control_pos()

@@ -104,6 +104,17 @@ class Command:
             target=data_unpacked["target"],
         )
 
+@dataclass
+class LiftCommand:
+    timestamp: int
+    target: float
+
+    def serialize(self) -> bytes:
+        return msgpack.packb(self.__dict__)
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "LiftCommand":
+        return cls(**msgpack.unpackb(data))
 
 @dataclass
 class RobotState:

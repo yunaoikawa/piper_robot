@@ -6,12 +6,13 @@ and create udev rules.
 import time
 import numpy as np
 import zmq
+import math
 import pygame
 from pygame.joystick import Joystick
 
 from robot.network import Publisher, COMMAND_PORT
 from robot.network.timer import FrequencyTimer
-from robot.network.msgs import Command, CommandType
+from robot.network.msgs import Command, CommandType, LiftCommand
 
 XBOX_CONTROLLER_MAP = {
     "start": 7,
@@ -32,6 +33,7 @@ PS4_CONTROLLER_MAP = {
     "left_horizontal_axis": 0,
     "right_horizontal_axis": 3,
     "right_vertical_axis": 4,
+    "pad_y": 7,
 }
 
 controller_map = PS4_CONTROLLER_MAP
@@ -90,7 +92,13 @@ def main():
                                 target=target_velocity.ravel(),
                             ),
                         )
-                        # node.send_output("command", pa.array(target_velocity.ravel()), metadata={"command_type": CommandType.BASE_VELOCITY.value})
+                    lift_target = joy.get_hat(0)[1] # pad Y axis
+                    if lift_target != 0:
+                        lift_target = 0.1 if lift_target > 0 else -0.1
+                        pub.publish(
+                            "/lift_command",
+                            LiftCommand(timestamp=time.perf_counter_ns(), target=lift_target),
+                        )
                 elif last_enabled:
                     print("Robot disabled")
                     last_enabled = False
