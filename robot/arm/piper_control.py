@@ -7,7 +7,7 @@ class PiperControl:
     def __init__(self, can_port="can_right") -> None:
         self.can_port = can_port
         self.auto_enable = True
-        self.gripper_exist = True
+        self.gripper_exist = False
         self.gripper_val_mutiple = 1
         self.enable_flag_ = False
         self.piper = C_PiperInterface(can_name=self.can_port)
@@ -85,4 +85,4 @@ class PiperControl:
 
 
 if __name__ == "__main__":
-    piper_single = PiperControl()
+    piper_single = PiperControl(can_port="can0")
