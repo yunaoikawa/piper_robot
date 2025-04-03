@@ -27,7 +27,7 @@ class Lift:
         self.position_signal = self.lift_motor.get_position()
         self.velocity_signal = self.lift_motor.get_velocity()
         self.status_signals = cast(list[phoenix6.BaseStatusSignal], [self.position_signal, self.velocity_signal])
-        self.position_request = controls.MotionMagicTorqueCurrentFOC(0)
+        self.position_request = controls.DynamicMotionMagicTorqueCurrentFOC(0, 20, 10, 100)
         self.neutral_request = controls.NeutralOut()
 
         self.lift_motor_cfg = configs.TalonFXConfiguration()
@@ -38,8 +38,8 @@ class Lift:
         self.lift_motor_cfg.torque_current.peak_reverse_torque_current = -100
         self.lift_motor_cfg.audio.beep_on_boot = False
 
-        self.lift_motor_cfg.motion_magic.motion_magic_cruise_velocity = 5.0 # [rev/s]
-        self.lift_motor_cfg.motion_magic.motion_magic_acceleration = 25.0 # [rev/s^2]
+        # self.lift_motor_cfg.motion_magic.motion_magic_cruise_velocity = 5.0 # [rev/s]
+        # self.lift_motor_cfg.motion_magic.motion_magic_acceleration = 25.0 # [rev/s^2]
 
         self.min_pos, self.max_pos = 0, 0.39 # [m]
 
@@ -132,6 +132,7 @@ def main():
         while True:
             _, command = command_sub.receive()
             vel = cast(LiftCommand, command).target
+            target = lift.min_pos if vel < 0 else lift.max_pos
             target = lift.get_position() + vel * POLICY_CONTROL_PERIOD_NS / 1e9
             print(f"Lift current position: {lift.get_position()} m, target position: {target} m")
             lift.set_target_position(target)
