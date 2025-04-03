@@ -1,5 +1,5 @@
 - name: controller
-  module: robot.controller.controller_node
+  module: robot.controller.base_node
 
 # - name: oculus
 #   module: robot.teleop.oculus_node

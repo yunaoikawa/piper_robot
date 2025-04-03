@@ -10,7 +10,7 @@ import math
 import pygame
 from pygame.joystick import Joystick
 
-from robot.network import Publisher, COMMAND_PORT
+from robot.network import Publisher, BASE_PORT, LIFT_PORT
 from robot.network.timer import FrequencyTimer
 from robot.network.msgs import Command, CommandType, LiftCommand
 
@@ -51,7 +51,8 @@ def main():
     last_enabled = False
 
     ctx = zmq.Context()
-    pub = Publisher(ctx, COMMAND_PORT)
+    base_pub = Publisher(ctx, BASE_PORT)
+    lift_pub = Publisher(ctx, LIFT_PORT)
     timer = FrequencyTimer("Joystick", 60)
     while True:
         with timer:
@@ -84,7 +85,7 @@ def main():
                     target_velocity = max_vels[max_vel_setting] * target_velocity
                     # print("Target velocity: ", target_velocity)
                     if sum(np.abs(target_velocity)) > 0.0:
-                        pub.publish(
+                        base_pub.publish(
                             "/command",
                             Command(
                                 timestamp=time.perf_counter_ns(),
@@ -95,7 +96,7 @@ def main():
                     lift_target = joy.get_hat(0)[1] # pad Y axis
                     if lift_target != 0:
                         lift_target = 0.1 if lift_target > 0 else -0.1
-                        pub.publish(
+                        lift_pub.publish(
                             "/lift_command",
                             LiftCommand(timestamp=time.perf_counter_ns(), target=lift_target),
                         )

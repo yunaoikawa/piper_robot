@@ -10,7 +10,7 @@ from ppadb.client import Client as AdbClient
 
 from robot.arm.tools import matrix_to_xyzrpy
 from robot.arm.fps_counter import FPSCounter
-from robot.network import Publisher, ARM_COMMAND_PORT, COMMAND_PORT
+from robot.network import Publisher, ARM_COMMAND_PORT, BASE_PORT
 from robot.network.timer import FrequencyTimer
 from robot.network.msgs import ArmCommand, Command, CommandType
 
@@ -279,7 +279,7 @@ def apply_deadzone(arr, deadzone_size=0.05):
 
 def main():
     ctx = zmq.Context()
-    base_command_pub = Publisher(ctx, COMMAND_PORT, HWM=1)
+    base_command_pub = Publisher(ctx, BASE_PORT, HWM=1)
     arm_command_pub = Publisher(ctx, ARM_COMMAND_PORT, HWM=1)
     oculus_reader = OculusReader(ip_address="10.19.165.216")
     timer = FrequencyTimer(name="oculus_reader", frequency=20)

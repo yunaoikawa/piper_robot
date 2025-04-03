@@ -1,15 +1,20 @@
 import os
 import time
 import math
+import threading
 from typing import Tuple, cast
 import numpy as np
 from queue import Queue
+import zmq
 
 os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
-from ruckig import InputParameter, OutputParameter, Result, Ruckig, ControlInterface
+# from ruckig import InputParameter, OutputParameter, Result, Ruckig, ControlInterface
 
+
+from robot.network.timer import FrequencyTimer
+from robot.network import Subscriber, BASE_PORT
 from robot.network.msgs import Command, CommandType
 from robot.controller.constants import (
     POLICY_CONTROL_PERIOD_NS,
@@ -17,7 +22,6 @@ from robot.controller.constants import (
     TWO_PI,
     DRIVE_GEAR_RATIO,
     CONTROL_FREQ,
-    CONTROL_PERIOD,
     NUM_SWERVES,
     LENGTH,
     WIDTH,
@@ -47,16 +51,16 @@ class SteerMotor:
 
         self.position_signal = self.fx.get_position()
         self.status_signals = [self.position_signal]
-        self.position_request = controls.PositionTorqueCurrentFOC(0)
-        self.neutral_request = controls.NeutralOut() # controls.StaticBrake()
+        self.position_request = controls.DynamicMotionMagicTorqueCurrentFOC(0, velocity=40, acceleration=40, jerk=100)
+        self.neutral_request = controls.StaticBrake()  # controls.StaticBrake()
 
         # Motor configuration
         self.fx_cfg = configs.TalonFXConfiguration()
-        self.fx_cfg.slot0.k_s = 5
+        self.fx_cfg.slot0.k_s = 4
         self.fx_cfg.slot0.static_feedforward_sign = signals.StaticFeedforwardSignValue.USE_CLOSED_LOOP_SIGN
-        self.fx_cfg.slot0.k_p = 60
+        self.fx_cfg.slot0.k_p = 80.0
         self.fx_cfg.slot0.k_i = 0.0
-        self.fx_cfg.slot0.k_d = 6
+        self.fx_cfg.slot0.k_d = 2.5
         self.fx_cfg.torque_current.peak_forward_torque_current = 10  # Amperes
         self.fx_cfg.torque_current.peak_reverse_torque_current = -10
         self.fx_cfg.audio.beep_on_boot = False
@@ -87,7 +91,10 @@ class SteerMotor:
 
     def set_position(self, position: float) -> None:
         assert -math.pi <= position <= math.pi
-        self.fx.set_control(self.position_request.with_position(position / TWO_PI))
+        if abs(position-self.get_position()) > 0.02:
+            self.fx.set_control(self.position_request.with_position(position / TWO_PI))
+        else:
+            self.set_neutral()
 
     def set_neutral(self):
         self.fx.set_control(self.neutral_request)
@@ -106,7 +113,7 @@ class DriveMotor:
         self.velocity_signal = self.fx.get_velocity()
         self.status_signals = [self.velocity_signal]
         self.velocity_request = controls.VelocityTorqueCurrentFOC(0)
-        self.neutral_request = controls.NeutralOut()
+        self.neutral_request = controls.StaticBrake()
 
         # Motor configuration
         self.fx_cfg = configs.TalonFXConfiguration()
@@ -174,19 +181,26 @@ class Base:
         self.x = np.zeros(3)  # x, y, θ
         self.dx = np.zeros(3)  # vx, vy, ω
 
-        # Ruckig
-        self.otg = Ruckig(3, CONTROL_PERIOD)
-        self.otg_inp = InputParameter(3)
-        self.otg_out = OutputParameter(3)
-        self.otg_res = Result.Working
-        self.otg_inp.max_velocity = self.max_vel
-        self.otg_inp.max_acceleration = self.max_accel
-
         self._command_queue: Queue[Command] = Queue(1)
-        self._disable_motors = True
-        self.last_command_time = time.perf_counter_ns()
+        self.control_loop_thread: threading.Thread | None = threading.Thread(target=self.control_loop, daemon=True)
+        self.control_loop_running = False
 
         self._log_counter = 0
+
+    def start_control(self):
+        if self.control_loop_thread is None:
+            print("To initiate a new control loop, create a new instance of Base first")
+            return
+        self.control_loop_running = True
+        self.control_loop_thread.start()
+
+    def stop_control(self):
+        if self.control_loop_thread is None:
+            print("Control loop not running")
+            return
+        self.control_loop_running = False
+        self.control_loop_thread.join()
+        self.control_loop_thread = None
 
     def set_target(self, command: Command):
         if self._command_queue.full():
@@ -199,7 +213,7 @@ class Base:
             self.steer_pos[i] = self.steer_motors[i].get_position()
             self.drive_vel[i] = self.drive_motors[i].get_velocity()
 
-        self.drive_vel[3] = self.drive_vel[2] # TODO: Remove this once we got the fuse fixed
+        self.drive_vel[3] = self.drive_vel[2]  # TODO: Remove this once we got the fuse fixed
 
         dt = self.status_signals[0].timestamp.time - self.status_timestamp.time
         self.status_timestamp = self.status_signals[0].timestamp
@@ -229,54 +243,40 @@ class Base:
             wheel_speeds *= np.cos(diff_angle(wheel_angles, self.steer_pos))
         return wheel_speeds, wheel_angles
 
-    def step(self):
+    def control_loop(self):
         # TODO: Set real-time scheduling policy
-        self.update_state()
-        theta = self.x[2]
-        R = np.array([
-            [math.cos(theta), math.sin(theta), 0.0],
-            [-math.sin(theta), math.cos(theta), 0.0],
-            [0.0, 0.0, 1.0]
-        ])
+        disable_motors = True
+        last_command_time = time.perf_counter_ns()
+        timer = FrequencyTimer(name="base_control_loop", frequency=CONTROL_FREQ)
 
-        if not self._command_queue.empty():
-            command = self._command_queue.get()
-            self.last_command_time = time.perf_counter_ns()
+        while self.control_loop_running:
+            with timer:
+                self.update_state()
 
-            if command.type == CommandType.BASE_VELOCITY:
-                target = R.T @ command.target
-                self.otg_inp.control_interface = ControlInterface.Velocity
-                self.otg_inp.target_velocity = np.clip(target, -self.max_vel, self.max_vel)
-            elif command.type == CommandType.BASE_POSITION:
-                raise NotImplementedError("Position control not implemented yet")
+                if not self._command_queue.empty():
+                    command = self._command_queue.get()
+                    last_command_time = time.perf_counter_ns()
+                    target = command.target
+                    if command.type == CommandType.BASE_VELOCITY:
+                        target = command.target
+                    elif command.type == CommandType.BASE_POSITION:
+                        raise NotImplementedError("Position control not implemented yet")
 
-            self.otg_res = Result.Working
-            self._disable_motors = False
+                    disable_motors = False  # TODO: maybe add a deadband here
 
-        if (time.perf_counter_ns() - self.last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
-            self.otg_inp.target_position = self.otg_out.new_position
-            self.otg_inp.target_velocity = np.zeros_like(self.dx)
-            self.otg_inp.current_velocity = self.dx
-            self.otg_res = Result.Working
-            self._disable_motors = True
+                if (time.perf_counter_ns() - last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
+                    disable_motors = True
 
-        if self.otg_res == Result.Working:
-            self.otg_inp.current_position = self.x
-            self.otg_res = self.otg.update(self.otg_inp, self.otg_out)
-            self.otg_out.pass_to_input(self.otg_inp)
-
-        if self._disable_motors:
-            for s, d in zip(self.steer_motors, self.drive_motors):
-                s.set_neutral()
-                d.set_neutral()
-        else:
-            phoenix6.unmanaged.feed_enable(0.1)
-            dx_d = self.otg_out.new_velocity
-            dx_d_local = R @ dx_d
-            wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(dx_d_local)
-            for i in range(NUM_SWERVES):
-                self.steer_motors[i].set_position(wheel_angles[i])
-                self.drive_motors[i].set_velocity(wheel_speeds[i])
+                if disable_motors:
+                    for s, d in zip(self.steer_motors, self.drive_motors):
+                        s.set_neutral()
+                        d.set_neutral()
+                else:
+                    phoenix6.unmanaged.feed_enable(0.1)
+                    wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(target)
+                    for i in range(NUM_SWERVES):
+                        self.steer_motors[i].set_position(wheel_angles[i])
+                        self.drive_motors[i].set_velocity(wheel_speeds[i])
 
     def get_encoder_offsets(self):
         offsets = []
@@ -288,6 +288,20 @@ class Base:
             offsets.append(f"{round(4096 * (curr_offset - curr_position))}.0 / 4096")
         print(f"ENCODER_MAGNET_OFFSETS = [{', '.join(offsets)}]")
 
-    def stop(self):
-        # TODO: Stop the motors
+
+def main():
+    ctx = zmq.Context()
+    command_sub = Subscriber(ctx, BASE_PORT, ["/command"], [Command.deserialize])
+    base = Base()
+    base.start_control()
+
+    try:
+        while True:
+            _, command = command_sub.receive()
+            if command is not None:
+                base.set_target(cast(Command, command))
+    except KeyboardInterrupt:
         pass
+    finally:
+        base.stop_control()
+        command_sub.stop()

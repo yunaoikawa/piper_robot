@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from scipy.spatial.transform import Rotation as R
 
-from robot.network import Publisher, ARM_COMMAND_PORT, COMMAND_PORT, VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
+from robot.network import Publisher, ARM_COMMAND_PORT, BASE_PORT, VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
 from robot.network.timer import FrequencyTimer
 from robot.network.msgs import ArmCommand, Command, CommandType
 
@@ -123,7 +123,7 @@ class OculusReader:
 
         # Create a publisher for the controller state
         self.arm_pub = Publisher(ctx, ARM_COMMAND_PORT)
-        self.base_pub = Publisher(ctx, COMMAND_PORT)
+        self.base_pub = Publisher(ctx, BASE_PORT)
 
         self.timer = FrequencyTimer(name="oculus_reader", frequency=20)
 

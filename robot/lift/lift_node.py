@@ -11,7 +11,7 @@ import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware
 
 from robot.network.timer import FrequencyTimer
-from robot.network import Subscriber, COMMAND_PORT
+from robot.network import Subscriber, LIFT_PORT
 from robot.network.msgs import LiftCommand
 from robot.controller.constants import CONTROL_FREQ, POLICY_CONTROL_PERIOD_NS, POLICY_CONTROL_FREQ
 
@@ -50,9 +50,6 @@ class Lift:
             raise Exception(f"Failed to apply TalonFX configuration: {status}")
 
         self._command_queue: Queue[float] = Queue(1)
-        self._disable_motors = True
-        self.last_command_time = time.perf_counter_ns()
-
         self.control_loop_thread: threading.Thread | None = threading.Thread(target=self.control_loop)
         self.control_loop_running = False
 
@@ -120,7 +117,7 @@ class Lift:
 
 def main():
     ctx = zmq.Context()
-    command_sub = Subscriber(ctx, COMMAND_PORT, ["/lift_command"], [LiftCommand.deserialize])
+    command_sub = Subscriber(ctx, LIFT_PORT, ["/lift_command"], [LiftCommand.deserialize])
     # timer = FrequencyTimer(name="lift_control_loop", frequency=POLICY_CONTROL_FREQ)
 
     lift = Lift()
