@@ -27,7 +27,7 @@
 
     <worldbody>
         <body name="coney_base" pos="0 0 0">
-            <inertial pos="0 0 0.1" euler="0 0 0" mass="20" diaginertia="0.001 0.001 0.001" />
+            <inertial pos="0 0 0.035" euler="0 0 0" mass="60" diaginertia="0.001 0.001 0.001" />
             <joint name="joint_x" type="slide" axis="1 0 0"/>
             <joint name="joint_y" type="slide" axis="0 1 0"/>
             <joint name="joint_th"/>
@@ -36,15 +36,14 @@
                 <geom type="box" material="aluminum" pos="0 0 -0.152" size="0.147 0.147 0.002" />
                 <geom type="box" material="aluminum" pos="0 0 0" size="0.059 0.059 0.15" />
                 <body name="lift_top">
-                    <joint name="lift_joint" type="slide" axis="0 0 1" limited="true" range="0 0.3"
-                        damping="500" />
+                    <joint name="lift_joint" type="slide" axis="0 0 1" limited="true" range="0 0.3" damping="500" />
                     <geom type="box" material="aluminum" size="0.05 0.05 0.15" />
                     <geom type="box" material="aluminum" pos="0 0 0.152" size="0.147 0.147 0.002" />
                     <body name="torso_link" pos="0 0 0.154" euler="0 0 0">
                         <geom type="mesh" material="coney_head" mesh="coney_head" pos="0 0 0.10668" euler="0 0 1.5708" />
                         <!-- <geom type="box" material="torso_material" size="0.050165 0.14605 0.05207" /> -->
                         <geom type="mesh" material="aluminum" mesh="torso_link" pos="0 0 0.0" euler="0 0 0" />
-                        <body name="left_base_link" pos="0 0.092075 0.054" euler="-0.7854 0 1.5708">
+                        <body name="left_base_link" pos="0 0.092075 0.054" euler="-0.7854 0 0">
                             <inertial
                                 pos="-0.00473641164191482 2.56829134630247E-05 0.041451518036016"
                                 euler="0 0 0" mass="1.02"
@@ -156,7 +155,7 @@
                             </body>
                         </body>
 
-                        <body name="right_base_link" pos="0 -0.092075 0.054" euler="0.7854 0 -1.5708">
+                        <body name="right_base_link" pos="0 -0.092075 0.054" euler="0.7854 0 0">
                             <inertial
                                 pos="-0.00473641164191482 2.56829134630247E-05 0.041451518036016"
                                 euler="0 0 0" mass="1.02"
@@ -317,7 +316,7 @@
     </actuator>
 
     <keyframe>
-        <key name="home" qpos="0 0 0 0.15 -1.5708 0 0 0 0 0 0 0 1.5708 0 0 0 0 0 0 0"
-            ctrl="0 0 0 0.15 -1.5708 0 0 0 0 0 0 0 1.5708 0 0 0 0 0 0 0" />
+        <key name="home" qpos="0 0 0 0.15 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+            ctrl="0 0 0 0.15 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" />
     </keyframe>
 </mujoco>
