@@ -1,5 +1,6 @@
 <mujoco model="coney_scene">
-  <include file="coney.xml"/>
+  <!-- <include file="coney.xml"/> -->
+  <include file="coney_angled.xml"/>
 
   <statistic center="0.25 0 0.6" extent="1.0" meansize="0.05"/>
 
