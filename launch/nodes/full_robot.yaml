@@ -6,8 +6,8 @@
 - name: arm
   module: robot.arm.arm_node
 
-- name: controller
-  module: robot.controller.controller_node
+- name: base
+  module: robot.base.controller_node
 
 - name: oculus
   module: robot.teleop.oculus_node

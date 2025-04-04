@@ -13,7 +13,7 @@ from phoenix6 import configs, controls, hardware
 from robot.network.timer import FrequencyTimer
 from robot.network import Subscriber, LIFT_PORT
 from robot.network.msgs import LiftCommand
-from robot.controller.constants import CONTROL_FREQ, POLICY_CONTROL_PERIOD_NS, POLICY_CONTROL_FREQ
+from robot.base.constants import CONTROL_FREQ, POLICY_CONTROL_PERIOD_NS, POLICY_CONTROL_FREQ
 
 class Lift:
     def __init__(self):

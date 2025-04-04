@@ -16,7 +16,7 @@ from phoenix6 import configs, controls, hardware, signals
 from robot.network.timer import FrequencyTimer
 from robot.network import Subscriber, BASE_PORT
 from robot.network.msgs import Command, CommandType
-from robot.controller.constants import (
+from robot.base.constants import (
     POLICY_CONTROL_PERIOD_NS,
     ENCODER_MAGNET_OFFSETS,
     TWO_PI,
