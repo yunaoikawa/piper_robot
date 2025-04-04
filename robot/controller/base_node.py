@@ -112,7 +112,7 @@ class DriveMotor:
 
         self.velocity_signal = self.fx.get_velocity()
         self.status_signals = [self.velocity_signal]
-        self.velocity_request = controls.VelocityTorqueCurrentFOC(0)
+        self.velocity_request = controls.MotionMagicVelocityTorqueCurrentFOC(0)
         self.neutral_request = controls.StaticBrake()
 
         # Motor configuration
@@ -121,6 +121,8 @@ class DriveMotor:
         self.fx_cfg.slot0.k_p = 3
         self.fx_cfg.slot0.k_i = 0
         self.fx_cfg.slot0.k_d = 0.1
+        self.fx_cfg.motion_magic.motion_magic_acceleration = 400
+        self.fx_cfg.motion_magic.motion_magic_jerk = 4000
         self.fx_cfg.torque_current.peak_forward_torque_current = 5  # Amperes
         self.fx_cfg.torque_current.peak_reverse_torque_current = -5
         self.fx_cfg.audio.beep_on_boot = False
