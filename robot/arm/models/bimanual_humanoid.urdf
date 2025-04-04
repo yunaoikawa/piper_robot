@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<robot name="cony">
+<robot name="coney">
   <!-- Material definitions -->
   <material name="aluminum">
     <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
@@ -13,7 +13,7 @@
     <color rgba="0.494 0.247 0.596 1"/>
   </material>
 
-  <material name="cony_head">
+  <material name="coney_head">
     <color rgba="0.96 0.5137 0.1215 1"/>
   </material>
 
@@ -151,7 +151,7 @@
     <child link="torso_link"/>
   </joint>
 
-  <link name="cony_text">
+  <!-- <link name="coney_text">
     <visual>
       <origin xyz="0.001 0.001 -0.05207" rpy="0 0 1.5708" />
       <geometry>
@@ -159,28 +159,28 @@
       </geometry>
       <material name="text_material"/>
     </visual>
-  </link>
+  </link> -->
 
-  <joint name="cony_text_joint" type="fixed">
+  <!-- <joint name="coney_text_joint" type="fixed">
     <origin xyz="0.0 0 0" rpy="0 0 0" />
     <parent link="torso_link" />
-    <child link="cony_text" />
-  </joint>
+    <child link="coney_text" />
+  </joint> -->
 
-  <link name="cony_head">
+  <link name="coney_head">
     <visual>
       <origin xyz="0 0 0" rpy="0 0 1.5708"/>
       <geometry>
-        <mesh filename="cony_head.STL" scale="0.001 0.001 0.001"/>
+        <mesh filename="coney_head.STL" scale="0.001 0.001 0.001"/>
       </geometry>
-      <material name="cony_head"/>
+      <material name="coney_head"/>
     </visual>
   </link>
 
-  <joint name="cony_head_joint" type="fixed">
+  <joint name="coney_head_joint" type="fixed">
     <origin xyz="0 0 0.05207" rpy="0 0 0"/>
     <parent link="torso_link"/>
-    <child link="cony_head"/>
+    <child link="coney_head"/>
   </joint>
 
 
@@ -749,8 +749,6 @@
     <origin xyz="0 0 0.1358" rpy="1.5708 0 0"/>
     <parent link="right_gripper_base"/>
     <child link="right_link7"/>
-    <!-- <axis xyz="0 0 1"/> -->
-    <!-- <limit lower="0" upper="0.035" effort="10" velocity="1"/> -->
   </joint>
 
   <link name="right_link8">
@@ -778,7 +776,5 @@
     <origin xyz="0 0 0.1358" rpy="1.5708 0 -3.1416"/>
     <parent link="right_gripper_base"/>
     <child link="right_link8"/>
-    <!-- <axis xyz="0 0 -1"/> -->
-    <!-- <limit lower="-0.035" upper="0" effort="10" velocity="1"/> -->
   </joint>
 </robot>
