@@ -17,12 +17,26 @@ _XML = _HERE / "mujoco" / "scene.xml"
 class KeyCallback:
     fix_base: bool = False
     pause: bool = False
+    reset: bool = False
 
     def __call__(self, key: int) -> None:
         if key == user_input.KEY_ENTER:
             self.fix_base = not self.fix_base
         elif key == user_input.KEY_SPACE:
             self.pause = not self.pause
+        elif key == ord('R'):
+            self.reset = True
+
+        # Reset the simulator if 'R' is pressed
+        if self.reset:
+            mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
+            configuration.update(data.qpos)
+            posture_task.set_target_from_configuration(configuration)
+            mujoco.mj_forward(model, data)
+            # Initialize the mocap target at the end-effector site.
+            mink.move_mocap_to_frame(model, data, "pinch_site_target", "left_ee", "site")
+            self.reset = False
+
 
 
 if __name__ == "__main__":
@@ -61,8 +75,8 @@ if __name__ == "__main__":
     posture_task = mink.PostureTask(model, cost=posture_cost)
 
     immobile_base_cost = np.zeros((model.nv,))
-    immobile_base_cost[:2] = 1000
-    immobile_base_cost[2] = 1e-3
+    immobile_base_cost[:2] = 10
+    immobile_base_cost[2] = 10
     damping_task = mink.DampingTask(model, immobile_base_cost)
 
     tasks = [
@@ -136,3 +150,11 @@ if __name__ == "__main__":
             viewer.sync()
             rate.sleep()
             t += dt
+
+            # Reset the simulator if 'R' is pressed
+            if key_callback.reset:
+                mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
+                configuration.update(data.qpos)
+                posture_task.set_target_from_configuration(configuration)
+                mujoco.mj_forward(model, data)
+                key_callback.reset = False
