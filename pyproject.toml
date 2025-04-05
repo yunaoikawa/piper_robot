@@ -36,6 +36,11 @@ dependencies = [
     "pure-python-adb>=0.3.0.dev0",
     "casadi>=3.6.7",
     "meshcat>=0.3.2",
+    "scipy",
+    "tqdm",
+    "omegaconf"
+    "hydra-core"
+    "piper-sdk"
 ]
 
 [project.urls]
