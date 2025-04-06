@@ -99,6 +99,7 @@
                                         <geom class="visual" density="0" mesh="gripper_base"
                                             material="gray_mat" />
                                         <geom class="collision" mesh="gripper_base" />
+                                        <site name="ee" pos="0 0 0.1" size="0.01" rgba="1 0 0 1"/>
                                         <body name="link7" pos="0 0 0.1358"
                                             quat="0.707105 0.707108 0 0">
                                             <inertial pos="0.000651232 -0.049193 0.00972259"
