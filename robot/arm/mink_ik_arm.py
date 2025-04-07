@@ -1,11 +1,9 @@
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import mujoco
 import mujoco.viewer
 from loop_rate_limiters import RateLimiter
-from collections import deque
 
 import mink
 
