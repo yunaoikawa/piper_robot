@@ -13,10 +13,13 @@ _XML = _HERE / "mujoco" / "scene_piper.xml"
 from robot.arm import fps_counter
 from robot.arm.fps_counter import FPSCounter
 
+grav_comp = False
 
 if __name__ == "__main__":
     model = mujoco.MjModel.from_xml_path(_XML.as_posix())
     data = mujoco.MjData(model)
+
+    model.body_gravcomp[:] = float(grav_comp)
 
     joint_names = [
         "joint1",
@@ -28,7 +31,8 @@ if __name__ == "__main__":
     ]
 
     dof_ids = np.array([model.joint(name).id for name in joint_names])
-    actuator_ids = np.array([model.actuator(name+"_pos").id for name in joint_names])
+    actuator_ids = np.array([model.actuator(name + "_pos").id for name in joint_names])
+    torque_actuator_ids = np.array([model.actuator(name + "_torque").id for name in joint_names])
 
     configuration = mink.Configuration(model)
 
@@ -36,7 +40,7 @@ if __name__ == "__main__":
         frame_name="ee",
         frame_type="site",
         position_cost=1.0,
-        orientation_cost=1.0,
+        orientation_cost=0.1,
         lm_damping=1.0,
     )
 
@@ -45,8 +49,8 @@ if __name__ == "__main__":
     limits = [mink.ConfigurationLimit(model)]
 
     solver = "quadprog"
-    pos_threshold = 1e-4
-    ori_threshold = 1e-4
+    pos_threshold = 1e-2
+    ori_threshold = 1e-2
     max_iters = 20
 
     with mujoco.viewer.launch_passive(
@@ -57,7 +61,7 @@ if __name__ == "__main__":
     ) as viewer:
         mujoco.mjv_defaultFreeCamera(model, viewer.cam)
 
-        mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
+        mujoco.mj_resetDataKeyframe(model, data, model.key("zero").id)
         configuration.update(data.qpos)
         mujoco.mj_forward(model, data)
 
@@ -89,10 +93,10 @@ if __name__ == "__main__":
                     break
 
             data.ctrl[actuator_ids] = configuration.q[dof_ids]
+            data.ctrl[torque_actuator_ids] = data.qfrc_bias[dof_ids]
             mujoco.mj_step(model, data)
             fps_counter.getAndPrintFPS(last_iter=i, pos_err=np.linalg.norm(err[:3]), ori_err=np.linalg.norm(err[3:]))
 
             viewer.sync()  # Sync the viewer with the simulation
-            rate.sleep()  # Sleep to maintain the desired rate
+            rate.sleep()  # Sleep to maintain the desired rat
             t += dt
-
