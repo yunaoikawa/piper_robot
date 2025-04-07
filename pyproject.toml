@@ -38,9 +38,10 @@ dependencies = [
     "meshcat>=0.3.2",
     "scipy",
     "tqdm",
-    "omegaconf"
-    "hydra-core"
-    "piper-sdk"
+    "omegaconf",
+    "hydra-core",
+    "piper-sdk",
+    "mink"
 ]
 
 [project.urls]
