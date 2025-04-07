@@ -9,7 +9,7 @@ from robot.arm.piper_sdk.can_utils import can_data_to_int32, can_data_to_int16, 
 RAD_TO_DEG = 57.295779513082320876798154814105
 DEG_TO_RAD = 0.017453292519943295769236907684886
 
-JOINT_POS_COEFF = [-1, -1, 1, -1, 1, -1]  # TODO: check if needed
+# JOINT_POS_COEFF = [-1, -1, 1, -1, 1, -1]  # TODO: check if needed
 TORQUE_COEFF = [1.18125, 1.18125, 1.18125, 0.95844, 0.95844, 0.95844]
 
 
@@ -72,10 +72,8 @@ class PiperHardwareStation:
         elif can_id >= 0x2A5 and can_id <= 0x2A7:
             with self._state_lock:
                 motor_id = 2 * (can_id - 0x2A5)
-                self.pos[motor_id] = DEG_TO_RAD * (can_data_to_int32(can_data[0:4]) / 1000.0) * JOINT_POS_COEFF[motor_id]
-                self.pos[motor_id + 1] = (
-                    DEG_TO_RAD * (can_data_to_int32(can_data[4:8]) / 1000.0) * JOINT_POS_COEFF[motor_id + 1]
-                )
+                self.pos[motor_id] = DEG_TO_RAD * (can_data_to_int32(can_data[0:4]) / 1000.0)
+                self.pos[motor_id + 1] = DEG_TO_RAD * (can_data_to_int32(can_data[4:8]) / 1000.0)
         elif can_id >= 0x261 and can_id <= 0x266:
             with self._state_lock:
                 motor_id = can_id - 0x261
