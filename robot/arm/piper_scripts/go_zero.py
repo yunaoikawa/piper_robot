@@ -41,17 +41,23 @@ def enable_fun(piper: C_PiperInterface_V2):
 
 
 if __name__ == "__main__":
-    piper_left = C_PiperInterface_V2("can_left")
-    # piper_right = C_PiperInterface_V2("can_right")
+    import sys
+    if len(sys.argv) != 2 or sys.argv[1] not in ["left", "right", "can0"]:
+        print("Usage: python piper_reset.py <left|right>")
+        sys.exit(1)
+
+    if "can" in sys.argv[1]:
+        can_port = sys.argv[1]
+    else:
+        can_port = "can_" + sys.argv[1]
+
+    piper_left = C_PiperInterface_V2(can_port)
     piper_left.ConnectPort()
-    # piper_right.ConnectPort()
 
     enable_fun(piper_left)
-    # enable_fun(piper_right)
 
     piper_left.MotionCtrl_2(0x01, 0x01, 100, 0x00)
-    # piper_right.MotionCtrl_2(0x01, 0x01, 100, 0x00)
 
     piper_left.JointCtrl(0, 0, 0, 0, 0, 0)
-    # piper_right.JointCtrl(0, 0, 0, 0, 0, 0)
+    time.sleep(5)
 

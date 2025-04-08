@@ -118,7 +118,6 @@ class Lift:
 def main():
     ctx = zmq.Context()
     command_sub = Subscriber(ctx, LIFT_PORT, ["/lift_command"], [LiftCommand.deserialize])
-    # timer = FrequencyTimer(name="lift_control_loop", frequency=POLICY_CONTROL_FREQ)
 
     lift = Lift()
     lift.start_control()
@@ -130,11 +129,13 @@ def main():
             _, command = command_sub.receive()
             vel = cast(LiftCommand, command).target
             target = lift.min_pos if vel < 0 else lift.max_pos
-            target = lift.get_position() + vel * POLICY_CONTROL_PERIOD_NS / 1e9
             print(f"Lift current position: {lift.get_position()} m, target position: {target} m")
             lift.set_target_position(target)
     except KeyboardInterrupt:
         pass
+    finally:
+        command_sub.stop()
+        lift.stop_control()
 
 def control_pos():
     lift = Lift()

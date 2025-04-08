@@ -168,13 +168,13 @@ class ArmNode:
                 self.right_init_affine = None
                 right_home_pose = right_target.copy()
 
-            if arm_command.left_home:
-                left_home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
-                self.left_init_affine = None
+            # if arm_command.left_home:
+            #     left_home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
+            #     self.left_init_affine = None
 
-            if arm_command.right_home:
-                right_home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
-                self.right_init_affine = None
+            # if arm_command.right_home:
+            #     right_home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
+            #     self.right_init_affine = None
 
     def stop(self):
         self.arm_command_sub.stop()

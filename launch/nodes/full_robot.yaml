@@ -7,7 +7,10 @@
   module: robot.arm.arm_node
 
 - name: base
-  module: robot.base.controller_node
+  module: robot.base.base_node
+
+# - name: lift
+#   module: robot.lift.lift_node
 
 - name: oculus
   module: robot.teleop.oculus_node

@@ -123,8 +123,8 @@ class DriveMotor:
         self.fx_cfg.slot0.k_d = 0.1
         self.fx_cfg.motion_magic.motion_magic_acceleration = 400
         self.fx_cfg.motion_magic.motion_magic_jerk = 4000
-        self.fx_cfg.torque_current.peak_forward_torque_current = 5  # Amperes
-        self.fx_cfg.torque_current.peak_reverse_torque_current = -5
+        self.fx_cfg.torque_current.peak_forward_torque_current = 10  # Amperes
+        self.fx_cfg.torque_current.peak_reverse_torque_current = -10
         self.fx_cfg.audio.beep_on_boot = False
 
         for _ in range(3):

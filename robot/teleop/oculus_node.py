@@ -10,9 +10,9 @@ from ppadb.client import Client as AdbClient
 
 from robot.arm.tools import matrix_to_xyzrpy
 from robot.arm.fps_counter import FPSCounter
-from robot.network import Publisher, ARM_COMMAND_PORT, BASE_PORT
+from robot.network import Publisher, ARM_COMMAND_PORT, BASE_PORT, LIFT_PORT
 from robot.network.timer import FrequencyTimer
-from robot.network.msgs import ArmCommand, Command, CommandType
+from robot.network.msgs import ArmCommand, Command, CommandType, LiftCommand
 
 def parse_buttons(text):
     split_text = text.split(",")
@@ -281,6 +281,7 @@ def main():
     ctx = zmq.Context()
     base_command_pub = Publisher(ctx, BASE_PORT, HWM=1)
     arm_command_pub = Publisher(ctx, ARM_COMMAND_PORT, HWM=1)
+    lift_command_pub = Publisher(ctx, LIFT_PORT, HWM=1)
     oculus_reader = OculusReader(ip_address="10.19.165.216")
     timer = FrequencyTimer(name="oculus_reader", frequency=20)
     running = True
@@ -301,20 +302,36 @@ def main():
                 left_gripper_value=buttons.get('leftTrig', (0,))[0],
                 left_start_teleop=buttons.get('X', False),
                 left_pause_teleop=buttons.get('Y', False),
-                left_home=buttons.get('rightGrip', (0,))[0] > 0.5,
+                left_home=False, # buttons.get('rightGrip', (0,))[0] > 0.5,
                 right_target=transforms.get('r', np.eye(4)),
                 right_gripper_value=buttons.get('rightTrig', (0,))[0],
                 right_start_teleop=buttons.get('A', False),
                 right_pause_teleop=buttons.get('B', False),
-                right_home=buttons.get('leftGrip', (0,))[0] > 0.5,
+                right_home=False # buttons.get('leftGrip', (0,))[0] > 0.5,
+            )
+
+            lift_target = 0
+            if buttons.get('leftGrip', (0,))[0] > 0.5:
+                lift_target = -1
+            elif buttons.get('rightGrip', (0,))[0] > 0.5:
+                lift_target = 1
+
+            lift_msg = LiftCommand(
+                timestamp=time.perf_counter_ns(),
+                target=lift_target
             )
 
             vy, vx = buttons.get('rightJS', (0.0, 0.0))
             w = buttons.get('leftJS', (0.0, 0.0))[0]
             target_velocity = apply_deadzone(np.array([vx, -vy, -w])) * max_velocity
 
+            print("publishing arm command")
             arm_command_pub.publish("/arm_command", arm_msg)
+            if lift_target != 0:
+                print("Publishing lift command")
+                lift_command_pub.publish("/lift_command", lift_msg)
             if sum(np.abs(target_velocity)) > 0.0:
+                print("Publishing base command")
                 base_msg = Command(
                     timestamp = time.perf_counter_ns(),
                     type = CommandType.BASE_VELOCITY,
@@ -324,6 +341,7 @@ def main():
 
     arm_command_pub.stop()
     base_command_pub.stop()
+    lift_command_pub.stop()
     oculus_reader.stop()
     ctx.term()
 
