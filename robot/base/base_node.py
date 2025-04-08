@@ -16,6 +16,7 @@ from phoenix6 import configs, controls, hardware, signals
 from robot.network.timer import FrequencyTimer
 from robot.network import Subscriber, BASE_PORT
 from robot.network.msgs import Command, CommandType
+from robot.lift.lift_node import Lift
 from robot.base.constants import (
     POLICY_CONTROL_PERIOD_NS,
     ENCODER_MAGNET_OFFSETS,
@@ -170,6 +171,7 @@ class Base:
 
         self.steer_motors = [SteerMotor(i * 2 + 1) for i in range(NUM_SWERVES)]
         self.drive_motors = [DriveMotor(i * 2 + 2) for i in range(NUM_SWERVES)]
+        self.lift = Lift()
 
         self.status_signals = cast(
             list[phoenix6.BaseStatusSignal],
@@ -248,6 +250,7 @@ class Base:
     def control_loop(self):
         # TODO: Set real-time scheduling policy
         disable_motors = True
+        disable_lift = True
         last_command_time = time.perf_counter_ns()
         timer = FrequencyTimer(name="base_control_loop", frequency=CONTROL_FREQ)
 
@@ -258,16 +261,18 @@ class Base:
                 if not self._command_queue.empty():
                     command = self._command_queue.get()
                     last_command_time = time.perf_counter_ns()
-                    target = command.target
                     if command.type == CommandType.BASE_VELOCITY:
                         target = command.target
+                        disable_motors = False
+                    elif command.type == CommandType.LIFT:
+                        lift_vel = command.target[0]
+                        disable_lift = False
                     elif command.type == CommandType.BASE_POSITION:
                         raise NotImplementedError("Position control not implemented yet")
 
-                    disable_motors = False  # TODO: maybe add a deadband here
-
                 if (time.perf_counter_ns() - last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
                     disable_motors = True
+                    disable_lift = True
 
                 if disable_motors:
                     for s, d in zip(self.steer_motors, self.drive_motors):
@@ -279,6 +284,13 @@ class Base:
                     for i in range(NUM_SWERVES):
                         self.steer_motors[i].set_position(wheel_angles[i])
                         self.drive_motors[i].set_velocity(wheel_speeds[i])
+
+                if disable_lift:
+                    self.lift.set_neutral()
+                else:
+                    phoenix6.unmanaged.feed_enable(0.1)
+                    lift_target = self.lift.get_position() + lift_vel * POLICY_CONTROL_PERIOD_NS / 1e9
+                    self.lift.set_control(lift_target)
 
     def get_encoder_offsets(self):
         offsets = []
@@ -296,6 +308,8 @@ def main():
     command_sub = Subscriber(ctx, BASE_PORT, ["/command"], [Command.deserialize])
     base = Base()
     base.start_control()
+
+    print(f"Lift position: {base.lift.get_position()} m")
 
     try:
         while True:

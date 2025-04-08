@@ -281,7 +281,6 @@ def main():
     ctx = zmq.Context()
     base_command_pub = Publisher(ctx, BASE_PORT, HWM=1)
     arm_command_pub = Publisher(ctx, ARM_COMMAND_PORT, HWM=1)
-    lift_command_pub = Publisher(ctx, LIFT_PORT, HWM=1)
     oculus_reader = OculusReader(ip_address="10.19.165.216")
     timer = FrequencyTimer(name="oculus_reader", frequency=20)
     running = True
@@ -310,28 +309,26 @@ def main():
                 right_home=False # buttons.get('leftGrip', (0,))[0] > 0.5,
             )
 
-            lift_target = 0
+            lift_target = 0.0
             if buttons.get('leftGrip', (0,))[0] > 0.5:
-                lift_target = -1
+                lift_target = -0.2
             elif buttons.get('rightGrip', (0,))[0] > 0.5:
-                lift_target = 1
+                lift_target = 0.2
 
-            lift_msg = LiftCommand(
+            lift_msg = Command(
                 timestamp=time.perf_counter_ns(),
-                target=lift_target
+                type=CommandType.LIFT,
+                target=np.array([lift_target])
             )
 
             vy, vx = buttons.get('rightJS', (0.0, 0.0))
             w = buttons.get('leftJS', (0.0, 0.0))[0]
             target_velocity = apply_deadzone(np.array([vx, -vy, -w])) * max_velocity
 
-            print("publishing arm command")
             arm_command_pub.publish("/arm_command", arm_msg)
             if lift_target != 0:
-                print("Publishing lift command")
-                lift_command_pub.publish("/lift_command", lift_msg)
+                base_command_pub.publish("/command", lift_msg)
             if sum(np.abs(target_velocity)) > 0.0:
-                print("Publishing base command")
                 base_msg = Command(
                     timestamp = time.perf_counter_ns(),
                     type = CommandType.BASE_VELOCITY,
@@ -341,7 +338,6 @@ def main():
 
     arm_command_pub.stop()
     base_command_pub.stop()
-    lift_command_pub.stop()
     oculus_reader.stop()
     ctx.term()
 
