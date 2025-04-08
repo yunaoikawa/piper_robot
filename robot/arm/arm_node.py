@@ -88,7 +88,6 @@ class ArmNode:
                     self.right_piper_control.joint_control(np.zeros(7))
                 is_first_frame = False
 
-
             if self.left_start_teleop:
                 relative_affine = self.get_relative_affine(self.left_init_affine, arm_command.left_target)
                 relative_pos, relative_rot = (

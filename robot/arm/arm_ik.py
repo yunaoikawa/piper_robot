@@ -24,7 +24,9 @@ class ArmIK:
         np.set_printoptions(precision=5, suppress=True, linewidth=200)
 
         urdf_file = os.path.join(os.path.dirname(__file__), "models", urdf_file)
-        self.robot = pin.RobotWrapper.BuildFromURDF(urdf_file)
+        mesh_dir = os.path.join(os.path.dirname(__file__), "models", "meshes")
+        print(f"Loading URDF from {urdf_file} with mesh directory {mesh_dir}")
+        self.robot = pin.RobotWrapper.BuildFromURDF(urdf_file, package_dirs=[mesh_dir])
         self.reduced_robot = self.robot.buildReducedRobot(
             list_of_joints_to_lock=["joint7", "joint8"],
             reference_configuration=np.array([0] * self.robot.model.nq),
@@ -51,7 +53,9 @@ class ArmIK:
             )
         )
 
-        self.geom_model = pin.buildGeomFromUrdf(self.robot.model, urdf_file, pin.GeometryType.COLLISION)
+        self.geom_model = pin.buildGeomFromUrdf(
+            self.robot.model, urdf_file, pin.GeometryType.COLLISION, package_dirs=[mesh_dir]
+        )
         for i in range(4, 9):
             for j in range(0, 3):
                 self.geom_model.addCollisionPair(pin.CollisionPair(i, j))
@@ -257,8 +261,9 @@ class ArmIK:
 
 
 if __name__ == "__main__":
-    arm_ik = ArmIK()
-    def solve_ik(x,y,z,roll,pitch,yaw):
+    arm_ik = ArmIK("piper-left.urdf")
+
+    def solve_ik(x, y, z, roll, pitch, yaw):
         q = quaternion_from_euler(roll, pitch, yaw)
         target = pin.SE3(
             pin.Quaternion(q[3], q[0], q[1], q[2]),

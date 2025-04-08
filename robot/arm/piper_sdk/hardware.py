@@ -1,4 +1,5 @@
 import threading
+import time
 import numpy as np
 
 import can
@@ -38,9 +39,9 @@ class PiperHardwareStation:
             print(f"Failed to initialize CAN bus: {e}")
             exit(1)
 
-        self.pos = np.zeros((6, 1), dtype=np.float64)
-        self.vel = np.zeros((6, 1), dtype=np.float64)
-        self.torque = np.zeros((6, 1), dtype=np.float64)
+        self.q = np.zeros((6, 1), dtype=np.float64)
+        self.qd = np.zeros((6, 1), dtype=np.float64)
+        self.tau = np.zeros((6, 1), dtype=np.float64)
         self.foc_status = np.zeros((6, 1), dtype=np.int8)
 
         self._state_lock = threading.Lock()
@@ -48,6 +49,7 @@ class PiperHardwareStation:
 
     def start(self):
         self._arm_can_stop_event.clear()
+        self.start_time_us = time.perf_counter_ns()
 
         def read_can():
             while not self._arm_can_stop_event.is_set():
@@ -64,9 +66,9 @@ class PiperHardwareStation:
                 print("[WARN] can connection couldn't be stopped")
         self.bus.shutdown()
 
-    def get_pos(self):
+    def get_joint_state(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
         with self._state_lock:
-            return self.pos.copy()
+            return self.q.copy(), self.qd.copy(), self.tau.copy(), self.timestamp
 
     def read(self):
         if self.bus.state == can.BusState.ACTIVE:
@@ -91,14 +93,17 @@ class PiperHardwareStation:
         if can_id >= 0x251 and can_id <= 0x256:
             with self._state_lock:
                 motor_id = can_id - 0x251
-                self.vel[motor_id] = DEG_TO_RAD * (can_data_to_int16(can_data[0:2]) / 1000.0)
-                self.torque[motor_id] = TORQUE_COEFF[motor_id] * (can_data_to_uint16(can_data[2:4]) / 1000.0)
+                self.qd[motor_id] = DEG_TO_RAD * (can_data_to_int16(can_data[0:2]) / 1000.0)
+                self.tau[motor_id] = TORQUE_COEFF[motor_id] * (can_data_to_uint16(can_data[2:4]) / 1000.0)
+
+            if can_id == 0x251:
+                self.timestamp = (time.perf_counter_ns() - self.start_time_us) / 1e6 # update timestamp once
             # this pos is always 0, so take it from other CAN messages
         elif can_id >= 0x2A5 and can_id <= 0x2A7:
             with self._state_lock:
                 motor_id = 2 * (can_id - 0x2A5)
-                self.pos[motor_id] = DEG_TO_RAD * (can_data_to_int32(can_data[0:4]) / 1000.0)
-                self.pos[motor_id + 1] = DEG_TO_RAD * (can_data_to_int32(can_data[4:8]) / 1000.0)
+                self.q[motor_id] = DEG_TO_RAD * (can_data_to_int32(can_data[0:4]) / 1000.0)
+                self.q[motor_id + 1] = DEG_TO_RAD * (can_data_to_int32(can_data[4:8]) / 1000.0)
         elif can_id >= 0x261 and can_id <= 0x266:
             with self._state_lock:
                 motor_id = can_id - 0x261
@@ -117,6 +122,8 @@ class PiperHardwareStation:
         if not (0 <= motor_id <= 5):
             print(f"Invalid motor ID: {motor_id}")
             return
+
+        # TODO : might need to negate pos, vel and torque
 
         data = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
 
