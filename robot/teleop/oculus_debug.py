@@ -59,9 +59,7 @@ class ControllerState:
         M = np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]])
         rotation_mat = M @ R.from_quat(self.left_local_rotation).as_matrix() @ M.T
         translation = self.left_local_position * np.array([1, 1, -1])
-        return SE3.from_rotation_and_translation(
-            rotation=SO3.from_matrix(rotation_mat), translation=translation
-        )
+        return SE3.from_rotation_and_translation(rotation=SO3.from_matrix(rotation_mat), translation=translation)
 
     @property
     def right_SE3(self) -> SE3:
@@ -69,9 +67,7 @@ class ControllerState:
         M = np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]])
         rotation_mat = M @ R.from_quat(self.right_local_rotation).as_matrix() @ M.T
         translation = self.right_local_position * np.array([1, 1, -1])
-        return SE3.from_rotation_and_translation(
-            rotation=SO3.from_matrix(rotation_mat), translation=translation
-        )
+        return SE3.from_rotation_and_translation(rotation=SO3.from_matrix(rotation_mat), translation=translation)
 
     # def get_affine(self, controller_position: np.ndarray, controller_rotation: np.ndarray):
     #     """Returns a 4x4 affine matrix from the controller's position and rotation.
@@ -152,15 +148,16 @@ class OculusReader:
         model = mujoco.MjModel.from_xml_path("scene.xml")
         data = mujoco.MjData(model)
 
-        p_OCi_O = np.zeros(3)
-        p_OCt_O = np.zeros(3)
-        p_REi = np.zeros(3)
-        p_REt = np.zeros(3)
-        R_RO = np.array([
-            [-1, 0, 0],
-            [0, 0, 1],
-            [0, 1, 0]
-           ])
+        # p_OCi_O = np.zeros(3)
+        # p_OCt_O = np.zeros(3)
+        # p_REi = np.zeros(3)
+        # p_REt = np.zeros(3)
+        # R_OCi = SO3(np.array([1, 0, 0, 0])) # identity SO3
+        # R_RO = SO3.from_matrix(np.array([[-1, 0, 0], [0, 0, 1], [0, 1, 0]]))
+        # R_RG = SO3.from_matrix(np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]))
+        X_ee_init = SE3.from_mocap_name(model, data, "pinch_site_target")
+        H = SE3.from_rotation(SO3.from_matrix(np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]])))
+
         start_teleop = False
 
         with mujoco.viewer.launch_passive(model=model, data=data, show_left_ui=False, show_right_ui=False) as viewer:
@@ -173,20 +170,35 @@ class OculusReader:
 
                 if controller_state.right_a:
                     print("start teleop")
-                    p_OCi_O = controller_state.right_SE3.translation()
-                    p_REi = SE3.from_mocap_name(model, data, "pinch_site_target").translation()
+                    X_Cinit = controller_state.right_SE3
+                    # p_OCi_O = controller_state.right_SE3.translation()
+                    # R_OCi = controller_state.right_SE3.rotation()
+                    # p_REi = SE3.from_mocap_name(model, data, "pinch_site_target").translation()
+                    # R_REi = SE3.from_mocap_name(model, data, "pinch_site_target").rotation()
                     start_teleop = True
 
                 if controller_state.right_b:
                     print("pause teleop")
+                    X_ee_init = SE3.from_mocap_name(model, data, "pinch_site_target")
                     start_teleop = False
 
                 if start_teleop:
-                    p_OCt_O = controller_state.right_SE3.translation()
-                    print(f"{p_OCt_O=}")
-                    p_CiCt_O = (p_OCt_O - p_OCi_O)
-                    p_REt = R_RO @ p_CiCt_O + p_REi
+                    X_Ctarget = controller_state.right_SE3
+                    X_Cdelta = X_Cinit.inverse().multiply(X_Ctarget)
+                    X_Rdelta = H.inverse() @ X_Cdelta @ H
+
+                    # translation
+                    # p_CiCt_O = p_OCt_O - p_OCi_O
+                    # p_REt = R_RO.as_matrix() @ p_CiCt_O + p_REi
+                    p_REt = X_ee_init.translation() + X_Rdelta.translation()
+
+                    # rotation
+                    # R_CiCt = R_OCi.inverse().multiply(R_OCt)
+                    # R_REt = R_RO @ R_CiCt @ R_RO.inverse()
+                    # R_REt = R_REi.multiply(R_CiCt)
+                    R_REt = X_ee_init.rotation() @ X_Rdelta.rotation()
                     data.mocap_pos[model.body("pinch_site_target").mocapid[0]] = p_REt
+                    data.mocap_quat[model.body("pinch_site_target").mocapid[0]] = R_REt.wxyz
 
                 mujoco.mj_forward(model, data)
                 viewer.sync()
