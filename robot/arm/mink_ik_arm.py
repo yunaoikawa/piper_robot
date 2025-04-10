@@ -10,10 +10,9 @@ import mink
 _HERE = Path(__file__).parent
 _XML = _HERE / "mujoco" / "scene_piper.xml"
 
-from robot.arm import fps_counter
 from robot.arm.fps_counter import FPSCounter
 
-grav_comp = False
+grav_comp = True
 
 if __name__ == "__main__":
     model = mujoco.MjModel.from_xml_path(_XML.as_posix())
@@ -29,10 +28,11 @@ if __name__ == "__main__":
         "joint5",
         "joint6",
     ]
+    velocity_limits = {k: np.pi/2 if "joint" in k else 0.05 for k in joint_names}
 
     dof_ids = np.array([model.joint(name).id for name in joint_names])
     actuator_ids = np.array([model.actuator(name + "_pos").id for name in joint_names])
-    torque_actuator_ids = np.array([model.actuator(name + "_torque").id for name in joint_names])
+    # torque_actuator_ids = np.array([model.actuator(name + "_torque").id for name in joint_names])
 
     configuration = mink.Configuration(model)
 
@@ -40,13 +40,17 @@ if __name__ == "__main__":
         frame_name="ee",
         frame_type="site",
         position_cost=1.0,
-        orientation_cost=0.1,
+        orientation_cost=0.5,
         lm_damping=1.0,
     )
 
-    tasks = [end_effector_task]
+    posture_task = mink.PostureTask(
+        model, cost=np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3])
+    )
 
-    limits = [mink.ConfigurationLimit(model)]
+    tasks = [end_effector_task, posture_task]
+
+    limits = [mink.ConfigurationLimit(model), mink.VelocityLimit(model, velocity_limits)]
 
     solver = "quadprog"
     pos_threshold = 1e-2
@@ -61,9 +65,10 @@ if __name__ == "__main__":
     ) as viewer:
         mujoco.mjv_defaultFreeCamera(model, viewer.cam)
 
-        mujoco.mj_resetDataKeyframe(model, data, model.key("zero").id)
+        mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
         configuration.update(data.qpos)
         mujoco.mj_forward(model, data)
+        posture_task.set_target_from_configuration(configuration)
 
         # Initialize the mocap target at the end-effector site.
         mink.move_mocap_to_frame(model, data, "pinch_site_target", "ee", "site")
@@ -93,7 +98,6 @@ if __name__ == "__main__":
                     break
 
             data.ctrl[actuator_ids] = configuration.q[dof_ids]
-            data.ctrl[torque_actuator_ids] = data.qfrc_bias[dof_ids]
             mujoco.mj_step(model, data)
             fps_counter.getAndPrintFPS(last_iter=i, pos_err=np.linalg.norm(err[:3]), ori_err=np.linalg.norm(err[3:]))
 

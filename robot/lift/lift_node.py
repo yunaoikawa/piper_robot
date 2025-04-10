@@ -2,7 +2,7 @@ import os
 from typing import cast
 
 os.environ["CTR_TARGET"] = "Hardware"
-import phoenix6.unmanaged
+import phoenix6
 from phoenix6 import configs, controls, hardware
 
 from robot.base.constants import CONTROL_FREQ

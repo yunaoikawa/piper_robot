@@ -39,7 +39,8 @@
 
     <worldbody>
         <light name="spotlight" mode="targetbodycom" target="link8" pos="0 0 1" />
-        <body name="base_link" childclass="piper" gravcomp="0">
+        <body name="base_link" childclass="piper" gravcomp="1">
+            <!-- <joint name="lift" axis="0 0 1" type="slide" range="0.0 0.39"/> -->
             <inertial pos="-0.00473641 2.56829e-05 0.0414515"
                 quat="0.70428 0.034288 0.0339756 0.708279" mass="1.02"
                 diaginertia="0.00282612 0.00269117 0.000879394" />
@@ -49,7 +50,7 @@
                 <inertial pos="0.000121505 0.000104632 -0.00438597"
                     quat="0.682111 0.730899 0.0143111 -0.0175062" mass="0.71"
                     diaginertia="0.000489262 0.000439887 0.000404551" />
-                <joint name="joint1" pos="0 0 0" axis="0 0 1" range="-2.618 2.168" />
+                <joint name="joint1" pos="0 0 0" axis="0 0 1" range="-2.618 2.618" />
                 <geom class="visual" density="0" mesh="link1" material="gray_mat" />
                 <geom class="collision" mesh="link1" />
                 <body name="link2" quat="0.0480084 -0.0480134 -0.705476 -0.705474" gravcomp="1">
@@ -104,8 +105,8 @@
                                                 quat="0.477798 0.572974 -0.518028 0.418398"
                                                 mass="0.025"
                                                 diaginertia="7.74531e-05 7.36783e-05 5.0886e-06" />
-                                            <joint name="joint7" axis="0 0 1" class="finger"
-                                                range="0 0.035" />
+                                            <!-- <joint name="joint7" axis="0 0 1" class="finger"
+                                                range="0 0.035" /> -->
                                             <geom mesh="link7" material="gray_mat" class="visual" />
                                             <geom type="box" size=".012 .015 .0025"
                                                 pos="0 -0.015 0.0025" rgba="1 0 0 .2"
@@ -119,8 +120,8 @@
                                                 quat="0.477798 0.572974 -0.518028 0.418398"
                                                 mass="0.025"
                                                 diaginertia="7.74531e-05 7.36783e-05 5.0886e-06" />
-                                            <joint name="joint8" axis="0 0 -1" class="finger"
-                                                range="-0.035 0" />
+                                            <!-- <joint name="joint8" axis="0 0 -1" class="finger"
+                                                range="-0.035 0" /> -->
                                             <geom mesh="link8" material="gray_mat" class="visual" />
                                             <geom type="box" size=".012 .015 .0025"
                                                 pos="0 -0.015 0.0025" rgba="1 0 0 .2"
@@ -143,49 +144,37 @@
         <exclude body1="base_link" body2="link1" />
     </contact>
 
-    <equality>
+    <!-- <equality> -->
         <!-- polycoef could be reversed -->
-        <joint joint1="joint8" joint2="joint7" polycoef="0 -1 0 0 0" />
-    </equality>
+        <!-- <joint joint1="joint8" joint2="joint7" polycoef="0 -1 0 0 0" /> -->
+    <!-- </equality> -->
 
     <actuator>
-        <position name="joint1_pos" joint="joint1" class="piper" kp="80" />
-        <velocity name="joint1_vel" joint="joint1" kv="5" />
-        <motor name="joint1_torque" joint="joint1" />
-        <position name="joint2_pos" joint="joint2" class="piper" kp="80" />
-        <velocity name="joint2_vel" joint="joint2" kv="5" />
-        <motor name="joint2_torque" joint="joint2" />
-        <position name="joint3_pos" joint="joint3" class="piper" kp="80" />
-        <velocity name="joint3_vel" joint="joint3" kv="5" />
-        <motor name="joint3_torque" joint="joint3" />
-        <position name="joint4_pos" joint="joint4" class="piper" kp="40" />
-        <velocity name="joint4_vel" joint="joint4" kv="5" />
-        <motor name="joint4_torque" joint="joint4" />
-        <position name="joint5_pos" joint="joint5" class="piper" kp="10" />
-        <velocity name="joint5_vel" joint="joint5" kv="1.5" />
-        <motor name="joint5_torque" joint="joint5" />
-        <position name="joint6_pos" joint="joint6" class="piper" kp="10" />
-        <velocity name="joint6_vel" joint="joint6" kv="1.5" />
-        <motor name="joint6_torque" joint="joint6" />
-        <position name="gripper" joint="joint7" class="finger" kp="40" kv="5" />
+        <!-- <position name="lift_pos" joint="lift" class="piper" kp="10000" kv="500"/> -->
+        <!-- <motor name="lift_torque" joint="lift"/> -->
+        <position name="joint1_pos" joint="joint1" class="piper" kp="80" kv="5"/>
+        <!-- <velocity name="joint1_vel" joint="joint1" kv="5" />
+        <motor name="joint1_torque" joint="joint1" /> -->
+        <position name="joint2_pos" joint="joint2" class="piper" kp="80" kv="5"/>
+        <!-- <velocity name="joint2_vel" joint="joint2" kv="5" />
+        <motor name="joint2_torque" joint="joint2" /> -->
+        <position name="joint3_pos" joint="joint3" class="piper" kp="80" kv="5"/>
+        <!-- <velocity name="joint3_vel" joint="joint3" kv="5" />
+        <motor name="joint3_torque" joint="joint3" /> -->
+        <position name="joint4_pos" joint="joint4" class="piper" kp="40" kv="5"/>
+        <!-- <velocity name="joint4_vel" joint="joint4" kv="5" />
+        <motor name="joint4_torque" joint="joint4" /> -->
+        <position name="joint5_pos" joint="joint5" class="piper" kp="10" kv="1.5"/>
+        <!-- <velocity name="joint5_vel" joint="joint5" kv="1.5" />
+        <motor name="joint5_torque" joint="joint5" /> -->
+        <position name="joint6_pos" joint="joint6" class="piper" kp="10" kv="1.5" />
+        <!-- <velocity name="joint6_vel" joint="joint6" kv="1.5" />
+        <motor name="joint6_torque" joint="joint6" /> -->
+        <!-- <position name="gripper" joint="joint7" class="finger" kp="40" kv="5" /> -->
     </actuator>
 
     <keyframe>
-        <key name="home" qpos="0 1.57 -1.3485 0 0 0 0 0"
-            ctrl="0 0 0
-               1.57 0 0
-               -1.3485 0 0
-               0 0 0
-               0 0 0
-               0 0 0
-               0" />
-        <key name="zero" qpos="0 0 0 0 0 0 0 0"
-            ctrl="0 0 0
-               0 0 0
-               0 0 0
-               0 0 0
-               0 0 0
-               0 0 0
-               0" />
+        <key name="home" qpos="0 1.5857 -1.4835 0 0 0" ctrl="0 1.5857 -1.4835 0 0 0" />
+        <key name="zero" qpos="0 0 0 0 0 0" ctrl="0 0 0 0 0 0" />
     </keyframe>
 </mujoco>
