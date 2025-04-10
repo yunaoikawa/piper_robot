@@ -115,7 +115,7 @@ def apply_deadzone(arr, deadzone_size=0.05):
 def create_subscriber_socket(host, port, topic):
     context = zmq.Context()
     socket = context.socket(zmq.SUB)
-    # socket.setsockopt(zmq.CONFLATE, 1)
+    # CANNOT CONFLATE, because messages come multi-part
     socket.connect('tcp://{}:{}'.format(host, port))
     socket.subscribe(topic)
     return socket
@@ -138,25 +138,22 @@ class OculusReader:
 
         try:
             while True:
-                message = self.stick_socket.recv_string()
-                print(message)
-                if message == "oculus_controller":
-                    continue
-                controller_state = parse_controller_state(message)
-                # arm_msg = ArmCommand(
-                #     timestamp=time.perf_counter_ns(),
-                #     left_target=controller_state.left_affine,
-                #     left_gripper_value=controller_state.left_index_trigger,
-                #     left_start_teleop=controller_state.left_x,
-                #     left_home=False,
-                #     left_pause_teleop=controller_state.left_y,
-                #     right_target=controller_state.right_affine,
-                #     right_gripper_value=controller_state.right_index_trigger,
-                #     right_start_teleop=controller_state.right_a,
-                #     right_pause_teleop=controller_state.right_b,
-                #     right_home=False,
-                # )
-                # print(arm_msg)
+                _, message = self.stick_socket.recv_multipart()
+                controller_state = parse_controller_state(message.decode())
+                arm_msg = ArmCommand(
+                    timestamp=time.perf_counter_ns(),
+                    left_target=controller_state.left_affine,
+                    left_gripper_value=controller_state.left_index_trigger,
+                    left_start_teleop=controller_state.left_x,
+                    left_home=False,
+                    left_pause_teleop=controller_state.left_y,
+                    right_target=controller_state.right_affine,
+                    right_gripper_value=controller_state.right_index_trigger,
+                    right_start_teleop=controller_state.right_a,
+                    right_pause_teleop=controller_state.right_b,
+                    right_home=False,
+                )
+                print(arm_msg)
                 rate_limiter.sleep()
                 # self.arm_pub.publish("/arm_command", arm_msg)
 
