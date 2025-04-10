@@ -8,12 +8,12 @@ from loop_rate_limiters import RateLimiter
 from scipy.spatial.transform import Rotation as R
 
 from robot.network import Publisher, ARM_COMMAND_PORT, BASE_PORT, VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
-from robot.network.timer import FrequencyTimer
 from robot.network.msgs import ArmCommand, Command, CommandType
 
 
 @dataclass
 class ControllerState:
+    created_timestamp: float
     left_x: bool
     left_y: bool
     left_menu: bool
@@ -70,6 +70,7 @@ class ControllerState:
         return np.block([[R.as_matrix(R.from_quat(controller_rotation)), controller_position[:, np.newaxis]],
                          [np.zeros((1, 3)), 1.]])
 
+
 def parse_controller_state(controller_state_string: str) -> ControllerState:
 
     left_data, right_data = controller_state_string.split('|')
@@ -106,52 +107,56 @@ def parse_controller_state(controller_state_string: str) -> ControllerState:
     left_parsed = parse_section(left_data)
     right_parsed = parse_section(right_data)
 
-    return ControllerState(*left_parsed, *right_parsed)
+    return ControllerState(time.time(), *left_parsed, *right_parsed)
 
 def apply_deadzone(arr, deadzone_size=0.05):
     return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))
 
+def create_subscriber_socket(host, port, topic):
+    context = zmq.Context()
+    socket = context.socket(zmq.SUB)
+    # socket.setsockopt(zmq.CONFLATE, 1)
+    socket.connect('tcp://{}:{}'.format(host, port))
+    socket.subscribe(topic)
+    return socket
+
 # This class is used to detect the hand keypoints from the VR and publish them.
 class OculusReader:
     def __init__(self):
-
-        ctx = zmq.Context()
         # Create a subscriber socket
-        self.stick_socket = ctx.socket(zmq.SUB)
-        self.stick_socket.setsockopt(zmq.CONFLATE, 1)
-        self.stick_socket.connect(f"tcp://{VR_TCP_HOST}:{VR_TCP_PORT}")
-        self.stick_socket.subscribe(VR_CONTROLLER_TOPIC)
+        self.stick_socket = create_subscriber_socket(VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC)
 
         # Create a publisher for the controller state
-        self.arm_pub = Publisher(ctx, ARM_COMMAND_PORT)
-        self.base_pub = Publisher(ctx, BASE_PORT)
+        # self.arm_pub = Publisher(ctx, ARM_COMMAND_PORT)
+        # self.base_pub = Publisher(ctx, BASE_PORT)
 
     # Function to publish the left/right hand keypoints and button Feedback
     def stream(self):
         print("oculus stick stream")
         rate_limiter = RateLimiter(frequency=60, name="oculus")
         max_velocity = np.array([0.5, 0.5, 0.78])
+
         try:
             while True:
-                print("test")
                 message = self.stick_socket.recv_string()
+                print(message)
                 if message == "oculus_controller":
                     continue
                 controller_state = parse_controller_state(message)
-                arm_msg = ArmCommand(
-                    timestamp=time.perf_counter_ns(),
-                    left_target=controller_state.left_affine,
-                    left_gripper_value=controller_state.left_index_trigger,
-                    left_start_teleop=controller_state.left_x,
-                    left_home=False,
-                    left_pause_teleop=controller_state.left_y,
-                    right_target=controller_state.right_affine,
-                    right_gripper_value=controller_state.right_index_trigger,
-                    right_start_teleop=controller_state.right_a,
-                    right_pause_teleop=controller_state.right_b,
-                    right_home=True,
-                )
-                print(arm_msg)
+                # arm_msg = ArmCommand(
+                #     timestamp=time.perf_counter_ns(),
+                #     left_target=controller_state.left_affine,
+                #     left_gripper_value=controller_state.left_index_trigger,
+                #     left_start_teleop=controller_state.left_x,
+                #     left_home=False,
+                #     left_pause_teleop=controller_state.left_y,
+                #     right_target=controller_state.right_affine,
+                #     right_gripper_value=controller_state.right_index_trigger,
+                #     right_start_teleop=controller_state.right_a,
+                #     right_pause_teleop=controller_state.right_b,
+                #     right_home=False,
+                # )
+                # print(arm_msg)
                 rate_limiter.sleep()
                 # self.arm_pub.publish("/arm_command", arm_msg)
 
@@ -170,9 +175,6 @@ class OculusReader:
         except KeyboardInterrupt:
             pass
 
-        self.arm_pub.stop()
-        self.base_pub.stop()
-        self.stick_socket.close()
         print('Stopping the oculus reader...')
 
 def main():
