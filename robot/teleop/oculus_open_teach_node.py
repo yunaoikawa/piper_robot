@@ -3,6 +3,7 @@ import numpy as np
 import time
 from typing import Tuple
 from dataclasses import dataclass
+from loop_rate_limiters import RateLimiter
 
 from scipy.spatial.transform import Rotation as R
 
@@ -125,46 +126,46 @@ class OculusReader:
         self.arm_pub = Publisher(ctx, ARM_COMMAND_PORT)
         self.base_pub = Publisher(ctx, BASE_PORT)
 
-        self.timer = FrequencyTimer(name="oculus_reader", frequency=20)
-
     # Function to publish the left/right hand keypoints and button Feedback
     def stream(self):
         print("oculus stick stream")
-
+        rate_limiter = RateLimiter(frequency=60, name="oculus")
         max_velocity = np.array([0.5, 0.5, 0.78])
         try:
             while True:
-                with self.timer:
-                    message = self.stick_socket.recv_string()
-                    print(message)
-                    if message == "oculus_controller":
-                        continue
-                    controller_state = parse_controller_state(message)
-                    arm_msg = ArmCommand(
-                        timestamp=time.perf_counter_ns(),
-                        left_target=controller_state.left_affine,
-                        left_gripper_value=controller_state.left_index_trigger,
-                        left_start_teleop=controller_state.left_x,
-                        left_pause_teleop=controller_state.left_y,
-                        right_target=controller_state.right_affine,
-                        right_gripper_value=controller_state.right_index_trigger,
-                        right_start_teleop=controller_state.right_a,
-                        right_pause_teleop=controller_state.right_b,
-                    )
-                    # print(arm_msg)
-                    self.arm_pub.publish("/arm_command", arm_msg)
+                print("test")
+                message = self.stick_socket.recv_string()
+                if message == "oculus_controller":
+                    continue
+                controller_state = parse_controller_state(message)
+                arm_msg = ArmCommand(
+                    timestamp=time.perf_counter_ns(),
+                    left_target=controller_state.left_affine,
+                    left_gripper_value=controller_state.left_index_trigger,
+                    left_start_teleop=controller_state.left_x,
+                    left_home=False,
+                    left_pause_teleop=controller_state.left_y,
+                    right_target=controller_state.right_affine,
+                    right_gripper_value=controller_state.right_index_trigger,
+                    right_start_teleop=controller_state.right_a,
+                    right_pause_teleop=controller_state.right_b,
+                    right_home=True,
+                )
+                print(arm_msg)
+                rate_limiter.sleep()
+                # self.arm_pub.publish("/arm_command", arm_msg)
 
-                    vy, vx = controller_state.right_thumbstick_axes
-                    w = controller_state.left_thumbstick_axes[0]
+                # vy, vx = controller_state.right_thumbstick_axes
+                # w = controller_state.left_thumbstick_axes[0]
 
-                    target_velocity = apply_deadzone(np.array([vx, -vy, -w])) * max_velocity
+                # target_velocity = apply_deadzone(np.array([vx, -vy, -w])) * max_velocity
 
-                    base_msg = Command(
-                        timestamp=time.perf_counter_ns(),
-                        type=CommandType.BASE_VELOCITY,
-                        target=target_velocity
-                    )
-                    self.base_pub.publish("/command", base_msg)
+                # base_msg = Command(
+                #     timestamp=time.perf_counter_ns(),
+                #     type=CommandType.BASE_VELOCITY,
+                #     target=target_velocity
+                # )
+                # self.base_pub.publish("/command", base_msg)
 
         except KeyboardInterrupt:
             pass
