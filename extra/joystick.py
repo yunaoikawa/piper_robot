@@ -36,7 +36,7 @@ PS4_CONTROLLER_MAP = {
     "pad_y": 7,
 }
 
-controller_map = PS4_CONTROLLER_MAP
+controller_map = XBOX_CONTROLLER_MAP
 
 def apply_deadzone(arr, deadzone_size=0.05):
     return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))
