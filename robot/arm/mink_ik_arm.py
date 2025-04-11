@@ -26,7 +26,7 @@ class ArmIK:
             "joint6",
         ]
 
-        velocity_limits = {k: np.pi / 2 if "joint" in k else 0.05 for k in joint_names}
+        velocity_limits = {k: np.pi/2 if "joint" in k else 0.05 for k in joint_names}
         self.dof_ids = np.array([model.joint(name).id for name in joint_names])
         self.actuator_ids = np.array([model.actuator(name + "_pos").id for name in joint_names])
 
@@ -60,11 +60,12 @@ class ArmIK:
 
 
 def main():
+    rate = RateLimiter(frequency=100.0, warn=False)
+
     model = mujoco.MjModel.from_xml_path(_XML.as_posix())
     data = mujoco.MjData(model)
-    arm_ik = ArmIK(model)
+    arm_ik = ArmIK(model, solver_dt=rate.dt)
 
-    rate = RateLimiter(frequency=30.0, warn=False)
     with mujoco.viewer.launch_passive(
         model=model,
         data=data,
@@ -85,10 +86,10 @@ def main():
             data.qpos = qd
             mujoco.mj_step(model, data)
             viewer.sync()
+            rate.sleep()
             fps = fps_counter.tick()
             if fps is not None:
                 print(f"{fps=:.3f}")
-            rate.sleep()
 
 
 if __name__ =="__main__":
