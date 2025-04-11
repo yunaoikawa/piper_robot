@@ -9,8 +9,10 @@ import mujoco
 import mujoco.viewer
 from mink.lie import SE3, SO3
 
+
 from scipy.spatial.transform.rotation import Rotation as R
 
+from robot.arm.fps_counter import FPSCounter
 from robot.network import VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
 
 
@@ -37,22 +39,6 @@ class ControllerState:
     right_local_position: np.ndarray
     right_local_rotation: np.ndarray
 
-    # @property
-    # def right_position(self) -> np.ndarray:
-    #     return self.right_affine[:3, 3]
-
-    # @property
-    # def left_position(self) -> np.ndarray:
-    #     return self.left_affine[:3, 3]
-
-    # @property
-    # def right_rotation_matrix(self) -> np.ndarray:
-    #     return self.right_affine[:3, :3]
-
-    # @property
-    # def left_rotation_matrix(self) -> np.ndarray:
-    #     return self.left_affine[:3, :3]
-
     @property
     def left_SE3(self) -> SE3:
         # convert left-handed to right-handed
@@ -68,20 +54,6 @@ class ControllerState:
         rotation_mat = M @ R.from_quat(self.right_local_rotation).as_matrix() @ M.T
         translation = self.right_local_position * np.array([1, 1, -1])
         return SE3.from_rotation_and_translation(rotation=SO3.from_matrix(rotation_mat), translation=translation)
-
-    # def get_affine(self, controller_position: np.ndarray, controller_rotation: np.ndarray):
-    #     """Returns a 4x4 affine matrix from the controller's position and rotation.
-    #     Args:
-    #         controller_position: 3D position of the controller.
-    #         controller_rotation: 4D quaternion of the controller's rotation.
-
-    #         All in headset space.
-    #     """
-
-    #     return np.block([
-    #         [R.as_matrix(R.from_quat(controller_rotation)), controller_position[:, np.newaxis]],
-    #         [np.zeros((1, 3)), 1.0],
-    #     ])
 
 
 def parse_controller_state(controller_state_string: str) -> ControllerState:
@@ -144,17 +116,9 @@ class OculusReader:
     # Function to publish the left/right hand keypoints and button Feedback
     def stream(self):
         print("oculus stick stream")
-
         model = mujoco.MjModel.from_xml_path("scene.xml")
         data = mujoco.MjData(model)
 
-        # p_OCi_O = np.zeros(3)
-        # p_OCt_O = np.zeros(3)
-        # p_REi = np.zeros(3)
-        # p_REt = np.zeros(3)
-        # R_OCi = SO3(np.array([1, 0, 0, 0])) # identity SO3
-        # R_RO = SO3.from_matrix(np.array([[-1, 0, 0], [0, 0, 1], [0, 1, 0]]))
-        # R_RG = SO3.from_matrix(np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]))
         X_ee_init = SE3.from_mocap_name(model, data, "pinch_site_target")
         H = SE3.from_rotation(SO3.from_matrix(np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]])))
 
@@ -163,22 +127,22 @@ class OculusReader:
         with mujoco.viewer.launch_passive(model=model, data=data, show_left_ui=False, show_right_ui=False) as viewer:
             mujoco.mjv_defaultFreeCamera(model, viewer.cam)
             viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
-            # rate = RateLimiter(frequency=200.0, warn=False)
+            rate = RateLimiter(frequency=200.0, warn=False)
+            fps_counter = FPSCounter()
             while viewer.is_running():
-                _, message = self.stick_socket.recv_multipart()
+                try:
+                    _, message = self.stick_socket.recv_multipart(flags=zmq.NOBLOCK)
+                except zmq.ZMQError:
+                    continue
                 controller_state = parse_controller_state(message.decode())
 
                 if controller_state.right_a:
-                    print("start teleop")
+                    # print("start teleop")
                     X_Cinit = controller_state.right_SE3
-                    # p_OCi_O = controller_state.right_SE3.translation()
-                    # R_OCi = controller_state.right_SE3.rotation()
-                    # p_REi = SE3.from_mocap_name(model, data, "pinch_site_target").translation()
-                    # R_REi = SE3.from_mocap_name(model, data, "pinch_site_target").rotation()
                     start_teleop = True
 
                 if controller_state.right_b:
-                    print("pause teleop")
+                    # print("pause teleop")
                     X_ee_init = SE3.from_mocap_name(model, data, "pinch_site_target")
                     start_teleop = False
 
@@ -188,21 +152,17 @@ class OculusReader:
                     X_Rdelta = H.inverse() @ X_Cdelta @ H
 
                     # translation
-                    # p_CiCt_O = p_OCt_O - p_OCi_O
-                    # p_REt = R_RO.as_matrix() @ p_CiCt_O + p_REi
                     p_REt = X_ee_init.translation() + X_Rdelta.translation()
 
                     # rotation
-                    # R_CiCt = R_OCi.inverse().multiply(R_OCt)
-                    # R_REt = R_RO @ R_CiCt @ R_RO.inverse()
-                    # R_REt = R_REi.multiply(R_CiCt)
                     R_REt = X_ee_init.rotation() @ X_Rdelta.rotation()
                     data.mocap_pos[model.body("pinch_site_target").mocapid[0]] = p_REt
                     data.mocap_quat[model.body("pinch_site_target").mocapid[0]] = R_REt.wxyz
 
                 mujoco.mj_forward(model, data)
+                fps_counter.getAndPrintFPS()
                 viewer.sync()
-                # rate.sleep()
+                rate.sleep()
 
 
 def main():
