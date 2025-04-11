@@ -7,100 +7,96 @@ from loop_rate_limiters import RateLimiter
 
 import mink
 
-_HERE = Path(__file__).parent
-_XML = _HERE / "mujoco" / "scene_piper.xml"
-
 from robot.arm.fps_counter import FPSCounter
 
-grav_comp = True
+_HERE = Path(__file__).parent
+_XML = _HERE / "mujoco" / "scene_piper.xml"
+CTRL_ENABLED = False
 
-if __name__ == "__main__":
+class ArmIK:
+    def __init__(self, model: mujoco.MjModel, solver_dt=0.033):
+        self.solver_dt = solver_dt
+
+        joint_names = [
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+        ]
+
+        velocity_limits = {k: np.pi / 2 if "joint" in k else 0.05 for k in joint_names}
+        self.dof_ids = np.array([model.joint(name).id for name in joint_names])
+        self.actuator_ids = np.array([model.actuator(name + "_pos").id for name in joint_names])
+
+        self.configuration = mink.Configuration(model)
+        self.end_effector_task = mink.FrameTask(
+            frame_name="ee",
+            frame_type="site",
+            position_cost=1.0,
+            orientation_cost=0.1,
+            lm_damping=1.0,
+        )
+        self.posture_task = mink.PostureTask(model, cost=np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3]))
+        self.tasks = [self.end_effector_task, self.posture_task]
+        self.limits = [mink.ConfigurationLimit(model), mink.VelocityLimit(model, velocity_limits)]
+
+        # initial setup
+        self.initalized_ = False
+
+    def init(self, q):
+        self.configuration.update(q)
+        self.posture_task.set_target_from_configuration(self.configuration)
+        self.initalized_ = True
+
+    def solve_ik(self, T_wt: mink.SE3):
+        self.end_effector_task.set_target(T_wt)
+        vel = mink.solve_ik(
+            self.configuration, self.tasks, self.solver_dt, solver="quadprog", damping=1e-3, limits=self.limits
+        )
+        self.configuration.integrate_inplace(vel, self.solver_dt)
+        return self.configuration.q
+
+
+def main():
     model = mujoco.MjModel.from_xml_path(_XML.as_posix())
     data = mujoco.MjData(model)
+    arm_ik = ArmIK(model)
 
-    model.body_gravcomp[:] = float(grav_comp)
-
-    joint_names = [
-        "joint1",
-        "joint2",
-        "joint3",
-        "joint4",
-        "joint5",
-        "joint6",
-    ]
-    velocity_limits = {k: np.pi/2 if "joint" in k else 0.05 for k in joint_names}
-
-    dof_ids = np.array([model.joint(name).id for name in joint_names])
-    actuator_ids = np.array([model.actuator(name + "_pos").id for name in joint_names])
-    # torque_actuator_ids = np.array([model.actuator(name + "_torque").id for name in joint_names])
-
-    configuration = mink.Configuration(model)
-
-    end_effector_task = mink.FrameTask(
-        frame_name="ee",
-        frame_type="site",
-        position_cost=1.0,
-        orientation_cost=0.5,
-        lm_damping=1.0,
-    )
-
-    posture_task = mink.PostureTask(
-        model, cost=np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3])
-    )
-
-    tasks = [end_effector_task, posture_task]
-
-    limits = [mink.ConfigurationLimit(model), mink.VelocityLimit(model, velocity_limits)]
-
-    solver = "quadprog"
-    pos_threshold = 1e-2
-    ori_threshold = 1e-2
-    max_iters = 20
-
+    rate = RateLimiter(frequency=30.0, warn=False)
     with mujoco.viewer.launch_passive(
         model=model,
         data=data,
-        show_left_ui=True,
+        show_left_ui=False,
         show_right_ui=False,
     ) as viewer:
         mujoco.mjv_defaultFreeCamera(model, viewer.cam)
-
         mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
-        configuration.update(data.qpos)
+        arm_ik.init(data.qpos)
         mujoco.mj_forward(model, data)
-        posture_task.set_target_from_configuration(configuration)
 
         # Initialize the mocap target at the end-effector site.
-        mink.move_mocap_to_frame(model, data, "pinch_site_target", "ee", "site")
+        mink.move_mocap_to_frame(model, data, "pinch_site_target", "left_ee", "site")
 
         fps_counter = FPSCounter()
-        rate = RateLimiter(frequency=200.0, warn=False)
-        dt = rate.period
-        t = 0.0
-
-        last_iter = 0
-
         while viewer.is_running():
-            T_wt = mink.SE3.from_mocap_name(model, data, "pinch_site_target")
-            end_effector_task.set_target(T_wt)
-
-            for i in range(max_iters):
-                vel = mink.solve_ik(configuration, tasks, rate.dt, solver, 1e-3)
-                configuration.integrate_inplace(vel, rate.dt)
-
-                # Exit condition
-                pos_achieved = True
-                ori_achieved = True
-                err = end_effector_task.compute_error(configuration)
-                pos_achieved &= bool(np.linalg.norm(err[:3]) <= pos_threshold)
-                ori_achieved &= bool(np.linalg.norm(err[3:]) <= ori_threshold)
-                if pos_achieved and ori_achieved:
-                    break
-
-            data.ctrl[actuator_ids] = configuration.q[dof_ids]
+            qd = arm_ik.solve_ik(T_wt = mink.SE3.from_mocap_name(model, data, "pinch_site_target"))
+            data.qpos = qd
             mujoco.mj_step(model, data)
-            fps_counter.getAndPrintFPS(last_iter=i, pos_err=np.linalg.norm(err[:3]), ori_err=np.linalg.norm(err[3:]))
+            viewer.sync()
+            fps = fps_counter.tick()
+            if fps is not None:
+                print(f"{fps=:.3f}")
+            rate.sleep()
 
-            viewer.sync()  # Sync the viewer with the simulation
-            rate.sleep()  # Sleep to maintain the desired rat
-            t += dt
+
+if __name__ =="__main__":
+    main()
+
+
+
+
+
+
+
