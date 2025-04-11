@@ -4,11 +4,12 @@ import time
 from typing import Tuple
 from dataclasses import dataclass
 from loop_rate_limiters import RateLimiter
+import threading
 
 import mujoco
 import mujoco.viewer
+import mink
 from mink.lie import SE3, SO3
-
 
 from scipy.spatial.transform.rotation import Rotation as R
 
@@ -111,43 +112,104 @@ def create_subscriber_socket(host, port, topic):
 class OculusReader:
     def __init__(self):
         # Create a subscriber socket
-        self.stick_socket = create_subscriber_socket(VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC)
+        self.controller_state_lock_ = threading.Lock()
+        self.listen_stop_event_ = threading.Event()
+        self.listen_thread = threading.Thread(target=self.listen_for_controller, daemon=True)
+        self.controller_state = None
+
+        self.listen_thread.start()
+
+    def listen_for_controller(self):
+        stick_socket = create_subscriber_socket(VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC)
+        while not self.listen_stop_event_.is_set():
+            _, message = stick_socket.recv_multipart()
+            # print(message)
+            with self.controller_state_lock_:
+                self.controller_state = parse_controller_state(message.decode())
 
     # Function to publish the left/right hand keypoints and button Feedback
     def stream(self):
         print("oculus stick stream")
-        model = mujoco.MjModel.from_xml_path("scene.xml")
+        model = mujoco.MjModel.from_xml_path("../arm/mujoco/scene_piper.xml")
         data = mujoco.MjData(model)
+
+        model.body_gravcomp[:] = float(True)
+
+        joint_names = [
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+        ]
+        velocity_limits = {k: np.pi/2 if "joint" in k else 0.05 for k in joint_names}
+
+        dof_ids = np.array([model.joint(name).id for name in joint_names])
+        actuator_ids = np.array([model.actuator(name + "_pos").id for name in joint_names])
+
+        configuration = mink.Configuration(model)
+
+        end_effector_task = mink.FrameTask(
+            frame_name="ee",
+            frame_type="site",
+            position_cost=1.0,
+            orientation_cost=0.1,
+            lm_damping=1.0,
+        )
+
+        posture_task = mink.PostureTask(
+            model, cost=np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3])
+        )
+
+        tasks = [end_effector_task, posture_task]
+
+        limits = [mink.ConfigurationLimit(model), mink.VelocityLimit(model, velocity_limits)]
+
+        solver = "quadprog"
+        pos_threshold = 1e-2
+        ori_threshold = 1e-2
+        max_iters = 20
 
         X_ee_init = SE3.from_mocap_name(model, data, "pinch_site_target")
         H = SE3.from_rotation(SO3.from_matrix(np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]])))
 
         start_teleop = False
-
         with mujoco.viewer.launch_passive(model=model, data=data, show_left_ui=False, show_right_ui=False) as viewer:
-            mujoco.mjv_defaultFreeCamera(model, viewer.cam)
             viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
-            rate = RateLimiter(frequency=200.0, warn=False)
-            fps_counter = FPSCounter()
-            while viewer.is_running():
-                try:
-                    _, message = self.stick_socket.recv_multipart(flags=zmq.NOBLOCK)
-                except zmq.ZMQError:
-                    continue
-                controller_state = parse_controller_state(message.decode())
 
-                if controller_state.right_a:
+            mujoco.mjv_defaultFreeCamera(model, viewer.cam)
+            mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
+            configuration.update(data.qpos)
+            mujoco.mj_forward(model, data)
+            posture_task.set_target_from_configuration(configuration)
+
+            # Initialize the mocap target at the end-effector site.
+            mink.move_mocap_to_frame(model, data, "pinch_site_target", "ee", "site")
+
+            rate = RateLimiter(frequency=300.0, warn=True, name="oculus teleop")
+            fps_counter = FPSCounter()
+            dt = rate.dt
+            t = 0.0
+
+            while viewer.is_running():
+                with self.controller_state_lock_:
+                    state = self.controller_state
+
+                if state is None: continue
+
+                if state.right_a:
                     # print("start teleop")
-                    X_Cinit = controller_state.right_SE3
+                    X_Cinit = state.right_SE3
                     start_teleop = True
 
-                if controller_state.right_b:
+                if state.right_b:
                     # print("pause teleop")
                     X_ee_init = SE3.from_mocap_name(model, data, "pinch_site_target")
                     start_teleop = False
 
                 if start_teleop:
-                    X_Ctarget = controller_state.right_SE3
+                    X_Ctarget = state.right_SE3
                     X_Cdelta = X_Cinit.inverse().multiply(X_Ctarget)
                     X_Rdelta = H.inverse() @ X_Cdelta @ H
 
@@ -159,10 +221,31 @@ class OculusReader:
                     data.mocap_pos[model.body("pinch_site_target").mocapid[0]] = p_REt
                     data.mocap_quat[model.body("pinch_site_target").mocapid[0]] = R_REt.wxyz
 
+                T_wt = mink.SE3.from_mocap_name(model, data, "pinch_site_target") # TODO: might be coming one step late
+                end_effector_task.set_target(T_wt)
+
+                for i in range(max_iters):
+                    vel = mink.solve_ik(configuration, tasks, rate.dt, solver, damping=1e-12, limits=limits)
+                    configuration.integrate_inplace(vel, rate.dt)
+
+                    # Exit condition
+                    pos_achieved = True
+                    ori_achieved = True
+                    err = end_effector_task.compute_error(configuration)
+                    pos_achieved &= bool(np.linalg.norm(err[:3]) <= pos_threshold)
+                    ori_achieved &= bool(np.linalg.norm(err[3:]) <= ori_threshold)
+                    if pos_achieved and ori_achieved:
+                        break
+
+                # data.ctrl[actuator_ids] = configuration.q[dof_ids]
+                data.qpos[actuator_ids] = configuration.q[dof_ids]
                 mujoco.mj_forward(model, data)
-                fps_counter.getAndPrintFPS()
+
+                fps = fps_counter.tick()
+                if fps is not None: print(f"{fps:.2f}")
                 viewer.sync()
                 rate.sleep()
+                t += dt
 
 
 def main():
