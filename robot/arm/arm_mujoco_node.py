@@ -62,6 +62,7 @@ class ArmMujoco(Node):
             show_left_ui=False,
             show_right_ui=False,
         ) as viewer:
+            viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
             while viewer.is_running():
                 with self.target_lock_:
                     T_wt = self.target

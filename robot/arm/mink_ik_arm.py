@@ -1,12 +1,6 @@
-from pathlib import Path
-
 import numpy as np
 import mujoco
 import mink
-
-_HERE = Path(__file__).parent
-_XML = _HERE / "mujoco" / "scene_piper.xml"
-CTRL_ENABLED = False
 
 class ArmIK:
     def __init__(self, mjcf_path: str, solver_dt=0.033):
