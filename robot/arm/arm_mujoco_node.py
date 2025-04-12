@@ -25,6 +25,9 @@ class ArmMujoco(Node):
 
     def arm_command_handler(self, channel, data):
         pose = Pose.decode(data)
+        if not self.check_timestamp(pose.timestamp, 0.1):
+            return
+
         target = mink.SE3.from_rotation_and_translation(rotation=mink.SO3(np.array(pose.rotation
         )), translation=np.array(pose.translation))
         with self.target_lock_:

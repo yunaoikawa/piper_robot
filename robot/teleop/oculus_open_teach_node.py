@@ -1,187 +1,119 @@
 import zmq
 import numpy as np
 import time
-from typing import Tuple
-from dataclasses import dataclass
+import threading
 from loop_rate_limiters import RateLimiter
 
-from scipy.spatial.transform import Rotation as R
+import mink
 
-from robot.network import Publisher, ARM_COMMAND_PORT, BASE_PORT, VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
-from robot.network.msgs import ArmCommand, Command, CommandType
-
-
-@dataclass
-class ControllerState:
-    created_timestamp: float
-    left_x: bool
-    left_y: bool
-    left_menu: bool
-    left_thumbstick: bool
-    left_index_trigger: float
-    left_hand_trigger: float
-    left_thumbstick_axes: np.ndarray[Tuple[float, float]]
-    left_local_position: np.ndarray[Tuple[float, float, float]]
-    left_local_rotation: np.ndarray[Tuple[float, float, float, float]]
-
-    right_a: bool
-    right_b: bool
-    right_menu: bool
-    right_thumbstick: bool
-    right_index_trigger: float
-    right_hand_trigger: float
-    right_thumbstick_axes: np.ndarray[Tuple[float, float]]
-    right_local_position: np.ndarray[Tuple[float, float, float]]
-    right_local_rotation: np.ndarray[Tuple[float, float, float, float]]
-
-    @property
-    def right_position(self) -> np.ndarray:
-        return self.right_affine[:3, 3]
-
-    @property
-    def left_position(self) -> np.ndarray:
-        return self.left_affine[:3, 3]
-
-    @property
-    def right_rotation_matrix(self) -> np.ndarray:
-        return self.right_affine[:3, :3]
-
-    @property
-    def left_rotation_matrix(self) -> np.ndarray:
-        return self.left_affine[:3, :3]
-
-    @property
-    def left_affine(self) -> np.ndarray:
-        return self.get_affine(self.left_local_position, self.left_local_rotation)
-
-    @property
-    def right_affine(self) -> np.ndarray:
-        return self.get_affine(self.right_local_position, self.right_local_rotation)
-
-    def get_affine(self, controller_position: np.ndarray, controller_rotation: np.ndarray):
-        """Returns a 4x4 affine matrix from the controller's position and rotation.
-        Args:
-            controller_position: 3D position of the controller.
-            controller_rotation: 4D quaternion of the controller's rotation.
-
-            All in headset space.
-        """
-
-        return np.block([
-            [R.as_matrix(R.from_quat(controller_rotation)), controller_position[:, np.newaxis]],
-            [np.zeros((1, 3)), 1.0],
-        ])
-
-
-def parse_controller_state(controller_state_string: str) -> ControllerState:
-    left_data, right_data = controller_state_string.split("|")
-
-    left_data = left_data.split(";")[1:-1]
-    right_data = right_data.split(";")[1:-1]
-
-    def parse_bool(val: str) -> bool:
-        return val.split(":")[1].lower().strip() == "true"
-
-    def parse_float(val: str) -> float:
-        return float(val.split(":")[1])
-
-    def parse_list_float(val: str) -> np.ndarray:
-        return np.array(list(map(float, val.split(":")[1].split(","))))
-
-    def parse_section(data: list) -> Tuple:
-        return (
-            # Buttons
-            parse_bool(data[0]),
-            parse_bool(data[1]),
-            parse_bool(data[2]),
-            parse_bool(data[3]),
-            # Triggers
-            parse_float(data[4]),
-            parse_float(data[5]),
-            # Thumbstick
-            parse_list_float(data[6]),
-            # Pose
-            parse_list_float(data[7]),
-            parse_list_float(data[8]),
-        )
-
-    left_parsed = parse_section(left_data)
-    right_parsed = parse_section(right_data)
-
-    return ControllerState(time.time(), *left_parsed, *right_parsed)
+from robot.teleop.oculus_msgs import parse_controller_state
+from robot.network.node import Node
+from robot.network import VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
+from robot.msgs.pose import Pose
 
 
 def apply_deadzone(arr, deadzone_size=0.05):
     return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))
 
-
-def create_subscriber_socket(host, port, topic):
-    context = zmq.Context()
-    socket = context.socket(zmq.SUB)
-    # CANNOT CONFLATE, because messages come multi-part
-    socket.connect("tcp://{}:{}".format(host, port))
-    socket.subscribe(topic)
-    return socket
-
-
-# This class is used to detect the hand keypoints from the VR and publish them.
-class OculusReader:
+class OculusReader(Node):
     def __init__(self):
-        # Create a subscriber socket
-        self.stick_socket = create_subscriber_socket(VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC)
+        super().__init__()
+        # Shared between threads
+        self.controller_state_lock_ = threading.Lock()
+        self.controller_state = None
+        self.ee_pose_lock_ = threading.Lock()
+        self.ee_pose = None
 
-        # Create a publisher for the controller state
-        # self.arm_pub = Publisher(ctx, ARM_COMMAND_PORT)
-        # self.base_pub = Publisher(ctx, BASE_PORT)
+        self.subscribe("EE_POSE", self.arm_ee_pose_handler)
+        self.create_thread(self.oculus_handler)
+        self.create_thread(self.teleop_loop)
 
-    # Function to publish the left/right hand keypoints and button Feedback
-    def stream(self):
-        print("oculus stick stream")
+    def oculus_handler(self):
+        context = zmq.Context()
+        poller = zmq.Poller()
+
+        # Connect to the VR controller
+        stick_socket = context.socket(zmq.SUB)
+        stick_socket.connect("tcp://{}:{}".format(VR_TCP_HOST, VR_TCP_PORT))
+        stick_socket.subscribe(VR_CONTROLLER_TOPIC)
+
+        # initialize the polling set
+        poller.register(stick_socket, zmq.POLLIN)
+
+        while not self.stop_event.is_set():
+            events = dict(poller.poll(1000))
+            if stick_socket in events:
+                _, message = stick_socket.recv_multipart()
+                with self.controller_state_lock_:
+                    self.controller_state = parse_controller_state(message.decode())
+
+        # close the context
+        poller.unregister(stick_socket)
+        stick_socket.close()
+        context.destroy()
+
+    def arm_ee_pose_handler(self, channel, data):
+        ee_pose = Pose.decode(data)
+
+        with self.ee_pose_lock_:
+            self.ee_pose = mink.SE3.from_rotation_and_translation(
+                rotation=mink.SO3(np.array(ee_pose.rotation)), translation=np.array(ee_pose.translation)
+            )
+            print(f"ee_pose: {self.ee_pose}")
+
+    def teleop_loop(self):
+        print("teleop loop started")
         rate_limiter = RateLimiter(frequency=60, name="oculus")
-        max_velocity = np.array([0.5, 0.5, 0.78])
 
-        try:
-            while True:
-                _, message = self.stick_socket.recv_multipart()
-                controller_state = parse_controller_state(message.decode())
-                arm_msg = ArmCommand(
-                    timestamp=time.perf_counter_ns(),
-                    left_target=controller_state.left_affine,
-                    left_gripper_value=controller_state.left_index_trigger,
-                    left_start_teleop=controller_state.left_x,
-                    left_home=False,
-                    left_pause_teleop=controller_state.left_y,
-                    right_target=controller_state.right_affine,
-                    right_gripper_value=controller_state.right_index_trigger,
-                    right_start_teleop=controller_state.right_a,
-                    right_pause_teleop=controller_state.right_b,
-                    right_home=False,
-                )
-                print(arm_msg)
+        start_teleop = False
+        H = mink.SE3.from_rotation(mink.SO3.from_matrix(np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]])))
+
+        while not self.stop_event.is_set():
+            with self.controller_state_lock_:
+                controller_state = self.controller_state
+            if controller_state is None:
                 rate_limiter.sleep()
-                # self.arm_pub.publish("/arm_command", arm_msg)
+                continue
 
-                # vy, vx = controller_state.right_thumbstick_axes
-                # w = controller_state.left_thumbstick_axes[0]
+            with self.ee_pose_lock_:
+                ee_pose = self.ee_pose
+            if ee_pose is None:
+                rate_limiter.sleep()
+                continue
+            if not self.check_timestamp(ee_pose.timestamp, 0.05):
+                rate_limiter.sleep()
+                continue
 
-                # target_velocity = apply_deadzone(np.array([vx, -vy, -w])) * max_velocity
+            if controller_state.right_a:
+                X_Cinit = controller_state.right_SE3
+                start_teleop = True
 
-                # base_msg = Command(
-                #     timestamp=time.perf_counter_ns(),
-                #     type=CommandType.BASE_VELOCITY,
-                #     target=target_velocity
-                # )
-                # self.base_pub.publish("/command", base_msg)
+            if controller_state.right_b:
+                X_ee_init = ee_pose
+                start_teleop = False
 
-        except KeyboardInterrupt:
-            pass
+            if start_teleop:
+                X_Ctarget = controller_state.right_SE3
+                X_Cdelta = X_Cinit.inverse().multiply(X_Ctarget)
+                X_Rdelta = H.inverse() @ X_Cdelta @ H
+                # translation
+                p_REt = X_ee_init.translation() + X_Rdelta.translation()
+                # rotation
+                R_REt = X_ee_init.rotation() @ X_Rdelta.rotation()
 
-        print("Stopping the oculus reader...")
+                # publish the target pose
+                target_pose = Pose()
+                target_pose.timestamp = time.perf_counter_ns()
+                target_pose.translation = p_REt.tolist()
+                target_pose.rotation = R_REt.wxyz.tolist()
+                self.publish("ARM_COMMAND", target_pose)
+
+            rate_limiter.sleep()
 
 
 def main():
     oculus_reader = OculusReader()
-    oculus_reader.stream()
+    oculus_reader.spin()
 
 
 if __name__ == "__main__":

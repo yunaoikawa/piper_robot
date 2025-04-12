@@ -108,7 +108,6 @@ def create_subscriber_socket(host, port, topic):
     return socket
 
 
-# This class is used to detect the hand keypoints from the VR and publish them.
 class OculusReader:
     def __init__(self):
         # Create a subscriber socket

@@ -3,7 +3,7 @@ import threading
 import signal
 from typing import Any, Callable
 import sys
-
+import time
 class Node:
     def __init__(self):
         self.lc = lcm.LCM()
@@ -26,6 +26,14 @@ class Node:
 
     def stop(self):
         pass
+
+    def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
+        current_time = time.perf_counter_ns()
+        delay = (current_time - timestamp) / 1e9
+        if delay > max_delay or delay < 0:
+            print(f"Skipping message because of delay: {delay}s")
+            return False
+        return True
 
     def spin(self):
         def signal_handler(sig, frame):
