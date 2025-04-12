@@ -10,10 +10,11 @@ from robot.msgs.pose import Pose
 from robot.network.node import Node
 
 class ArmMujoco(Node):
-    def __init__(self, mjcf_path: str):
+    def __init__(self, mjcf_path: str, control_frequency: float = 200.0):
         super().__init__()
         self.mjcf_path = mjcf_path
-        self.ik_solver = ArmIK(mjcf_path)
+        self.ik_solver = ArmIK(mjcf_path, solver_dt=1.0 / control_frequency)
+        self.control_frequency = control_frequency
 
         # shared between threads
         self.target_lock_ = threading.Lock()
@@ -54,7 +55,7 @@ class ArmMujoco(Node):
 
         self.init(model, data)
 
-        rate = RateLimiter(frequency=200.0, warn=False)
+        rate = RateLimiter(frequency=self.control_frequency, warn=True)
         with mujoco.viewer.launch_passive(
             model=model,
             data=data,
