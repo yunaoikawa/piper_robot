@@ -4,17 +4,20 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 from loop_rate_limiters import RateLimiter
+import lcm
 
 import mink
 
 from robot.arm.fps_counter import FPSCounter
+from robot.msgs.pose import Pose
 
 _HERE = Path(__file__).parent
 _XML = _HERE / "mujoco" / "scene_piper.xml"
 CTRL_ENABLED = False
 
 class ArmIK:
-    def __init__(self, model: mujoco.MjModel, solver_dt=0.033):
+    def __init__(self, mjcf_path: str, solver_dt=0.033):
+        model = mujoco.MjModel.from_xml_path(mjcf_path)
         self.solver_dt = solver_dt
 
         joint_names = [
@@ -60,28 +63,40 @@ class ArmIK:
 
 
 def main():
+    target: mink.SE3 | None = None
+    lc = lcm.LCM()
     rate = RateLimiter(frequency=100.0, warn=False)
 
     model = mujoco.MjModel.from_xml_path(_XML.as_posix())
     data = mujoco.MjData(model)
     arm_ik = ArmIK(model, solver_dt=rate.dt)
 
+    def arm_command_handler(channel, data):
+        nonlocal target
+        pose = Pose.decode(data)
+        target = mink.SE3.from_rotation_and_translation(rotation=mink.SO3(pose.orientation), translation=pose.position)
+
+    lc.subscribe("/arm_command", arm_command_handler)
     with mujoco.viewer.launch_passive(
         model=model,
         data=data,
         show_left_ui=False,
         show_right_ui=False,
     ) as viewer:
+        viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
         mujoco.mjv_defaultFreeCamera(model, viewer.cam)
         mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
         arm_ik.init(data.qpos)
         mujoco.mj_forward(model, data)
 
         # Initialize the mocap target at the end-effector site.
-        mink.move_mocap_to_frame(model, data, "pinch_site_target", "left_ee", "site")
+        mink.move_mocap_to_frame(model, data, "pinch_site_target", "ee", "site")
 
         fps_counter = FPSCounter()
         while viewer.is_running():
+            if target is not None:
+                data.mocap_pos[model.body("pinch_site_target").mocapid[0]] = target.translation()
+                data.mocap_quat[model.body("pinch_site_target").mocapid[0]] = target.rotation().wxyz
             qd = arm_ik.solve_ik(T_wt = mink.SE3.from_mocap_name(model, data, "pinch_site_target"))
             data.qpos = qd
             mujoco.mj_step(model, data)

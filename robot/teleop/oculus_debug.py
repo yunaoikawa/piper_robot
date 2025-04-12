@@ -130,46 +130,6 @@ class OculusReader:
     # Function to publish the left/right hand keypoints and button Feedback
     def stream(self):
         print("oculus stick stream")
-        model = mujoco.MjModel.from_xml_path("../arm/mujoco/scene_piper.xml")
-        data = mujoco.MjData(model)
-
-        model.body_gravcomp[:] = float(True)
-
-        joint_names = [
-            "joint1",
-            "joint2",
-            "joint3",
-            "joint4",
-            "joint5",
-            "joint6",
-        ]
-        velocity_limits = {k: np.pi/2 if "joint" in k else 0.05 for k in joint_names}
-
-        dof_ids = np.array([model.joint(name).id for name in joint_names])
-        actuator_ids = np.array([model.actuator(name + "_pos").id for name in joint_names])
-
-        configuration = mink.Configuration(model)
-
-        end_effector_task = mink.FrameTask(
-            frame_name="ee",
-            frame_type="site",
-            position_cost=1.0,
-            orientation_cost=0.1,
-            lm_damping=1.0,
-        )
-
-        posture_task = mink.PostureTask(
-            model, cost=np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3])
-        )
-
-        tasks = [end_effector_task, posture_task]
-
-        limits = [mink.ConfigurationLimit(model), mink.VelocityLimit(model, velocity_limits)]
-
-        solver = "quadprog"
-        pos_threshold = 1e-2
-        ori_threshold = 1e-2
-        max_iters = 20
 
         X_ee_init = SE3.from_mocap_name(model, data, "pinch_site_target")
         H = SE3.from_rotation(SO3.from_matrix(np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]])))

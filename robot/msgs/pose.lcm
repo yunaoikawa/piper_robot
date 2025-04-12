@@ -1,0 +1,6 @@
+struct Pose
+{
+    int64_t timestamp;
+    double translation[3];
+    double rotation[4];
+}
