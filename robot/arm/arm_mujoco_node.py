@@ -4,6 +4,7 @@ import mink
 import threading
 import numpy as np
 from loop_rate_limiters import RateLimiter
+import time
 
 from robot.arm.mink_ik_arm import ArmIK
 from robot.msgs.pose import Pose
@@ -48,6 +49,7 @@ class ArmMujoco(Node):
             rotation = mink.SO3.from_matrix(data.site_xmat[model.site("ee").id].reshape(3, 3)),
             translation = data.site_xpos[model.site("ee").id]
         )
+        pose.timestamp = time.perf_counter_ns()
         pose.translation = se3.translation().tolist()
         pose.rotation = se3.rotation().wxyz.tolist()
         return pose

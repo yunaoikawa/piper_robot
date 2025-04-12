@@ -56,10 +56,7 @@ class OculusReader(Node):
         ee_pose = Pose.decode(data)
 
         with self.ee_pose_lock_:
-            self.ee_pose = mink.SE3.from_rotation_and_translation(
-                rotation=mink.SO3(np.array(ee_pose.rotation)), translation=np.array(ee_pose.translation)
-            )
-            print(f"ee_pose: {self.ee_pose}")
+            self.ee_pose = ee_pose #             # print(f"ee_pose: {self.ee_pose}")
 
     def teleop_loop(self):
         print("teleop loop started")
@@ -78,18 +75,26 @@ class OculusReader(Node):
             with self.ee_pose_lock_:
                 ee_pose = self.ee_pose
             if ee_pose is None:
+                print("WARN: no ee pose yet")
                 rate_limiter.sleep()
                 continue
             if not self.check_timestamp(ee_pose.timestamp, 0.05):
+                print("WARN: ee pose timestamp is too old")
                 rate_limiter.sleep()
                 continue
 
+            ee_pose = mink.SE3.from_rotation_and_translation(
+                rotation=mink.SO3(np.array(ee_pose.rotation)), translation=np.array(ee_pose.translation)
+            )
+
             if controller_state.right_a:
+                print("start teleop")
                 X_Cinit = controller_state.right_SE3
+                X_ee_init = ee_pose
                 start_teleop = True
 
             if controller_state.right_b:
-                X_ee_init = ee_pose
+                # X_ee_init = ee_pose
                 start_teleop = False
 
             if start_teleop:
