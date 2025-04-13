@@ -23,6 +23,8 @@ class OculusReader:
         self.ee_pose = None
         self.start_teleop = False
         self.H = mink.SE3.from_rotation(mink.SO3.from_matrix(np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]])))
+        self.X_Cinit = None
+        self.X_ee_init = None
 
         # communication
         self.node = Node()
@@ -60,7 +62,7 @@ class OculusReader:
         context.destroy()
 
     def arm_ee_pose_handler(self, event: dict[str, Any]):
-        ee_pose = Pose.decode(event["data"], event["metadata"])
+        ee_pose = Pose.decode(event["value"], event["metadata"])
         self.ee_pose = ee_pose
 
     def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
@@ -75,6 +77,7 @@ class OculusReader:
         with self.controller_state_lock_:
             controller_state = self.controller_state
         if controller_state is None:
+            print("WARN: no controller state yet")
             return
 
         if self.ee_pose is None:
@@ -89,8 +92,8 @@ class OculusReader:
 
         if controller_state.right_a:
             print("start teleop")
-            X_Cinit = controller_state.right_SE3
-            X_ee_init = ee_pose
+            self.X_Cinit = controller_state.right_SE3
+            self.X_ee_init = ee_pose
             self.start_teleop = True
 
         if controller_state.right_b:
@@ -98,12 +101,12 @@ class OculusReader:
 
         if self.start_teleop:
             X_Ctarget = controller_state.right_SE3
-            X_Cdelta = X_Cinit.inverse().multiply(X_Ctarget)
+            X_Cdelta = self.X_Cinit.inverse().multiply(X_Ctarget)
             X_Rdelta = self.H.inverse() @ X_Cdelta @ self.H
             # translation
-            p_REt = X_ee_init.translation() + X_Rdelta.translation()
+            p_REt = self.X_ee_init.translation() + X_Rdelta.translation()
             # rotation
-            R_REt = X_ee_init.rotation() @ X_Rdelta.rotation()
+            R_REt = self.X_ee_init.rotation() @ X_Rdelta.rotation()
 
             # publish the target pose
             target_pose = Pose(time.perf_counter_ns(), np.concatenate([R_REt.wxyz, p_REt]))

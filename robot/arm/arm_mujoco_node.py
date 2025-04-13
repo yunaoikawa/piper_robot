@@ -44,13 +44,12 @@ class ArmMujoco:
         return True
 
     def arm_command_handler(self, event: dict[str, Any]):
-        pose = Pose.decode(event["data"], event["metadata"])
+        pose = Pose.decode(event["value"], event["metadata"])
         if not self.check_timestamp(pose.timestamp, 0.1):
             return
 
         target = mink.SE3(pose.wxyz_xyz)
         self.target = target
-        print(f"{target=}")
 
     def init(self, model, data):
         mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
