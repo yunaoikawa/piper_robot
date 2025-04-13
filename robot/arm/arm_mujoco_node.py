@@ -12,12 +12,12 @@ from robot.msgs.pose import Pose
 
 class ArmMujoco:
     def __init__(self, mjcf_path: str, control_frequency: float = 200.0):
-        super().__init__()
         self.mjcf_path = mjcf_path
+        self.control_frequency = control_frequency
+
+        # launch mujoco
         self.model = mujoco.MjModel.from_xml_path(self.mjcf_path)
         self.data = mujoco.MjData(self.model)
-
-        # launch viewer
         self.viewer = mujoco.viewer.launch_passive(
             model=self.model,
             data=self.data,
@@ -29,11 +29,10 @@ class ArmMujoco:
         # initialize arm
         self.target: mink.SE3 | None = None
         self.ik_solver = ArmIK(mjcf_path, solver_dt=1.0 / control_frequency)
-        self.control_frequency = control_frequency
 
         # communication
         self.node = Node()
-        self.init(self.model, self.data)
+        self.init()
 
     def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
         current_time = time.perf_counter_ns()
@@ -51,12 +50,19 @@ class ArmMujoco:
         target = mink.SE3(pose.wxyz_xyz)
         self.target = target
 
-    def init(self, model, data):
-        mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
-        mujoco.mj_forward(model, data)
-        mink.move_mocap_to_frame(model, data, "pinch_site_target", "ee", "site")
-        self.ik_solver.init(data.qpos)
-        self.target = mink.SE3.from_mocap_name(model, data, "pinch_site_target")
+    def init(self):
+        # home
+        home_q = self.ik_solver.get_home_q()
+        print(f"home_q: {home_q}")
+        self.data.qpos[self.ik_solver.dof_ids] = home_q
+        mujoco.mj_forward(self.model, self.data)
+        time.sleep(1.0)
+        q = self.data.qpos.copy()
+        mink.move_mocap_to_frame(self.model, self.data, "pinch_site_target", "ee", "site")
+        self.viewer.sync()
+        self.ik_solver.init(q)
+        self.target = self.ik_solver.forward_kinematics(q)
+        print(f"target: {self.target}")
 
     def get_ee_pose(self, model, data):
         se3 = mink.SE3.from_rotation_and_translation(
@@ -67,16 +73,21 @@ class ArmMujoco:
         return pose
 
     def step(self):
-        T_wt = self.target
-        if T_wt is not None:
-            self.data.mocap_pos[self.model.body("pinch_site_target").mocapid[0]] = T_wt.translation()
-            self.data.mocap_quat[self.model.body("pinch_site_target").mocapid[0]] = T_wt.rotation().wxyz
-            qd = self.ik_solver.solve_ik(T_wt)
+        q = self.data.qpos.copy()
+        ee_pose = self.ik_solver.forward_kinematics(q)
+        if self.target is not None: # TODO: check timestamp for the target
+            # update mocap viz
+            self.data.mocap_pos[self.model.body("pinch_site_target").mocapid[0]] = self.target.translation()
+            self.data.mocap_quat[self.model.body("pinch_site_target").mocapid[0]] = self.target.rotation().wxyz
+            # solve ik
+            qd = self.ik_solver.solve_ik(self.target)
             self.data.qpos = qd
+        # step mujoco
         mujoco.mj_step(self.model, self.data)
-        ee_pose = self.get_ee_pose(self.model, self.data)
-        self.node.send_output("ee_pose", *ee_pose.encode())
         self.viewer.sync()
+        # send ee pose
+        pose_msg = Pose(time.perf_counter_ns(), ee_pose.wxyz_xyz)
+        self.node.send_output("ee_pose", *pose_msg.encode())
 
     def stop(self):
         self.viewer.close()

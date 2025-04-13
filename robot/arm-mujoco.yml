@@ -1,7 +1,6 @@
 nodes:
   - id: arm_mujoco
     custom:
-      run: cpp
       source: arm/arm_mujoco_node.py
       inputs:
         tick: dora/timer/millis/5
@@ -10,9 +9,10 @@ nodes:
         - ee_pose
 
   - id: teleop
-    path: teleop/oculus_open_teach_node.py
-    inputs:
-      tick: dora/timer/millis/16 # 60 Hz
-      ee_pose: arm_mujoco/ee_pose
-    outputs:
-      - arm_command
+    custom:
+      source: teleop/oculus_open_teach_node.py
+      inputs:
+        tick: dora/timer/millis/16 # 60 Hz
+        ee_pose: arm_mujoco/ee_pose
+      outputs:
+        - arm_command

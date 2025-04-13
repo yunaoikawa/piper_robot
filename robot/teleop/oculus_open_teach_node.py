@@ -100,6 +100,9 @@ class OculusReader:
             self.start_teleop = False
 
         if self.start_teleop:
+            if self.X_Cinit is None or self.X_ee_init is None:
+                print("WARN: no initial pose yet")
+                return
             X_Ctarget = controller_state.right_SE3
             X_Cdelta = self.X_Cinit.inverse().multiply(X_Ctarget)
             X_Rdelta = self.H.inverse() @ X_Cdelta @ self.H
