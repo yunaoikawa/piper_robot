@@ -11,9 +11,9 @@ from robot.arm.mink_ik_arm import ArmIK
 from robot.msgs.pose import Pose
 
 class ArmMujoco:
-    def __init__(self, mjcf_path: str, control_frequency: float = 200.0):
+    def __init__(self, mjcf_path: str, solver_dt: float = 0.03):
         self.mjcf_path = mjcf_path
-        self.control_frequency = control_frequency
+        self.solver_dt = solver_dt
 
         # launch mujoco
         self.model = mujoco.MjModel.from_xml_path(self.mjcf_path)
@@ -28,7 +28,7 @@ class ArmMujoco:
 
         # initialize arm
         self.target: mink.SE3 | None = None
-        self.ik_solver = ArmIK(mjcf_path, solver_dt=1.0 / control_frequency)
+        self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt)
 
         # communication
         self.node = Node()
@@ -64,14 +64,6 @@ class ArmMujoco:
         self.target = self.ik_solver.forward_kinematics(q)
         print(f"target: {self.target}")
 
-    def get_ee_pose(self, model, data):
-        se3 = mink.SE3.from_rotation_and_translation(
-            rotation = mink.SO3.from_matrix(data.site_xmat[model.site("ee").id].reshape(3, 3)),
-            translation = data.site_xpos[model.site("ee").id]
-        )
-        pose = Pose(time.perf_counter_ns(), se3.wxyz_xyz)
-        return pose
-
     def step(self):
         q = self.data.qpos.copy()
         ee_pose = self.ik_solver.forward_kinematics(q)
@@ -81,7 +73,8 @@ class ArmMujoco:
             self.data.mocap_quat[self.model.body("pinch_site_target").mocapid[0]] = self.target.rotation().wxyz
             # solve ik
             qd = self.ik_solver.solve_ik(self.target)
-            self.data.qpos = qd
+            # self.data.ctrl[self.ik_solver.actuator_ids] = qd
+            self.data.qpos[self.ik_solver.dof_ids] = qd
         # step mujoco
         mujoco.mj_step(self.model, self.data)
         self.viewer.sync()

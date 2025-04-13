@@ -52,7 +52,7 @@ class ArmIK:
             self.configuration, self.tasks, self.solver_dt, solver="quadprog", damping=1e-3, limits=self.limits
         )
         self.configuration.integrate_inplace(vel, self.solver_dt)
-        return self.configuration.q
+        return self.configuration.q[self.dof_ids]
 
     def forward_kinematics(self, q: np.ndarray) -> mink.SE3:
         # self.configuration.update(q)

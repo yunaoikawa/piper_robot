@@ -12,15 +12,15 @@ from robot.arm.mink_ik_arm import ArmIK
 from robot.msgs.pose import Pose
 
 class ArmNode:
-    def __init__(self, can_port: str, mjcf_path: str, control_frequency: float = 200.0):
+    def __init__(self, can_port: str, mjcf_path: str, solver_dt: float = 0.03):
         self.can_port = can_port
         self.mjcf_path = mjcf_path
-        self.control_frequency = control_frequency
+        self.solver_dt = solver_dt
 
         # initialize arm
         self.piper = piper_control.PiperControl(can_port)
         self.target: mink.SE3 | None = None
-        self.ik_solver = ArmIK(mjcf_path, solver_dt=1.0 / control_frequency)
+        self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt)
 
         # communication
         self.node = Node()
