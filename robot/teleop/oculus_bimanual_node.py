@@ -141,12 +141,13 @@ class OculusBimanualNode:
             X_R_EEright_desired = X_R_EEright # keep the current pose
 
         # publish the target poses
-        bimanual_pose = BimanualPose(
-            timestamp=time.perf_counter_ns(),
-            left_wxyz_xyz=X_R_EEleft_desired.wxyz_xyz,
-            right_wxyz_xyz=X_R_EEright_desired.wxyz_xyz,
-        )
-        self.node.send_output("bimanual_arm_command", *bimanual_pose.encode())
+        if self.left_arm_teleop_enabled or self.right_arm_teleop_enabled:
+            bimanual_pose = BimanualPose(
+                timestamp=time.perf_counter_ns(),
+                left_wxyz_xyz=X_R_EEleft_desired.wxyz_xyz,
+                right_wxyz_xyz=X_R_EEright_desired.wxyz_xyz,
+            )
+            self.node.send_output("bimanual_arm_command", *bimanual_pose.encode())
 
     def spin(self):
         for event in self.node:

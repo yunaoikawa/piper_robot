@@ -60,6 +60,7 @@ class ArmIK:
             self.end_effector_task.frame_name, self.end_effector_task.frame_type
         )
 
+
 class BimanualArmIK:
     def __init__(self, mjcf_path: str, solver_dt=0.033):
         self.model = mujoco.MjModel.from_xml_path(mjcf_path)
@@ -136,6 +137,7 @@ class BimanualArmIK:
         # self.configuration.update(q)
         return (
             self.configuration.get_transform_frame_to_world(self.left_ee_task.frame_name, self.left_ee_task.frame_type),
-            self.configuration.get_transform_frame_to_world(self.right_ee_task.frame_name, self.right_ee_task.frame_type),
+            self.configuration.get_transform_frame_to_world(
+                self.right_ee_task.frame_name, self.right_ee_task.frame_type
+            ),
         )
-
