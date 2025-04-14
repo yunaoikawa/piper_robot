@@ -24,7 +24,7 @@ class Lift:
 
         self.lift_motor_cfg = configs.TalonFXConfiguration()
         # position control gains
-        self.lift_motor_cfg.slot0.k_p = 50
+        self.lift_motor_cfg.slot0.k_p = 0.0
         self.lift_motor_cfg.slot0.k_i = 0.0
         self.lift_motor_cfg.slot0.k_d = 0.0
         # self.lift_motor_cfg.slot0.k_s = 10
@@ -74,10 +74,11 @@ class Lift:
 
 
 if __name__ == "__main__":
-    rate = RateLimiter(100)
     lift = Lift()
     lift.set_neutral()
+    time.sleep(2.0)
     input("Press Enter to start")
+    rate = RateLimiter(100)
     try:
         while True:
             phoenix6.unmanaged.feed_enable(0.1)
