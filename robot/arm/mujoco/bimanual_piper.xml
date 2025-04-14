@@ -39,7 +39,7 @@
 
     <worldbody>
         <light name="spotlight" mode="targetbodycom" target="left/link8" pos="0 0 1" />
-        <body name="left/base_link" pos="0 -0.3 0" childclass="piper" gravcomp="1">
+        <body name="left/base_link" pos="0 0.3 0" childclass="piper" gravcomp="1">
             <inertial pos="-0.00473641 2.56829e-05 0.0414515"
                 quat="0.70428 0.034288 0.0339756 0.708279" mass="1.02"
                 diaginertia="0.00282612 0.00269117 0.000879394" />
@@ -141,7 +141,7 @@
             </body>
         </body>
 
-        <body name="right/base_link" pos="0 0.3 0" childclass="piper" gravcomp="1">
+        <body name="right/base_link" pos="0 -0.3 0" childclass="piper" gravcomp="1">
             <inertial pos="-0.00473641 2.56829e-05 0.0414515"
                 quat="0.70428 0.034288 0.0339756 0.708279" mass="1.02"
                 diaginertia="0.00282612 0.00269117 0.000879394" />
