@@ -143,14 +143,8 @@
         <exclude body1="base_link" body2="link1" />
     </contact>
 
-    <!-- <equality> -->
-        <!-- polycoef could be reversed -->
-        <!-- <joint joint1="joint8" joint2="joint7" polycoef="0 -1 0 0 0" /> -->
-    <!-- </equality> -->
 
     <actuator>
-        <!-- <position name="lift_pos" joint="lift" class="piper" kp="10000" kv="500"/> -->
-        <!-- <motor name="lift_torque" joint="lift"/> -->
         <position name="joint1_pos" joint="joint1" class="piper" kp="80" kv="5"/>
         <!-- <velocity name="joint1_vel" joint="joint1" kv="5" />
         <motor name="joint1_torque" joint="joint1" /> -->
