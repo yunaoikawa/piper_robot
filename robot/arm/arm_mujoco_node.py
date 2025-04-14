@@ -1,87 +1,107 @@
 import mujoco
 import mujoco.viewer
 import mink
-import threading
-import numpy as np
-from loop_rate_limiters import RateLimiter
 import time
+from typing import Any
+from pathlib import Path
+
+from dora import Node
 
 from robot.arm.mink_ik_arm import ArmIK
 from robot.msgs.pose import Pose
-from robot.network.node import Node
 
-class ArmMujoco(Node):
-    def __init__(self, mjcf_path: str, control_frequency: float = 200.0):
-        super().__init__()
+class ArmMujoco:
+    def __init__(self, mjcf_path: str, solver_dt: float = 0.03):
         self.mjcf_path = mjcf_path
-        self.ik_solver = ArmIK(mjcf_path, solver_dt=1.0 / control_frequency)
-        self.control_frequency = control_frequency
+        self.solver_dt = solver_dt
 
-        # shared between threads
-        self.target_lock_ = threading.Lock()
+        # launch mujoco
+        self.model = mujoco.MjModel.from_xml_path(self.mjcf_path)
+        self.data = mujoco.MjData(self.model)
+        self.viewer = mujoco.viewer.launch_passive(
+            model=self.model,
+            data=self.data,
+            show_left_ui=False,
+            show_right_ui=False,
+        )
+        self.viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
+
+        # initialize arm
         self.target: mink.SE3 | None = None
+        self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt)
 
-        self.arm_command_sub = self.subscribe("ARM_COMMAND", self.arm_command_handler)
-        self.create_thread(self.control_loop)
+        # communication
+        self.node = Node()
+        self.init()
 
-    def arm_command_handler(self, channel, data):
-        pose = Pose.decode(data)
+    def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
+        current_time = time.perf_counter_ns()
+        delay = (current_time - timestamp) / 1e9
+        if delay > max_delay or delay < 0:
+            print(f"Skipping message because of delay: {delay}s")
+            return False
+        return True
+
+    def arm_command_handler(self, event: dict[str, Any]):
+        pose = Pose.decode(event["value"], event["metadata"])
         if not self.check_timestamp(pose.timestamp, 0.1):
             return
 
-        target = mink.SE3.from_rotation_and_translation(rotation=mink.SO3(np.array(pose.rotation
-        )), translation=np.array(pose.translation))
-        with self.target_lock_:
-            self.target = target
-            print(f"{target=}")
+        target = mink.SE3(pose.wxyz_xyz)
+        self.target = target
 
-    def init(self, model, data):
-        mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
-        mujoco.mj_forward(model, data)
-        mink.move_mocap_to_frame(model, data, "pinch_site_target", "ee", "site")
-        self.ik_solver.init(data.qpos)
-        with self.target_lock_:
-            self.target = mink.SE3.from_mocap_name(model, data, "pinch_site_target")
+    def init(self):
+        # home
+        home_q = self.ik_solver.get_home_q()
+        print(f"home_q: {home_q}")
+        self.data.qpos[self.ik_solver.dof_ids] = home_q
+        mujoco.mj_forward(self.model, self.data)
+        time.sleep(1.0)
+        q = self.data.qpos.copy()
+        mink.move_mocap_to_frame(self.model, self.data, "pinch_site_target", "ee", "site")
+        self.viewer.sync()
+        self.ik_solver.init(q)
+        self.target = self.ik_solver.forward_kinematics(q)
+        print(f"target: {self.target}")
 
-    def get_ee_pose(self, model, data):
-        pose = Pose()
-        se3 = mink.SE3.from_rotation_and_translation(
-            rotation = mink.SO3.from_matrix(data.site_xmat[model.site("ee").id].reshape(3, 3)),
-            translation = data.site_xpos[model.site("ee").id]
-        )
-        pose.timestamp = time.perf_counter_ns()
-        pose.translation = se3.translation().tolist()
-        pose.rotation = se3.rotation().wxyz.tolist()
-        return pose
+    def step(self):
+        q = self.data.qpos.copy()
+        ee_pose = self.ik_solver.forward_kinematics(q)
+        if self.target is not None: # TODO: check timestamp for the target
+            # update mocap viz
+            self.data.mocap_pos[self.model.body("pinch_site_target").mocapid[0]] = self.target.translation()
+            self.data.mocap_quat[self.model.body("pinch_site_target").mocapid[0]] = self.target.rotation().wxyz
+            # solve ik
+            qd = self.ik_solver.solve_ik(self.target)
+            # self.data.ctrl[self.ik_solver.actuator_ids] = qd
+            self.data.qpos[self.ik_solver.dof_ids] = qd
+        # step mujoco
+        mujoco.mj_step(self.model, self.data)
+        self.viewer.sync()
+        # send ee pose
+        pose_msg = Pose(time.perf_counter_ns(), ee_pose.wxyz_xyz)
+        self.node.send_output("ee_pose", *pose_msg.encode())
 
-    def control_loop(self):
-        model = mujoco.MjModel.from_xml_path(self.mjcf_path)
-        data = mujoco.MjData(model)
+    def stop(self):
+        self.viewer.close()
 
-        self.init(model, data)
+    def spin(self):
+        for event in self.node:
+            event_type = event["type"]
+            if event_type == "INPUT":
+                event_id = event["id"]
 
-        rate = RateLimiter(frequency=self.control_frequency, warn=True)
-        with mujoco.viewer.launch_passive(
-            model=model,
-            data=data,
-            show_left_ui=False,
-            show_right_ui=False,
-        ) as viewer:
-            viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
-            while viewer.is_running():
-                with self.target_lock_:
-                    T_wt = self.target
-                if T_wt is not None:
-                    data.mocap_pos[model.body("pinch_site_target").mocapid[0]] = T_wt.translation()
-                    data.mocap_quat[model.body("pinch_site_target").mocapid[0]] = T_wt.rotation().wxyz
-                    qd = self.ik_solver.solve_ik(T_wt)
-                    data.qpos = qd
-                mujoco.mj_step(model, data)
-                ee_pose = self.get_ee_pose(model, data)
-                self.publish("EE_POSE", ee_pose)
-                viewer.sync()
-                rate.sleep()
+                if event_id == "arm_command":
+                    self.arm_command_handler(event)
+
+                elif event_id == "tick":
+                    self.step()
+
+            elif event_type == "STOP":
+                self.stop()
+
 
 if __name__ == "__main__":
-    arm_mujoco = ArmMujoco(mjcf_path="mujoco/scene_piper.xml")
+    _HERE = Path(__file__).parent
+    arm_mujoco = ArmMujoco(mjcf_path=(_HERE / "mujoco/scene_piper.xml").as_posix())
     arm_mujoco.spin()

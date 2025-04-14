@@ -129,31 +129,6 @@ wheels = [
 ]
 
 [[package]]
-name = "lcm"
-version = "1.5.1"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7f/6c/9af3d28a26a32f0be9bfa3c8e143c81c600d5176c574324d997c94d5f1b7/lcm-1.5.1-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:bd4e52e7af95e5c91d4cea2941745f72da2e81e5b30555c8e049a177756cff97", size = 3391336 },
-    { url = "https://files.pythonhosted.org/packages/66/3c/1f790824a78668edfc8804c6f007bb63470a55e7ec6e67724247b971dc73/lcm-1.5.1-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:cb578c1a5ecff960a596174f2ef9aa2cde461f4cfb8b7014f9d6dababd741de7", size = 2783597 },
-    { url = "https://files.pythonhosted.org/packages/2b/de/0fb4db5324875e86143a8fc43319d045651e1628075508ed78a029e235a6/lcm-1.5.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8247f4c6d2f453c15f216bf607302a26fc27d5d94054e07a76d1787d451a3fed", size = 2807871 },
-    { url = "https://files.pythonhosted.org/packages/b0/d2/5a433e4bb83b29ac86311bc43618d96d5250b3bc629257efbf8a22397e26/lcm-1.5.1-cp310-cp310-manylinux_2_28_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:b66a811ff4e513059b984749321f13bb385f4481533e3af5896cf0bb0c85c1dc", size = 2782334 },
-    { url = "https://files.pythonhosted.org/packages/8a/50/5c1fcd8f1104759dea735cc56617378cb21e3dd1f773b861bdd2f2838045/lcm-1.5.1-cp310-cp310-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:79d903a707083537e3ffd9d6ae3a40ffdbfbc0945bdc22e06a92eea92d43f79b", size = 2866535 },
-    { url = "https://files.pythonhosted.org/packages/96/9e/a5e4018bbbc90c8b230a1880011f2c7e46f74d76ab0dd44243dfd7b48060/lcm-1.5.1-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:48e3a469e617b26d6498054225ea5e90464b3bb316b3abdf162e508153dc1c3f", size = 1462349 },
-    { url = "https://files.pythonhosted.org/packages/83/27/4b347be1ca6b16166bbaa698d46c635e6054257e36ba0ee8f7de2a66fa28/lcm-1.5.1-cp310-cp310-musllinux_1_2_armv7l.whl", hash = "sha256:86758fad089281a1d59ebe7acecced7506c798bcd612218925f54578c11425c7", size = 1313989 },
-    { url = "https://files.pythonhosted.org/packages/97/e5/1ccdc9c3da01089373f9928feb9259bb3983496650b779f98d13e085d5e4/lcm-1.5.1-cp310-cp310-musllinux_1_2_i686.whl", hash = "sha256:a70d44d6ee8bd972f0bc877df133a6e120006625d39119259dcacf993b8e27e8", size = 1613630 },
-    { url = "https://files.pythonhosted.org/packages/df/0b/d238334edd7012e2e44b6cccdf359b43c63c5d4936293b7d46bc719e55c9/lcm-1.5.1-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:0375f3354b03bb3f6cb76a273d72a2faf2c59464a5ec5d7143a442537737d431", size = 1507090 },
-]
-
-[[package]]
-name = "loop-rate-limiters"
-version = "1.1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5f/e1/0431a29de33dd7fe7ee3d107c47d05aa2b3ebfb3bdb6b4023e11465cfd3b/loop_rate_limiters-1.1.0.tar.gz", hash = "sha256:31af950fc29739679c733d1f6b43740b0b63715347f1dd5069a8a4810bb72921", size = 11996 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/89/d98a731a5f5efca86052c45bcf4479cbeee2994f559e3bc0bd312e7840cf/loop_rate_limiters-1.1.0-py3-none-any.whl", hash = "sha256:7dc8c4120d81c58d15c59d19eb0602e0a245bb6fb361b76b2e5898285757a6b2", size = 9767 },
-]
-
-[[package]]
 name = "mink"
 version = "0.0.7"
 source = { registry = "https://pypi.org/simple" }
@@ -183,6 +158,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d9/2c/82e73506dd55f9e43ac8aa007c9dd088c6f0de2aa19e8f7330e6a65879fc/msgpack-1.1.0-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:e1f3c3d21f7cf67bcf2da8e494d30a75e4cf60041d98b3f79875afb5b96f3a3f", size = 359863 },
     { url = "https://files.pythonhosted.org/packages/cb/a0/3d093b248837094220e1edc9ec4337de3443b1cfeeb6e0896af8ccc4cc7a/msgpack-1.1.0-cp310-cp310-musllinux_1_2_i686.whl", hash = "sha256:64fc9068d701233effd61b19efb1485587560b66fe57b3e50d29c5d78e7fef68", size = 368166 },
     { url = "https://files.pythonhosted.org/packages/e4/13/7646f14f06838b406cf5a6ddbb7e8dc78b4996d891ab3b93c33d1ccc8678/msgpack-1.1.0-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:42f754515e0f683f9c79210a5d1cad631ec3d06cea5172214d2176a42e67e19b", size = 370105 },
+    { url = "https://files.pythonhosted.org/packages/67/fa/dbbd2443e4578e165192dabbc6a22c0812cda2649261b1264ff515f19f15/msgpack-1.1.0-cp310-cp310-win32.whl", hash = "sha256:3df7e6b05571b3814361e8464f9304c42d2196808e0119f55d0d3e62cd5ea044", size = 68513 },
+    { url = "https://files.pythonhosted.org/packages/24/ce/c2c8fbf0ded750cb63cbcbb61bc1f2dfd69e16dca30a8af8ba80ec182dcd/msgpack-1.1.0-cp310-cp310-win_amd64.whl", hash = "sha256:685ec345eefc757a7c8af44a3032734a739f8c45d1b0ac45efc5d8977aa4720f", size = 74687 },
+]
+
+[[package]]
+name = "msgpack-numpy"
+version = "0.4.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "msgpack" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/08/94/61e8aee142733ebfdc400a05bdac6e1763c4514bba3b42743d223f388450/msgpack-numpy-0.4.8.tar.gz", hash = "sha256:c667d3180513422f9c7545be5eec5d296dcbb357e06f72ed39cc683797556e69", size = 10923 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/5d/f25ac7d4fb77cbd53ddc6d05d833c6bf52b12770a44fa9a447eed470ca9a/msgpack_numpy-0.4.8-py2.py3-none-any.whl", hash = "sha256:773c19d4dfbae1b3c7b791083e2caf66983bb19b40901646f61d8731554ae3da", size = 6919 },
 ]
 
 [[package]]
@@ -510,9 +500,9 @@ version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "hydra-core" },
-    { name = "lcm" },
-    { name = "loop-rate-limiters" },
     { name = "mink" },
+    { name = "msgpack" },
+    { name = "msgpack-numpy" },
     { name = "mujoco" },
     { name = "numpy" },
     { name = "numpy-quaternion" },
@@ -526,6 +516,7 @@ dependencies = [
     { name = "pyzmq" },
     { name = "record3d" },
     { name = "rerun-sdk" },
+    { name = "scipy" },
     { name = "tqdm" },
 ]
 
@@ -533,9 +524,9 @@ dependencies = [
 requires-dist = [
     { name = "hydra-core" },
     { name = "hydra-core", specifier = ">=1.3.2" },
-    { name = "lcm", specifier = ">=1.5.1" },
-    { name = "loop-rate-limiters", specifier = ">=1.1.0" },
     { name = "mink" },
+    { name = "msgpack" },
+    { name = "msgpack-numpy" },
     { name = "mujoco", specifier = ">=3.2.7" },
     { name = "numpy", specifier = "<2" },
     { name = "numpy-quaternion" },
@@ -549,6 +540,7 @@ requires-dist = [
     { name = "pyzmq" },
     { name = "record3d", git = "ssh://git@github.com/eneserciyes/record3d.git" },
     { name = "rerun-sdk" },
+    { name = "scipy" },
     { name = "tqdm" },
 ]
 provides-extras = ["dev"]

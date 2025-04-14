@@ -2,12 +2,13 @@ import zmq
 import numpy as np
 import time
 import threading
-from loop_rate_limiters import RateLimiter
+from typing import Any
 
 import mink
 
+from dora import Node
+
 from robot.teleop.oculus_msgs import parse_controller_state
-from robot.network.node import Node
 from robot.network import VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
 from robot.msgs.pose import Pose
 
@@ -15,18 +16,26 @@ from robot.msgs.pose import Pose
 def apply_deadzone(arr, deadzone_size=0.05):
     return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))
 
-class OculusReader(Node):
+class OculusReader:
     def __init__(self):
         super().__init__()
-        # Shared between threads
+        # teleop state
+        self.ee_pose = None
+        self.start_teleop = False
+        self.H = mink.SE3.from_rotation(mink.SO3.from_matrix(np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]])))
+        self.X_Cinit = None
+        self.X_ee_init = None
+
+        # communication
+        self.node = Node()
+
+        # Oculus thread
         self.controller_state_lock_ = threading.Lock()
         self.controller_state = None
-        self.ee_pose_lock_ = threading.Lock()
-        self.ee_pose = None
+        self.stop_event = threading.Event()
 
-        self.subscribe("EE_POSE", self.arm_ee_pose_handler)
-        self.create_thread(self.oculus_handler)
-        self.create_thread(self.teleop_loop)
+        self.oculus_thread = threading.Thread(target=self.oculus_handler)
+        self.oculus_thread.start()
 
     def oculus_handler(self):
         context = zmq.Context()
@@ -52,69 +61,75 @@ class OculusReader(Node):
         stick_socket.close()
         context.destroy()
 
-    def arm_ee_pose_handler(self, channel, data):
-        ee_pose = Pose.decode(data)
+    def arm_ee_pose_handler(self, event: dict[str, Any]):
+        ee_pose = Pose.decode(event["value"], event["metadata"])
+        self.ee_pose = ee_pose
 
-        with self.ee_pose_lock_:
-            self.ee_pose = ee_pose #             # print(f"ee_pose: {self.ee_pose}")
+    def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
+        current_time = time.perf_counter_ns()
+        delay = (current_time - timestamp) / 1e9
+        if delay > max_delay or delay < 0:
+            print(f"Skipping message because of delay: {delay}s")
+            return False
+        return True
 
-    def teleop_loop(self):
-        print("teleop loop started")
-        rate_limiter = RateLimiter(frequency=60, name="oculus")
+    def step(self):
+        with self.controller_state_lock_:
+            controller_state = self.controller_state
+        if controller_state is None:
+            print("WARN: no controller state yet")
+            return
 
-        start_teleop = False
-        H = mink.SE3.from_rotation(mink.SO3.from_matrix(np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]])))
+        if self.ee_pose is None:
+            print("WARN: no ee pose yet")
+            return
 
-        while not self.stop_event.is_set():
-            with self.controller_state_lock_:
-                controller_state = self.controller_state
-            if controller_state is None:
-                rate_limiter.sleep()
-                continue
+        if not self.check_timestamp(self.ee_pose.timestamp, 0.05):
+            print("WARN: ee pose timestamp is too old")
+            return
 
-            with self.ee_pose_lock_:
-                ee_pose = self.ee_pose
-            if ee_pose is None:
-                print("WARN: no ee pose yet")
-                rate_limiter.sleep()
-                continue
-            if not self.check_timestamp(ee_pose.timestamp, 0.05):
-                print("WARN: ee pose timestamp is too old")
-                rate_limiter.sleep()
-                continue
+        ee_pose = mink.SE3(self.ee_pose.wxyz_xyz)
 
-            ee_pose = mink.SE3.from_rotation_and_translation(
-                rotation=mink.SO3(np.array(ee_pose.rotation)), translation=np.array(ee_pose.translation)
-            )
+        if controller_state.right_a:
+            print("start teleop")
+            self.X_Cinit = controller_state.right_SE3
+            self.X_ee_init = ee_pose
+            self.start_teleop = True
 
-            if controller_state.right_a:
-                print("start teleop")
-                X_Cinit = controller_state.right_SE3
-                X_ee_init = ee_pose
-                start_teleop = True
+        if controller_state.right_b:
+            self.start_teleop = False
 
-            if controller_state.right_b:
-                # X_ee_init = ee_pose
-                start_teleop = False
+        if self.start_teleop:
+            if self.X_Cinit is None or self.X_ee_init is None:
+                print("WARN: no initial pose yet")
+                return
+            X_Ctarget = controller_state.right_SE3
+            X_Cdelta = self.X_Cinit.inverse().multiply(X_Ctarget)
+            X_Rdelta = self.H.inverse() @ X_Cdelta @ self.H
+            # translation
+            p_REt = self.X_ee_init.translation() + X_Rdelta.translation()
+            # rotation
+            R_REt = self.X_ee_init.rotation() @ X_Rdelta.rotation()
 
-            if start_teleop:
-                X_Ctarget = controller_state.right_SE3
-                X_Cdelta = X_Cinit.inverse().multiply(X_Ctarget)
-                X_Rdelta = H.inverse() @ X_Cdelta @ H
-                # translation
-                p_REt = X_ee_init.translation() + X_Rdelta.translation()
-                # rotation
-                R_REt = X_ee_init.rotation() @ X_Rdelta.rotation()
+            # publish the target pose
+            target_pose = Pose(time.perf_counter_ns(), np.concatenate([R_REt.wxyz, p_REt]))
+            self.node.send_output("arm_command", *target_pose.encode())
 
-                # publish the target pose
-                target_pose = Pose()
-                target_pose.timestamp = time.perf_counter_ns()
-                target_pose.translation = p_REt.tolist()
-                target_pose.rotation = R_REt.wxyz.tolist()
-                self.publish("ARM_COMMAND", target_pose)
+    def spin(self):
+        for event in self.node:
+            event_type = event["type"]
+            if event_type == "INPUT":
+                event_id = event["id"]
 
-            rate_limiter.sleep()
+                if event_id == "ee_pose":
+                    self.arm_ee_pose_handler(event)
 
+                elif event_id == "tick":
+                    self.step()
+
+            elif event_type == "STOP":
+                self.stop_event.set()
+                self.oculus_thread.join()
 
 def main():
     oculus_reader = OculusReader()

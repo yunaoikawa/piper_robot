@@ -50,29 +50,28 @@
                 <inertial pos="0.000121505 0.000104632 -0.00438597"
                     quat="0.682111 0.730899 0.0143111 -0.0175062" mass="0.71"
                     diaginertia="0.000489262 0.000439887 0.000404551" />
-                <joint name="joint1" pos="0 0 0" axis="0 0 1" range="-2.618 2.618" />
+                <joint name="joint1" pos="0 0 0" axis="0 0 1" range="-2.61 2.61" />
                 <geom class="visual" density="0" mesh="link1" material="gray_mat" />
                 <geom class="collision" mesh="link1" />
                 <body name="link2" quat="0.0480084 -0.0480134 -0.705476 -0.705474" gravcomp="1">
                     <inertial pos="0.198666 -0.0109269 0.00142122"
                         quat="0.510131 0.475585 0.525075 0.48773" mass="1.17"
                         diaginertia="0.0679032 0.067745 0.00111966" />
-                    <joint name="joint2" axis="0 0 1" range="0 3.14" />
+                    <joint name="joint2" axis="0 0 1" range="0 3.13" />
                     <geom class="visual" density="0" mesh="link2" material="light_medium_gray_mat" />
                     <geom class="collision" mesh="link2" />
-
                     <body name="link3" pos="0.28503 0 0" quat="0.623996 0 0 -0.781427" gravcomp="1">
                         <inertial pos="-0.0202738 -0.133915 -0.000458683"
                             quat="0.706282 0.705111 0.0532202 0.0339395" mass="0.5"
                             diaginertia="0.0138227 0.0138032 0.000244685" />
-                        <joint name="joint3" axis="0 0 1" range="-2.967 0" />
+                        <joint name="joint3" axis="0 0 1" range="-2.965 0" />
                         <geom class="visual" density="0" mesh="link3" material="gray_mat" />
                         <geom class="collision" mesh="link3" />
                         <body name="link4" pos="-0.021984 -0.25075 0" quat="0.707105 0.707108 0 0" gravcomp="1">
                             <inertial pos="-9.66636e-05 0.000876064 -0.00496881"
                                 quat="0.714689 -0.0948484 0.0635223 0.690064" mass="0.38"
                                 diaginertia="0.000191586 0.000185052 0.000152863" />
-                            <joint name="joint4" axis="0 0 1" range="-1.745 1.745" />
+                            <joint name="joint4" axis="0 0 1" range="-1.74 1.74" />
                             <geom class="visual" density="0" mesh="link4"
                                 material="light_medium_gray_mat" />
                             <geom class="collision" mesh="link4" />
@@ -80,14 +79,14 @@
                                 <inertial pos="-4.10554e-05 -0.0566487 -0.00372058"
                                     quat="0.709589 0.704614 0.00134613 -0.00132656" mass="0.383"
                                     diaginertia="0.00166169 0.00164328 0.000185028" />
-                                <joint name="joint5" axis="0 0 1" range="-1.22 1.22" />
+                                <joint name="joint5" axis="0 0 1" range="-1.2 1.2" />
                                 <geom class="visual" density="0" mesh="link5" material="gray_mat" />
                                 <geom class="collision" mesh="link5" />
                                 <body name="link6" pos="8.8259e-05 -0.091 0" quat="0.707105 0.707108 0 0" gravcomp="1">
                                     <inertial pos="-8.82591e-05 9.05984e-06 -0.002"
                                         quat="0.5 0.5 -0.5 0.5" mass="0.0069909"
                                         diaginertia="1.06739e-06 5.73016e-07 5.73016e-07" />
-                                    <joint name="joint6" axis="0 0 1" range="-2.0944 2.0944" />
+                                    <joint name="joint6" axis="0 0 1" range="-3 3" />
                                     <geom class="visual" density="0" mesh="link6"
                                         material="light_medium_gray_mat" />
                                     <geom class="collision" mesh="link6" />
@@ -144,14 +143,8 @@
         <exclude body1="base_link" body2="link1" />
     </contact>
 
-    <!-- <equality> -->
-        <!-- polycoef could be reversed -->
-        <!-- <joint joint1="joint8" joint2="joint7" polycoef="0 -1 0 0 0" /> -->
-    <!-- </equality> -->
 
     <actuator>
-        <!-- <position name="lift_pos" joint="lift" class="piper" kp="10000" kv="500"/> -->
-        <!-- <motor name="lift_torque" joint="lift"/> -->
         <position name="joint1_pos" joint="joint1" class="piper" kp="80" kv="5"/>
         <!-- <velocity name="joint1_vel" joint="joint1" kv="5" />
         <motor name="joint1_torque" joint="joint1" /> -->

@@ -1,193 +1,89 @@
+import time
+import os
 import numpy as np
-import signal
-from typing import cast
+from typing import Any
+from pathlib import Path
 
-import pinocchio as pin
+from piper_control import piper_control
+import mink
+from dora import Node
 
-import zmq
-from robot.arm.tools import (
-    quaternion_from_euler,
-    matrix_to_xyzrpy,
-    create_transformation_matrix,
-)
-from robot.network import Subscriber, ARM_COMMAND_PORT
-from robot.network.msgs import ArmCommand
-from robot.arm.piper_control import PiperControl
-from robot.arm.arm_ik import ArmIK
-
-HARDWARE = True
+from robot.arm.mink_ik_arm import ArmIK
+from robot.msgs.pose import Pose
 
 class ArmNode:
-    def __init__(self):
-        if HARDWARE:
-            self.left_piper_control = PiperControl(can_port="can_left")
-            self.right_piper_control = PiperControl(can_port="can_right")
-            self.left_piper_control.enable_piper()
-            self.right_piper_control.enable_piper()
+    def __init__(self, can_port: str, mjcf_path: str, solver_dt: float = 0.03):
+        self.can_port = can_port
+        self.mjcf_path = mjcf_path
+        self.solver_dt = solver_dt
 
-        self.left_arm_ik = ArmIK(urdf_file="piper-left.urdf")
-        self.right_arm_ik = ArmIK(urdf_file="piper-right.urdf")
+        # initialize arm
+        self.piper = piper_control.PiperControl(can_port)
+        self.target: mink.SE3 | None = None
+        self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt)
 
-        ctx = zmq.Context()
-        self.arm_command_sub = Subscriber(
-            ctx,
-            ARM_COMMAND_PORT,
-            ["/arm_command"],
-            [ArmCommand.deserialize],
-            no_block=False,
-        )
+        # communication
+        self.node = Node()
+        self.init()
 
-        self.running = True
-        self.left_start_teleop = False
-        self.left_init_affine = None
-        self.right_start_teleop = False
-        self.right_init_affine = None
+    def init(self):
+        self.piper.reset()
+        # home
+        self.piper.set_joint_positions(self.ik_solver.get_home_q())
+        time.sleep(1.0)
+        q = np.array(self.piper.get_joint_positions())
+        self.ik_solver.init(q)
+        self.target = self.ik_solver.forward_kinematics(q)
 
-    def get_left_ik_solution(self, x, y, z, roll, pitch, yaw, gripper):
-        q = quaternion_from_euler(roll, pitch, yaw)
-        target = pin.SE3(
-            pin.Quaternion(q[3], q[0], q[1], q[2]),
-            np.array([x, y, z]),
-        )
-        sol_q, _, is_collision = self.left_arm_ik.ik_fun(target.homogeneous, 0)
+    def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
+        current_time = time.perf_counter_ns()
+        delay = (current_time - timestamp) / 1e9
+        if delay > max_delay or delay < 0:
+            print(f"Skipping message because of delay: {delay}s")
+            return False
+        return True
 
-        if not is_collision and HARDWARE:
-            self.left_piper_control.joint_control(np.concatenate([sol_q, np.array([gripper])]))
+    def arm_command_handler(self, event: dict[str, Any]):
+        pose = Pose.decode(event["value"], event["metadata"])
+        if not self.check_timestamp(pose.timestamp, 0.1):
+            return
 
-    def get_right_ik_solution(self, x, y, z, roll, pitch, yaw, gripper):
-        q = quaternion_from_euler(roll, pitch, yaw)
-        target = pin.SE3(
-            pin.Quaternion(q[3], q[0], q[1], q[2]),
-            np.array([x, y, z]),
-        )
-        sol_q, _, is_collision = self.right_arm_ik.ik_fun(target.homogeneous, 0)
+        target = mink.SE3(pose.wxyz_xyz)
+        self.target = target
 
-        if not is_collision and HARDWARE:
-            self.right_piper_control.joint_control(np.concatenate([sol_q, np.array([gripper])]))
+    def step(self):
+        q = np.array(self.piper.get_joint_positions())
+        ee_pose = self.ik_solver.forward_kinematics(q) # update current joint positions
+        if self.target is not None:
+            qd = self.ik_solver.solve_ik(self.target)
+            self.piper.set_joint_positions(qd)
 
-    def get_relative_affine(self, init_affine, current_affine):
-        H = np.array([[0, -1, 0, 0], [0, 0, 1, 0], [-1, 0, 0, 0], [0, 0, 0, 1]])
-        delta_affine = np.linalg.pinv(init_affine) @ current_affine
-        relative_affine = np.linalg.pinv(H) @ delta_affine @ H
-        return relative_affine
-
-    def run(self):
-        left_home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
-        right_home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
-        is_first_frame = True
-        left_target = left_home_pose.copy()
-        right_target = right_home_pose.copy()
-
-        while self.running:
-            _, arm_command = self.arm_command_sub.receive()
-            arm_command = cast(ArmCommand, arm_command)
-
-            if is_first_frame:
-                if HARDWARE:
-                    self.left_piper_control.joint_control(np.zeros(7))
-                    self.right_piper_control.joint_control(np.zeros(7))
-                is_first_frame = False
-
-            if self.left_start_teleop:
-                relative_affine = self.get_relative_affine(self.left_init_affine, arm_command.left_target)
-                relative_pos, relative_rot = (
-                    relative_affine[:3, 3],
-                    relative_affine[:3, :3],
-                )
-
-                left_target_pos = left_home_pose[:3, 3] + relative_pos
-                left_target_rot = left_home_pose[:3, :3] @ relative_rot
-
-                left_target = np.eye(4)
-                left_target[:3, 3] = left_target_pos
-                left_target[:3, :3] = left_target_rot
-
-                l_gripper_value = arm_command.left_gripper_value * 0.07
-                LL_ = matrix_to_xyzrpy(left_target)
-                print(f"LL: {LL_[0].item():.3f}, {LL_[1].item():.3f}, {LL_[2].item():.3f}, {LL_[3]:.3f}, {LL_[4]:.3f}, {LL_[5]:.3f}") # noqa
-                self.get_left_ik_solution(
-                    LL_[0],
-                    LL_[1],
-                    LL_[2],
-                    LL_[3],
-                    LL_[4],
-                    LL_[5],
-                    l_gripper_value,
-                )
-
-            else:
-                pass
-                # left_target = left_home_pose.copy()
-
-            if self.right_start_teleop:
-                relative_affine = self.get_relative_affine(self.right_init_affine, arm_command.right_target)
-                relative_pos, relative_rot = (
-                    relative_affine[:3, 3],
-                    relative_affine[:3, :3],
-                )
-
-                right_target_pos = right_home_pose[:3, 3] + relative_pos
-                right_target_rot = right_home_pose[:3, :3] @ relative_rot
-
-                right_target = np.eye(4)
-                right_target[:3, 3] = right_target_pos
-                right_target[:3, :3] = right_target_rot
-
-                r_gripper_value = arm_command.right_gripper_value * 0.07
-
-                RR_ = matrix_to_xyzrpy(right_target)
-                print(f"RR: {RR_[0].item():.3f}, {RR_[1].item():.3f}, {RR_[2].item():.3f}, {RR_[3]:.3f}, {RR_[4]:.3f}, {RR_[5]:.3f}") # noqa
-                self.get_right_ik_solution(
-                    RR_[0],
-                    RR_[1],
-                    RR_[2],
-                    RR_[3],
-                    RR_[4],
-                    RR_[5],
-                    r_gripper_value,
-                )
-            else:
-                # right_target = right_home_pose.copy()
-                pass
-
-            if arm_command.left_start_teleop:
-                self.left_start_teleop = True
-                self.left_init_affine = arm_command.left_target
-
-            if arm_command.right_start_teleop:
-                self.right_start_teleop = True
-                self.right_init_affine = arm_command.right_target
-
-            if arm_command.left_pause_teleop:
-                self.left_start_teleop = False
-                self.left_init_affine = None
-                left_home_pose = left_target.copy()
-
-            if arm_command.right_pause_teleop:
-                self.right_start_teleop = False
-                self.right_init_affine = None
-                right_home_pose = right_target.copy()
-
-            # if arm_command.left_home:
-            #     left_home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
-            #     self.left_init_affine = None
-
-            # if arm_command.right_home:
-            #     right_home_pose = create_transformation_matrix(0.19, 0.0, 0.2, 0, 0, 0)
-            #     self.right_init_affine = None
+        pose_msg = Pose(time.perf_counter_ns(), ee_pose.wxyz_xyz)
+        self.node.send_output("ee_pose", *pose_msg.encode())
 
     def stop(self):
-        self.arm_command_sub.stop()
+        self.piper._standby()
 
-def main():
-    arm_node = ArmNode()
+    def spin(self):
+        for event in self.node:
+            event_type = event["type"]
+            if event_type == "INPUT":
+                event_id = event["id"]
 
-    def signal_handler(signum, frame):
-        arm_node.running = False
-        arm_node.stop()
+                if event_id == "arm_command":
+                    self.arm_command_handler(event)
 
-    signal.signal(signal.SIGINT, signal_handler)
-    arm_node.run()
+                elif event_id == "tick":
+                    self.step()
+
+            elif event_type == "STOP":
+                self.stop()
+
 
 if __name__ == "__main__":
-    main()
+    _HERE = Path(__file__).parent
+    _XML_PATH = (_HERE / "mujoco/scene_piper.xml").as_posix()
+    _CAN_PORT = os.environ.get("CAN_PORT", "can_left")
+
+    arm_node = ArmNode(can_port=_CAN_PORT, mjcf_path=_XML_PATH)
+    arm_node.spin()
