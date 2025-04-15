@@ -31,7 +31,7 @@ class Lift:
         # self.lift_motor_cfg.slot0.static_feedforward_sign = signals.StaticFeedforwardSignValue.USE_CLOSED_LOOP_SIGN
 
         # velocity control gains
-        self.lift_motor_cfg.slot1.k_p = 0.0
+        self.lift_motor_cfg.slot1.k_p = 5.0
         self.lift_motor_cfg.slot1.k_i = 0.0
         self.lift_motor_cfg.slot1.k_d = 0.0
 
@@ -82,7 +82,7 @@ if __name__ == "__main__":
     try:
         while True:
             phoenix6.unmanaged.feed_enable(0.1)
-            lift.set_control(0.1)
+            lift.set_velocity_control(0.1)
             rate.sleep()
     except KeyboardInterrupt:
         pass
