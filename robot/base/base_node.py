@@ -5,16 +5,14 @@ import threading
 from typing import Tuple, cast
 import numpy as np
 from queue import Queue
-import zmq
 
 os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
+from loop_rate_limiters import RateLimiter
 # from ruckig import InputParameter, OutputParameter, Result, Ruckig, ControlInterface
 
 
-from robot.network.timer import FrequencyTimer
-from robot.network import Subscriber, BASE_PORT
 from robot.network.msgs import Command, CommandType
 from robot.lift.lift_node import Lift
 from robot.base.constants import (
@@ -175,7 +173,7 @@ class Base:
 
         self.status_signals = cast(
             list[phoenix6.BaseStatusSignal],
-            [s for m in self.steer_motors + self.drive_motors for s in m.status_signals],
+            [s for m in self.steer_motors + self.drive_motors + [self.lift] for s in m.status_signals],
         )
         phoenix6.BaseStatusSignal.set_update_frequency_for_all(CONTROL_FREQ, self.status_signals)
         self.status_timestamp = self.status_signals[0].timestamp
@@ -252,45 +250,45 @@ class Base:
         disable_motors = True
         disable_lift = True
         last_command_time = time.perf_counter_ns()
-        timer = FrequencyTimer(name="base_control_loop", frequency=CONTROL_FREQ)
+        rate_limiter = RateLimiter(CONTROL_FREQ)
 
         while self.control_loop_running:
-            with timer:
-                self.update_state()
+            self.update_state()
 
-                if not self._command_queue.empty():
-                    command = self._command_queue.get()
-                    last_command_time = time.perf_counter_ns()
-                    if command.type == CommandType.BASE_VELOCITY:
-                        target = command.target
-                        disable_motors = False
-                    elif command.type == CommandType.LIFT:
-                        lift_vel = command.target[0]
-                        disable_lift = False
-                    elif command.type == CommandType.BASE_POSITION:
-                        raise NotImplementedError("Position control not implemented yet")
+            if not self._command_queue.empty():
+                command = self._command_queue.get()
+                last_command_time = time.perf_counter_ns()
+                if command.type == CommandType.BASE_VELOCITY:
+                    target = command.target
+                    disable_motors = False
+                elif command.type == CommandType.LIFT:
+                    lift_target = command.target[0]
+                    lift_err = (lift_target - self.lift.get_position())
+                    disable_lift = abs(lift_err) < 0.001
+                elif command.type == CommandType.BASE_POSITION:
+                    raise NotImplementedError("Position control not implemented yet")
 
-                if (time.perf_counter_ns() - last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
-                    disable_motors = True
-                    disable_lift = True
+            if (time.perf_counter_ns() - last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
+                disable_motors = True
+                disable_lift = True
 
-                if disable_motors:
-                    for s, d in zip(self.steer_motors, self.drive_motors):
-                        s.set_neutral()
-                        d.set_neutral()
-                else:
-                    phoenix6.unmanaged.feed_enable(0.1)
-                    wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(target)
-                    for i in range(NUM_SWERVES):
-                        self.steer_motors[i].set_position(wheel_angles[i])
-                        self.drive_motors[i].set_velocity(wheel_speeds[i])
+            if disable_motors:
+                for s, d in zip(self.steer_motors, self.drive_motors):
+                    s.set_neutral()
+                    d.set_neutral()
+            else:
+                phoenix6.unmanaged.feed_enable(0.1)
+                wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(target)
+                for i in range(NUM_SWERVES):
+                    self.steer_motors[i].set_position(wheel_angles[i])
+                    self.drive_motors[i].set_velocity(wheel_speeds[i])
 
-                if disable_lift:
-                    self.lift.set_neutral()
-                else:
-                    phoenix6.unmanaged.feed_enable(0.1)
-                    lift_target = self.lift.get_position() + lift_vel * POLICY_CONTROL_PERIOD_NS / 1e9
-                    self.lift.set_control(lift_target)
+            if disable_lift:
+                self.lift.set_neutral()
+            else:
+                phoenix6.unmanaged.feed_enable(0.01)
+                self.lift.set_velocity_control(np.sign(lift_err) * 0.05)
+            rate_limiter.sleep()
 
     def get_encoder_offsets(self):
         offsets = []
@@ -304,20 +302,21 @@ class Base:
 
 
 def main():
-    ctx = zmq.Context()
-    command_sub = Subscriber(ctx, BASE_PORT, ["/command"], [Command.deserialize])
     base = Base()
+    base.lift.home()
     base.start_control()
-
-    print(f"Lift position: {base.lift.get_position()} m")
-
+    rate = RateLimiter(30)
     try:
         while True:
-            _, command = command_sub.receive()
-            if command is not None:
-                base.set_target(cast(Command, command))
+            command = Command(time.perf_counter_ns(), CommandType.LIFT, target=np.array([0.15]))
+            base.set_target(command)
+            print(f"Lift position: {base.lift.get_position()} m")
+            rate.sleep()
     except KeyboardInterrupt:
         pass
     finally:
         base.stop_control()
-        command_sub.stop()
+
+
+if __name__ == "__main__":
+    main()
