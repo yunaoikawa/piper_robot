@@ -1,0 +1,18 @@
+nodes:
+  - id: bimanual_arm_piper
+    custom:
+      source: arm/bimanual_arm_node.py
+      inputs:
+        tick: dora/timer/millis/30 # 33 Hz
+        bimanual_arm_command: bimanual_arm_teleop/bimanual_arm_command
+      outputs:
+        - bimanual_ee_pose
+
+  - id: bimanual_arm_teleop
+    custom:
+      source: teleop/oculus_bimanual_node.py
+      inputs:
+        tick: dora/timer/millis/30 # 30 Hz
+        bimanual_ee_pose: bimanual_arm_piper/bimanual_ee_pose
+      outputs:
+        - bimanual_arm_command

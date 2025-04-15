@@ -103,7 +103,7 @@ class BimanualArmIK:
         )
 
         self.posture_task = mink.PostureTask(self.model, cost=np.array([1e-3] * 12))
-        self.tasks = [self.left_ee_task, self.right_ee_task, self.posture_task]
+        self.tasks = [self.left_ee_task, self.right_ee_task] # TODO: add posture task
         self.limits = [mink.ConfigurationLimit(self.model), mink.VelocityLimit(self.model, velocity_limits)]
 
         # initial setup
@@ -114,8 +114,8 @@ class BimanualArmIK:
         self.posture_task.set_target_from_configuration(self.configuration)
         self.initalized_ = True
 
-    def get_home_q(self) -> np.ndarray:
-        return self.model.key("home").qpos[self.dof_ids]
+    def get_home_q(self, home_key: str = "home") -> np.ndarray:
+        return self.model.key(home_key).qpos[self.dof_ids]
 
     def solve_ik(self, T_wL: mink.SE3, T_wR: mink.SE3) -> tuple[np.ndarray, np.ndarray]:
         """

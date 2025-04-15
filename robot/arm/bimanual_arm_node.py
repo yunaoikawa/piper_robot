@@ -1,34 +1,27 @@
-import mujoco
-import mujoco.viewer
-import mink
 import time
+import os
 import numpy as np
 from typing import Any
 from pathlib import Path
 
+from piper_control import piper_control
+import mink
 from dora import Node
 
 from robot.arm.mink_ik_arm import BimanualArmIK
-from robot.msgs.bimanual_pose import BimanualPose
+from robot.msgs.pose import BimanualPose
 
 
-class BimanualArmMujoco:
+class BimanualArmNode:
     def __init__(self, mjcf_path: str, solver_dt: float = 0.03):
         self.mjcf_path = mjcf_path
         self.solver_dt = solver_dt
 
-        # launch mujoco
-        self.model = mujoco.MjModel.from_xml_path(self.mjcf_path)
-        self.data = mujoco.MjData(self.model)
-        self.viewer = mujoco.viewer.launch_passive(
-            model=self.model,
-            data=self.data,
-            show_left_ui=True,
-            show_right_ui=True,
-        )
-        self.viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
-
         # initialize arm
+        self.left_piper = piper_control.PiperControl(can_port="can_left")
+        self.right_piper = piper_control.PiperControl(can_port="can_right")
+
+        # initialize ik
         self.left_target: mink.SE3 | None = None
         self.right_target: mink.SE3 | None = None
         self.ik_solver = BimanualArmIK(mjcf_path, solver_dt=self.solver_dt)
@@ -36,6 +29,18 @@ class BimanualArmMujoco:
         # communication
         self.node = Node()
         self.init()
+
+    def init(self):
+        self.left_piper.reset()
+        self.right_piper.reset()
+        # home
+        home_q = self.ik_solver.get_home_q(home_key="stow")
+        self.left_piper.set_joint_positions(home_q[:6])
+        self.right_piper.set_joint_positions(home_q[6:])
+        time.sleep(1.0)
+        q = np.array(self.left_piper.get_joint_positions() + self.right_piper.get_joint_positions())
+        self.ik_solver.init(q)
+        self.left_target, self.right_target = self.ik_solver.forward_kinematics(q)
 
     def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
         current_time = time.perf_counter_ns()
@@ -55,47 +60,20 @@ class BimanualArmMujoco:
         self.left_target = left_pose
         self.right_target = right_pose
 
-    def init(self):
-        # home
-        home_q = self.ik_solver.get_home_q(home_key="stow")
-        print(f"home_q: {home_q}")
-        self.data.qpos[self.ik_solver.dof_ids] = home_q
-        mujoco.mj_forward(self.model, self.data)
-        time.sleep(1.0)
-        q = self.data.qpos.copy()
-        mink.move_mocap_to_frame(self.model, self.data, "left/pinch_site_target", "left/ee", "site")
-        mink.move_mocap_to_frame(self.model, self.data, "right/pinch_site_target", "right/ee", "site")
-        self.viewer.sync()
-        self.ik_solver.init(q)
-        self.left_target, self.right_target = self.ik_solver.forward_kinematics(q)
-        print(f"left_target: {self.left_target}")
-        print(f"right_target: {self.right_target}")
-
     def step(self):
-        q = self.data.qpos.copy()
+        q = np.array(self.left_piper.get_joint_positions() + self.right_piper.get_joint_positions())
         left_ee_pose, right_ee_pose = self.ik_solver.forward_kinematics(q)
         if self.left_target is not None and self.right_target is not None:  # TODO: check timestamp for the target
-            # update mocap viz
-            self.data.mocap_pos[self.model.body("left/pinch_site_target").mocapid[0]] = self.left_target.translation()
-            self.data.mocap_quat[self.model.body("left/pinch_site_target").mocapid[0]] = (
-                self.left_target.rotation().wxyz
-            )
-            self.data.mocap_pos[self.model.body("right/pinch_site_target").mocapid[0]] = self.right_target.translation()
-            self.data.mocap_quat[self.model.body("right/pinch_site_target").mocapid[0]] = (
-                self.right_target.rotation().wxyz
-            )
-            # solve ik
             qd_left, qd_right = self.ik_solver.solve_ik(self.left_target, self.right_target)
-            self.data.qpos[self.ik_solver.dof_ids] = np.concatenate([qd_left, qd_right])
-        # step mujoco
-        mujoco.mj_step(self.model, self.data)
-        self.viewer.sync()
-        # send ee pose
+            self.left_piper.set_joint_positions(qd_left)
+            self.right_piper.set_joint_positions(qd_right)
+
         pose_msg = BimanualPose(time.perf_counter_ns(), left_ee_pose.wxyz_xyz, right_ee_pose.wxyz_xyz)
         self.node.send_output("bimanual_ee_pose", *pose_msg.encode())
 
     def stop(self):
-        self.viewer.close()
+        self.left_piper._standby()
+        self.right_piper._standby()
 
     def spin(self):
         for event in self.node:
@@ -112,8 +90,9 @@ class BimanualArmMujoco:
             elif event_type == "STOP":
                 self.stop()
 
-
 if __name__ == "__main__":
     _HERE = Path(__file__).parent
-    bimanual_arm_mujoco = BimanualArmMujoco(mjcf_path=(_HERE / "mujoco/scene_bimanual.xml").as_posix())
-    bimanual_arm_mujoco.spin()
+    _XML_PATH = (_HERE / "mujoco/scene_bimanual.xml").as_posix()
+
+    bimanual_arm_node = BimanualArmNode(mjcf_path=_XML_PATH)
+    bimanual_arm_node.spin()
