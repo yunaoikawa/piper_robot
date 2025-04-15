@@ -18,9 +18,6 @@ class Lift:
         self.position_signal = self.lift_motor.get_position()
         self.velocity_signal = self.lift_motor.get_velocity()
         self.status_signals = cast(list[phoenix6.BaseStatusSignal], [self.position_signal, self.velocity_signal])
-        self.position_request = controls.DynamicMotionMagicTorqueCurrentFOC(0, 20, 10, 100, slot=0)
-        self.velocity_request = controls.VelocityTorqueCurrentFOC(0, slot=1)
-        self.neutral_request = controls.NeutralOut()
 
         self.lift_motor_cfg = configs.TalonFXConfiguration()
         # position control gains
@@ -47,6 +44,9 @@ class Lift:
         if not status.is_ok():
             raise Exception(f"Failed to apply TalonFX configuration: {status}")
 
+        self.position_request = controls.DynamicMotionMagicTorqueCurrentFOC(0, 20, 10, 100, slot=0)
+        self.velocity_request = controls.VelocityTorqueCurrentFOC(0, slot=1)
+        self.neutral_request = controls.NeutralOut()
         # self.lift_motor.set_position(0)
 
     def get_position(self) -> float:
@@ -82,7 +82,7 @@ if __name__ == "__main__":
     try:
         while True:
             phoenix6.unmanaged.feed_enable(0.1)
-            lift.set_velocity_control(0.1)
+            lift.set_velocity_control(0.05)
             rate.sleep()
     except KeyboardInterrupt:
         pass
