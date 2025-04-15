@@ -6,9 +6,9 @@ os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6
 from phoenix6 import configs, controls, hardware
 from loop_rate_limiters import RateLimiter
+import matplotlib.pyplot as plt
 
 from robot.base.constants import CONTROL_FREQ
-
 class Lift:
     def __init__(self):
         self.lift_motor = hardware.TalonFX(9, canbus="Drivetrain")
@@ -79,12 +79,17 @@ if __name__ == "__main__":
     time.sleep(2.0)
     input("Press Enter to start")
     rate = RateLimiter(100)
+    positions = []
     try:
         while True:
             phoenix6.unmanaged.feed_enable(0.1)
-            lift.set_velocity_control(0.05)
+            lift.set_velocity_control(-0.05)
+            print("position: ", lift.get_position())
+            positions.append(lift.get_position())
             rate.sleep()
     except KeyboardInterrupt:
         pass
     finally:
         lift.set_neutral()
+        plt.plot(positions[::10])
+        plt.savefig("lift_position.png")
