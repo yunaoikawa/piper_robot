@@ -60,6 +60,31 @@ class Lift:
     def get_velocity(self) -> float:
         return -self.velocity_signal.value * 0.004 # [m/s]
 
+    def home(self, upper_limit: bool = True) -> None:
+        vel = 0.05 if upper_limit else -0.05
+        self.update_state()
+
+        pos_update_counter = 0
+        pos_tolerance = 0.0005
+        last_pos = self.get_position()
+        current_pos = last_pos
+
+        rate_limiter = RateLimiter(100)
+        while True:
+            self.update_state()
+            phoenix6.unmanaged.feed_enable(0.02)
+            self.set_velocity_control(vel)
+            pos_update_counter += 1
+            if pos_update_counter % 5 == 0:
+                current_pos = self.get_position()
+                print("current_pos: ", current_pos)
+                if abs(current_pos - last_pos) < pos_tolerance:
+                    print("Lift homing complete")
+                    self.lift_motor.set_position(-0.39/0.004 if upper_limit else 0.0)
+                    break
+                last_pos = current_pos
+            rate_limiter.sleep()
+
     def set_neutral(self) -> None:
         self.lift_motor.set_control(self.neutral_request)
 
@@ -78,18 +103,23 @@ if __name__ == "__main__":
     lift.set_neutral()
     time.sleep(2.0)
     input("Press Enter to start")
-    rate = RateLimiter(100)
-    positions = []
-    try:
-        while True:
-            phoenix6.unmanaged.feed_enable(0.1)
-            lift.set_velocity_control(-0.05)
-            print("position: ", lift.get_position())
-            positions.append(lift.get_position())
-            rate.sleep()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        lift.set_neutral()
-        plt.plot(positions[::10])
-        plt.savefig("lift_position.png")
+    HOME = False
+    if HOME:
+        lift.home()
+    else:
+        rate = RateLimiter(100)
+        positions = []
+        try:
+            while True:
+                lift.update_state()
+                phoenix6.unmanaged.feed_enable(0.1)
+                # lift.set_velocity_control(-0.05)
+                print("position: ", lift.get_position())
+                positions.append(lift.get_position())
+                rate.sleep()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            lift.set_neutral()
+            plt.plot(positions[::10])
+            plt.savefig("lift_position.png")
