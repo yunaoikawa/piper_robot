@@ -1,5 +1,4 @@
 import time
-import os
 import numpy as np
 from typing import Any
 from pathlib import Path
@@ -9,7 +8,7 @@ import mink
 from dora import Node
 
 from robot.arm.mink_ik_arm import BimanualArmIK
-from robot.msgs.pose import BimanualPose
+from robot.msgs.bimanual_pose import BimanualPose
 
 
 class BimanualArmNode:
