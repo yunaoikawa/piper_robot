@@ -23,8 +23,8 @@ class BimanualArmMujoco:
         self.viewer = mujoco.viewer.launch_passive(
             model=self.model,
             data=self.data,
-            show_left_ui=False,
-            show_right_ui=False,
+            show_left_ui=True,
+            show_right_ui=True,
         )
         self.viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
 
