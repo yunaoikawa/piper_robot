@@ -8,7 +8,7 @@ nodes:
       outputs:
         - ee_pose
       env:
-        - CAN_PORT: can_right
+        - CAN_PORT: can_left
 
   - id: teleop
     custom:
