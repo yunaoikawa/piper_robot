@@ -2,6 +2,7 @@ import time
 import numpy as np
 from typing import Any
 from pathlib import Path
+import argparse
 
 from piper_control import piper_control
 import mink
@@ -33,10 +34,10 @@ class BimanualArmNode:
         self.left_piper.reset()
         self.right_piper.reset()
         # home
-        home_q = self.ik_solver.get_home_q(home_key="stow")
+        home_q = self.ik_solver.get_home_q()
         self.left_piper.set_joint_positions(home_q[:6])
         self.right_piper.set_joint_positions(home_q[6:])
-        time.sleep(1.0)
+        time.sleep(2.0)
         q = np.array(self.left_piper.get_joint_positions() + self.right_piper.get_joint_positions())
         self.ik_solver.init(q)
         self.left_target, self.right_target = self.ik_solver.forward_kinematics(q)
@@ -71,8 +72,7 @@ class BimanualArmNode:
         self.node.send_output("bimanual_ee_pose", *pose_msg.encode())
 
     def stop(self):
-        self.left_piper._standby()
-        self.right_piper._standby()
+        pass
 
     def spin(self):
         for event in self.node:
@@ -89,9 +89,15 @@ class BimanualArmNode:
             elif event_type == "STOP":
                 self.stop()
 
-if __name__ == "__main__":
-    _HERE = Path(__file__).parent
-    _XML_PATH = (_HERE / "mujoco/scene_bimanual.xml").as_posix()
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mjcf_path", type=str, required=True)
+    args = parser.parse_args()
 
-    bimanual_arm_node = BimanualArmNode(mjcf_path=_XML_PATH)
+    _HERE = Path(__file__).parent
+    bimanual_arm_node = BimanualArmNode(mjcf_path=(_HERE / args.mjcf_path).as_posix())
     bimanual_arm_node.spin()
+
+
+if __name__ == "__main__":
+    main()
