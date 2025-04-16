@@ -28,13 +28,14 @@ class ArmNode:
 
     def init(self):
         self.piper.reset()
+        time.sleep(1.0)
         # home
         q = np.array(self.ik_solver.get_home_q())
         print(f"q_home: {q}")
         self.piper.set_joint_positions(q)
-        time.sleep(1.0)
+        time.sleep(2.0)
         q = np.array(self.piper.get_joint_positions())
-        print(f"q_home: {q}")
+        print(f"q_reached: {q}")
         self.ik_solver.init(q)
         self.target = self.ik_solver.forward_kinematics(q)
 
@@ -59,14 +60,15 @@ class ArmNode:
         ee_pose = self.ik_solver.forward_kinematics(q) # update current joint positions
         if self.target is not None:
             qd = self.ik_solver.solve_ik(self.target)
-            print(f"qd: {qd}")
-            # self.piper.set_joint_positions(qd)
+            print(f"qd: {np.round(qd, 4)}")
+            self.piper.set_joint_positions(np.round(qd, 4).tolist())
 
         pose_msg = Pose(time.perf_counter_ns(), ee_pose.wxyz_xyz)
         self.node.send_output("ee_pose", *pose_msg.encode())
 
     def stop(self):
-        self.piper._standby()
+        print("called stop")
+        pass
 
     def spin(self):
         for event in self.node:
@@ -87,7 +89,7 @@ class ArmNode:
 if __name__ == "__main__":
     _HERE = Path(__file__).parent
     _XML_PATH = (_HERE / "mujoco/scene_piper.xml").as_posix()
-    _CAN_PORT = os.environ.get("CAN_PORT", "can_left")
+    _CAN_PORT = os.environ.get("CAN_PORT", "can_right")
 
     arm_node = ArmNode(can_port=_CAN_PORT, mjcf_path=_XML_PATH)
     arm_node.spin()
