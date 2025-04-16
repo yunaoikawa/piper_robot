@@ -5,6 +5,7 @@ import time
 import numpy as np
 from typing import Any
 from pathlib import Path
+import argparse
 
 from dora import Node
 
@@ -57,7 +58,7 @@ class BimanualArmMujoco:
 
     def init(self):
         # home
-        home_q = self.ik_solver.get_home_q(home_key="stow")
+        home_q = self.ik_solver.get_home_q(home_key="home")
         print(f"home_q: {home_q}")
         self.data.qpos[self.ik_solver.dof_ids] = home_q
         mujoco.mj_forward(self.model, self.data)
@@ -113,7 +114,16 @@ class BimanualArmMujoco:
                 self.stop()
 
 
-if __name__ == "__main__":
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--home_key", type=str, default="home")
+    parser.add_argument("--mjcf_path", type=str, default="mujoco/scene_bimanual.xml")
+    args = parser.parse_args()
+
     _HERE = Path(__file__).parent
-    bimanual_arm_mujoco = BimanualArmMujoco(mjcf_path=(_HERE / "mujoco/scene_bimanual.xml").as_posix())
+    bimanual_arm_mujoco = BimanualArmMujoco(mjcf_path=(_HERE / args.mjcf_path).as_posix())
     bimanual_arm_mujoco.spin()
+
+
+if __name__ == "__main__":
+    main()

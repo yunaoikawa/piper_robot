@@ -1,20 +1,18 @@
 nodes:
   - id: arm_piper
-    custom:
-      source: arm/arm_node.py
-      inputs:
-        tick: dora/timer/millis/30 # 33 Hz
-        arm_command: teleop/arm_command
-      outputs:
-        - ee_pose
-      env:
-        - CAN_PORT: can_right
+    path: arm/arm_node.py
+    inputs:
+      tick: dora/timer/millis/30 # 33 Hz
+      arm_command: teleop/arm_command
+    outputs:
+      - ee_pose
+    env:
+      CAN_PORT: can_left
 
   - id: teleop
-    custom:
-      source: teleop/oculus_open_teach_node.py
-      inputs:
-        tick: dora/timer/millis/30 # 30 Hz
-        ee_pose: arm_piper/ee_pose
-      outputs:
-        - arm_command
+    path: teleop/oculus_open_teach_node.py
+    inputs:
+      tick: dora/timer/millis/30 # 30 Hz
+      ee_pose: arm_piper/ee_pose
+    outputs:
+      - arm_command

@@ -1,6 +1,7 @@
 nodes:
   - id: bimanual_arm_mujoco
-    source: arm/bimanual_arm_mujoco_node.py
+    path: arm/bimanual_arm_mujoco_node.py
+    args: "--mjcf_path mujoco/scene_bimanual_table.xml"
     inputs:
       tick: dora/timer/millis/30 # 33 Hz
       bimanual_arm_command: bimanual_arm_teleop/bimanual_arm_command
@@ -8,7 +9,7 @@ nodes:
       - bimanual_ee_pose
 
   - id: bimanual_arm_teleop
-    source: teleop/oculus_bimanual_node.py
+    path: teleop/oculus_bimanual_node.py
     inputs:
       tick: dora/timer/millis/30 # 33 Hz
       bimanual_ee_pose: bimanual_arm_mujoco/bimanual_ee_pose
