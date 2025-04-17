@@ -1,20 +1,18 @@
 import os
 import time
 import math
-import threading
-from typing import Tuple, cast
+from typing import Tuple, cast, Any
 import numpy as np
 from queue import Queue
 
 os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
-from loop_rate_limiters import RateLimiter
-# from ruckig import InputParameter, OutputParameter, Result, Ruckig, ControlInterface
 
+from dora import Node
 
-from robot.network.msgs import Command, CommandType
 from robot.lift.lift_node import Lift
+from robot.msgs.base_command import BaseCommand, CommandType
 from robot.base.constants import (
     POLICY_CONTROL_PERIOD_NS,
     ENCODER_MAGNET_OFFSETS,
@@ -183,28 +181,40 @@ class Base:
         self.x = np.zeros(3)  # x, y, θ
         self.dx = np.zeros(3)  # vx, vy, ω
 
-        self._command_queue: Queue[Command] = Queue(1)
-        self.control_loop_thread: threading.Thread | None = threading.Thread(target=self.control_loop, daemon=True)
-        self.control_loop_running = False
-
+        self._command_queue: Queue[BaseCommand] = Queue(1)
+        self.disable_motors = True
+        self.disable_lift = True
+        self.base_target = np.zeros(3)
+        self.lift_err = 0
+        self.last_command_time = time.perf_counter_ns()
         self._log_counter = 0
 
-    def start_control(self):
-        if self.control_loop_thread is None:
-            print("To initiate a new control loop, create a new instance of Base first")
-            return
-        self.control_loop_running = True
-        self.control_loop_thread.start()
+        self.node = Node()
+        # homing the lift and starting the control loop
+        self.initialized_ = False
+        self.init()
 
-    def stop_control(self):
-        if self.control_loop_thread is None:
-            print("Control loop not running")
-            return
-        self.control_loop_running = False
-        self.control_loop_thread.join()
-        self.control_loop_thread = None
+    def init(self):
+        self.lift.home()
+        # self.start_control()
+        self.initialized_ = True
 
-    def set_target(self, command: Command):
+    # def start_control(self):
+    #     if self.control_loop_thread is None:
+    #         print("To initiate a new control loop, create a new instance of Base first")
+    #         return
+    #     self.control_loop_running = True
+    #     self.control_loop_thread.start()
+
+    # def stop_control(self):
+    #     if self.control_loop_thread is None:
+    #         print("Control loop not running")
+    #         return
+    #     self.control_loop_running = False
+    #     self.control_loop_thread.join()
+    #     self.control_loop_thread = None
+
+    def set_target(self, command: BaseCommand):
         if self._command_queue.full():
             print("warning: command queue is full")
         self._command_queue.put(command, block=False)
@@ -245,50 +255,86 @@ class Base:
             wheel_speeds *= np.cos(diff_angle(wheel_angles, self.steer_pos))
         return wheel_speeds, wheel_angles
 
-    def control_loop(self):
-        # TODO: Set real-time scheduling policy
-        disable_motors = True
-        disable_lift = True
-        last_command_time = time.perf_counter_ns()
-        rate_limiter = RateLimiter(CONTROL_FREQ)
+    # def control_loop(self):
+    #     # TODO: Set real-time scheduling policy
+    #     disable_motors = True
+    #     disable_lift = True
+    #     last_command_time = time.perf_counter_ns()
+    #     rate_limiter = RateLimiter(CONTROL_FREQ)
 
-        while self.control_loop_running:
-            self.update_state()
+    #     while self.control_loop_running:
+    #         self.update_state()
 
-            if not self._command_queue.empty():
-                command = self._command_queue.get()
-                last_command_time = time.perf_counter_ns()
-                if command.type == CommandType.BASE_VELOCITY:
-                    target = command.target
-                    disable_motors = False
-                elif command.type == CommandType.LIFT:
-                    lift_target = command.target[0]
-                    lift_err = (lift_target - self.lift.get_position())
-                    disable_lift = abs(lift_err) < 0.001
-                elif command.type == CommandType.BASE_POSITION:
-                    raise NotImplementedError("Position control not implemented yet")
+    #         if not self._command_queue.empty():
+    #             command = self._command_queue.get()
+    #             last_command_time = time.perf_counter_ns()
+    #             if command.type == CommandType.BASE_VELOCITY:
+    #                 target = command.target
+    #                 disable_motors = False
+    #             elif command.type == CommandType.LIFT:
+    #                 lift_target = command.target[0]
+    #                 lift_err = (lift_target - self.lift.get_position())
+    #                 disable_lift = abs(lift_err) < 0.001
+    #             elif command.type == CommandType.BASE_POSITION:
+    #                 raise NotImplementedError("Position control not implemented yet")
 
-            if (time.perf_counter_ns() - last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
-                disable_motors = True
-                disable_lift = True
+    #         if (time.perf_counter_ns() - last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
+    #             disable_motors = True
+    #             disable_lift = True
 
-            if disable_motors:
-                for s, d in zip(self.steer_motors, self.drive_motors):
-                    s.set_neutral()
-                    d.set_neutral()
-            else:
-                phoenix6.unmanaged.feed_enable(0.1)
-                wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(target)
-                for i in range(NUM_SWERVES):
-                    self.steer_motors[i].set_position(wheel_angles[i])
-                    self.drive_motors[i].set_velocity(wheel_speeds[i])
+    #         if disable_motors:
+    #             for s, d in zip(self.steer_motors, self.drive_motors):
+    #                 s.set_neutral()
+    #                 d.set_neutral()
+    #         else:
+    #             phoenix6.unmanaged.feed_enable(0.1)
+    #             wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(target)
+    #             for i in range(NUM_SWERVES):
+    #                 self.steer_motors[i].set_position(wheel_angles[i])
+    #                 self.drive_motors[i].set_velocity(wheel_speeds[i])
 
-            if disable_lift:
-                self.lift.set_neutral()
-            else:
-                phoenix6.unmanaged.feed_enable(0.01)
-                self.lift.set_velocity_control(np.sign(lift_err) * 0.05)
-            rate_limiter.sleep()
+    #         if disable_lift:
+    #             self.lift.set_neutral()
+    #         else:
+    #             phoenix6.unmanaged.feed_enable(0.01)
+    #             self.lift.set_velocity_control(np.sign(lift_err) * 0.05)
+    #         rate_limiter.sleep()
+
+    def step(self):
+        self.update_state()
+        if not self._command_queue.empty():
+            command = self._command_queue.get()
+            self.last_command_time = time.perf_counter_ns()
+            if command.type == CommandType.BASE_VELOCITY:
+                self.base_target = command.target
+                self.disable_motors = False
+            elif command.type == CommandType.LIFT:
+                lift_target = command.target[0]
+                self.lift_err = (lift_target - self.lift.get_position())
+                self.disable_lift = abs(self.lift_err) < 0.001
+
+        if (time.perf_counter_ns() - self.last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
+            self.base_target = np.zeros(3)
+            self.lift_err = 0
+            self.disable_motors = True
+            self.disable_lift = True
+
+        if self.disable_motors:
+            for s, d in zip(self.steer_motors, self.drive_motors):
+                s.set_neutral()
+                d.set_neutral()
+        else:
+            phoenix6.unmanaged.feed_enable(0.1)
+            wheel_speeds, wheel_angles = self.vehicle_velocity_to_angle_and_speed(self.base_target)
+            for i in range(NUM_SWERVES):
+                self.steer_motors[i].set_position(wheel_angles[i])
+                self.drive_motors[i].set_velocity(wheel_speeds[i])
+
+        if self.disable_lift:
+            self.lift.set_neutral()
+        else:
+            phoenix6.unmanaged.feed_enable(0.01)
+            self.lift.set_velocity_control(np.sign(self.lift_err) * 0.05)
 
     def get_encoder_offsets(self):
         offsets = []
@@ -300,23 +346,33 @@ class Base:
             offsets.append(f"{round(4096 * (curr_offset - curr_position))}.0 / 4096")
         print(f"ENCODER_MAGNET_OFFSETS = [{', '.join(offsets)}]")
 
+    def base_command_handler(self, event: dict[str, Any]):
+        command = BaseCommand.decode(event["value"], event["metadata"])
+        self.set_target(command)
+
+    def stop(self):
+        # self.stop_control()
+        pass
+
+    def spin(self):
+        while not self.initialized_:
+            time.sleep(0.1)
+
+        for event in self.node:
+            event_type = event["type"]
+            if event_type == "INPUT":
+                event_id = event["id"]
+                if event_id == "base_command":
+                    self.base_command_handler(event)
+                elif event_id == "tick":
+                    self.step()
+            elif event_type == "STOP":
+                self.stop()
+
 
 def main():
     base = Base()
-    base.lift.home()
-    base.start_control()
-    rate = RateLimiter(30)
-    try:
-        while True:
-            command = Command(time.perf_counter_ns(), CommandType.LIFT, target=np.array([0.15]))
-            base.set_target(command)
-            print(f"Lift position: {base.lift.get_position()} m")
-            rate.sleep()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        base.stop_control()
-
+    base.spin()
 
 if __name__ == "__main__":
     main()
