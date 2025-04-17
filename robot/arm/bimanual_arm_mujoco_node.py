@@ -10,7 +10,7 @@ import argparse
 from dora import Node
 
 from robot.arm.mink_ik_arm import BimanualArmIK
-from robot.msgs.bimanual_pose import BimanualPose
+from robot.msgs.bimanual_pose import BimanualPose, BimanualArmCommand
 
 
 class BimanualArmMujoco:
@@ -32,6 +32,8 @@ class BimanualArmMujoco:
         # initialize arm
         self.left_target: mink.SE3 | None = None
         self.right_target: mink.SE3 | None = None
+        self.left_gripper: float | None = None
+        self.right_gripper: float | None = None
         self.ik_solver = BimanualArmIK(mjcf_path, solver_dt=self.solver_dt)
 
         # communication
@@ -47,14 +49,16 @@ class BimanualArmMujoco:
         return True
 
     def bimanual_arm_command_handler(self, event: dict[str, Any]):
-        bimanual_pose = BimanualPose.decode(event["value"], event["metadata"])
-        if not self.check_timestamp(bimanual_pose.timestamp, 0.1):
+        bimanual_arm_command = BimanualArmCommand.decode(event["value"], event["metadata"])
+        if not self.check_timestamp(bimanual_arm_command.timestamp, 0.1):
             return
 
-        left_pose = mink.SE3(bimanual_pose.left_wxyz_xyz)
-        right_pose = mink.SE3(bimanual_pose.right_wxyz_xyz)
+        left_pose = mink.SE3(bimanual_arm_command.left_wxyz_xyz)
+        right_pose = mink.SE3(bimanual_arm_command.right_wxyz_xyz)
         self.left_target = left_pose
         self.right_target = right_pose
+        self.left_gripper = bimanual_arm_command.left_gripper
+        self.right_gripper = bimanual_arm_command.right_gripper
 
     def init(self):
         # home
@@ -88,6 +92,10 @@ class BimanualArmMujoco:
             # solve ik
             qd_left, qd_right = self.ik_solver.solve_ik(self.left_target, self.right_target)
             self.data.qpos[self.ik_solver.dof_ids] = np.concatenate([qd_left, qd_right])
+            if self.left_gripper is not None:
+                print(f"left_gripper: {self.left_gripper}")
+            if self.right_gripper is not None:
+                print(f"right_gripper: {self.right_gripper}")
         # step mujoco
         mujoco.mj_step(self.model, self.data)
         self.viewer.sync()

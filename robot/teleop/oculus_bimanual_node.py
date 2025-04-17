@@ -7,10 +7,11 @@ from typing import Any
 import mink
 
 from dora import Node
+from piper_control.piper_control import GRIPPER_ANGLE_MAX
 
 from robot.teleop.oculus_msgs import parse_controller_state
 from robot.network import VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
-from robot.msgs.bimanual_pose import BimanualPose
+from robot.msgs.bimanual_pose import BimanualPose, BimanualArmCommand
 
 class OculusBimanualNode:
     def __init__(self):
@@ -140,14 +141,19 @@ class OculusBimanualNode:
         else:
             X_R_EEright_desired = X_R_EEright # keep the current pose
 
+        left_gripper = GRIPPER_ANGLE_MAX if controller_state.left_index_trigger < 0.5 else 0.0
+        right_gripper = GRIPPER_ANGLE_MAX if controller_state.right_index_trigger < 0.5 else 0.0
+
         # publish the target poses
         if self.left_arm_teleop_enabled or self.right_arm_teleop_enabled:
-            bimanual_pose = BimanualPose(
+            bimanual_arm_command = BimanualArmCommand(
                 timestamp=time.perf_counter_ns(),
                 left_wxyz_xyz=X_R_EEleft_desired.wxyz_xyz,
                 right_wxyz_xyz=X_R_EEright_desired.wxyz_xyz,
+                left_gripper=left_gripper,
+                right_gripper=right_gripper,
             )
-            self.node.send_output("bimanual_arm_command", *bimanual_pose.encode())
+            self.node.send_output("bimanual_arm_command", *bimanual_arm_command.encode())
 
     def spin(self):
         for event in self.node:

@@ -9,7 +9,7 @@ import mink
 from dora import Node
 
 from robot.arm.mink_ik_arm import BimanualArmIK
-from robot.msgs.bimanual_pose import BimanualPose
+from robot.msgs.bimanual_pose import BimanualPose, BimanualArmCommand
 
 
 class BimanualArmNode:
@@ -24,6 +24,8 @@ class BimanualArmNode:
         # initialize ik
         self.left_target: mink.SE3 | None = None
         self.right_target: mink.SE3 | None = None
+        self.left_gripper: float | None = None
+        self.right_gripper: float | None = None
         self.ik_solver = BimanualArmIK(mjcf_path, solver_dt=self.solver_dt)
 
         # communication
@@ -51,22 +53,28 @@ class BimanualArmNode:
         return True
 
     def bimanual_arm_command_handler(self, event: dict[str, Any]):
-        bimanual_pose = BimanualPose.decode(event["value"], event["metadata"])
-        if not self.check_timestamp(bimanual_pose.timestamp, 0.1):
+        bimanual_arm_command = BimanualArmCommand.decode(event["value"], event["metadata"])
+        if not self.check_timestamp(bimanual_arm_command.timestamp, 0.1): # TODO: no need to check here
             return
 
-        left_pose = mink.SE3(bimanual_pose.left_wxyz_xyz)
-        right_pose = mink.SE3(bimanual_pose.right_wxyz_xyz)
+        left_pose = mink.SE3(bimanual_arm_command.left_wxyz_xyz)
+        right_pose = mink.SE3(bimanual_arm_command.right_wxyz_xyz)
         self.left_target = left_pose
         self.right_target = right_pose
+        self.left_gripper = bimanual_arm_command.left_gripper
+        self.right_gripper = bimanual_arm_command.right_gripper
 
     def step(self):
         q = np.array(self.left_piper.get_joint_positions() + self.right_piper.get_joint_positions())
         left_ee_pose, right_ee_pose = self.ik_solver.forward_kinematics(q)
-        if self.left_target is not None and self.right_target is not None:  # TODO: check timestamp for the target
+        if self.left_target is not None and self.right_target is not None:
             qd_left, qd_right = self.ik_solver.solve_ik(self.left_target, self.right_target)
             self.left_piper.set_joint_positions(qd_left)
             self.right_piper.set_joint_positions(qd_right)
+            if self.left_gripper is not None:
+                self.left_piper.set_gripper_ctrl(position=self.left_gripper)
+            if self.right_gripper is not None:
+                self.right_piper.set_gripper_ctrl(position=self.right_gripper)
 
         pose_msg = BimanualPose(time.perf_counter_ns(), left_ee_pose.wxyz_xyz, right_ee_pose.wxyz_xyz)
         self.node.send_output("bimanual_ee_pose", *pose_msg.encode())
