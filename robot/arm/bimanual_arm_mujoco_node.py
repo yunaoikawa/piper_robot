@@ -124,7 +124,6 @@ class BimanualArmMujoco:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--home_key", type=str, default="home")
     parser.add_argument("--mjcf_path", type=str, default="mujoco/scene_bimanual.xml")
     args = parser.parse_args()
 

@@ -62,6 +62,6 @@ class BimanualArmCommand:
             .to_numpy()
             .reshape(7,)
         )
-        left_gripper = data[14]
-        right_gripper = data[15]
+        left_gripper = data[14].as_py()
+        right_gripper = data[15].as_py()
         return cls(metadata["timestamp"], left_wxyz_xyz, right_wxyz_xyz, left_gripper, right_gripper)
