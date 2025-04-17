@@ -12,6 +12,10 @@ from piper_control.piper_control import GRIPPER_ANGLE_MAX
 from robot.teleop.oculus_msgs import parse_controller_state
 from robot.network import VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
 from robot.msgs.bimanual_pose import BimanualPose, BimanualArmCommand
+from robot.msgs.base_command import BaseCommand, CommandType
+
+def apply_deadzone(arr, deadzone_size=0.05):
+    return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))
 
 class OculusBimanualNode:
     def __init__(self):
@@ -143,6 +147,35 @@ class OculusBimanualNode:
 
         left_gripper = GRIPPER_ANGLE_MAX if controller_state.left_index_trigger < 0.5 else 0.0
         right_gripper = GRIPPER_ANGLE_MAX if controller_state.right_index_trigger < 0.5 else 0.0
+
+        # BASE CONTROL
+        vy = -controller_state.right_thumbstick_axes[0]
+        vx = controller_state.right_thumbstick_axes[1]
+        w = -controller_state.left_thumbstick_axes[0]
+        target_velocity = np.array([vx, vy, w])
+        target_velocity = apply_deadzone(target_velocity)
+        if sum(np.abs(target_velocity)) > 0.0:
+            base_command = BaseCommand(
+                timestamp=time.perf_counter_ns(),
+                type=CommandType.BASE_VELOCITY,
+                target=target_velocity.ravel(),
+            )
+            self.node.send_output("base_command", *base_command.encode())
+
+        # LIFT CONTROL
+        if controller_state.left_hand_trigger > 0.5:
+            lift_target = 0.0
+        elif controller_state.right_hand_trigger > 0.5:
+            lift_target = 0.39
+        else:
+            lift_target = -1 # don't send command if no trigger is pressed
+        if lift_target >= 0:
+            lift_command = BaseCommand(
+                timestamp=time.perf_counter_ns(),
+                type=CommandType.LIFT,
+                target=np.array([lift_target]),
+            )
+            self.node.send_output("base_command", *lift_command.encode())
 
         # publish the target poses
         if self.left_arm_teleop_enabled or self.right_arm_teleop_enabled:
