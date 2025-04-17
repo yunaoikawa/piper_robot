@@ -241,7 +241,7 @@ class Base:
         return np.linalg.lstsq(self.C, np.concatenate((vx, vy)), rcond=None)[0]
 
     def vehicle_velocity_to_angle_and_speed(
-        self, u_3dof: np.ndarray, cos_error_scaling: bool = False
+        self, u_3dof: np.ndarray, cos_error_scaling: bool = True
     ) -> Tuple[np.ndarray, np.ndarray]:
         wheel_velocities_directional = self.C @ u_3dof
         vx, vy = wheel_velocities_directional[:4], wheel_velocities_directional[4:]
