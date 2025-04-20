@@ -3,9 +3,28 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Tuple
 
-from scipy.spatial.transform.rotation import Rotation as R
-
 from mink.lie import SE3, SO3
+
+def from_quat(q: np.ndarray) -> np.ndarray:
+    """Convert quaternion to rotation matrix.
+
+    Args:
+        q: Quaternion in scalar-last (x,y,z,w) format
+
+    Returns:
+        3x3 rotation matrix
+    """
+    x, y, z, w = q
+    x2, y2, z2 = x*x, y*y, z*z
+
+    R = np.array([
+        [1 - 2*y2 - 2*z2,     2*x*y - 2*w*z,     2*x*z + 2*w*y],
+        [    2*x*y + 2*w*z, 1 - 2*x2 - 2*z2,     2*y*z - 2*w*x],
+        [    2*x*z - 2*w*y,     2*y*z + 2*w*x, 1 - 2*x2 - 2*y2]
+    ])
+
+    return R
+
 
 @dataclass
 class ControllerState:
@@ -34,7 +53,7 @@ class ControllerState:
     def left_SE3(self) -> SE3:
         # convert left-handed to right-handed
         M = np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]])
-        rotation_mat = M @ R.from_quat(self.left_local_rotation).as_matrix() @ M.T
+        rotation_mat = M @ from_quat(self.left_local_rotation) @ M.T
         translation = self.left_local_position * np.array([1, 1, -1])
         return SE3.from_rotation_and_translation(rotation=SO3.from_matrix(rotation_mat), translation=translation)
 
@@ -42,7 +61,7 @@ class ControllerState:
     def right_SE3(self) -> SE3:
         # convert left-handed to right-handed
         M = np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]])
-        rotation_mat = M @ R.from_quat(self.right_local_rotation).as_matrix() @ M.T
+        rotation_mat = M @ from_quat(self.right_local_rotation) @ M.T
         translation = self.right_local_position * np.array([1, 1, -1])
         return SE3.from_rotation_and_translation(rotation=SO3.from_matrix(rotation_mat), translation=translation)
 

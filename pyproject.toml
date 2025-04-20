@@ -18,21 +18,20 @@ classifiers = [
 requires-python = ">=3.9"
 dependencies = [
     "phoenix6",
-    "numpy<2",
+    "numpy",
     "pyzmq",
     "rerun-sdk",
+    # Sensors
     "pygame",
     "opencv-python",
     "pyliblzfse",
-    "Pillow",
+    "pillow",
     "record3d @ git+ssh://git@github.com/eneserciyes/record3d.git",
-    "hydra-core>=1.3.2",
+    # Simulation and control
     "mujoco>=3.2.7",
-    "scipy",
-    "tqdm",
-    "omegaconf",
-    "hydra-core",
     "mink",
+    # Utilities
+    "tqdm",
     "loop-rate-limiters>=1.1.0",
 ]
 
