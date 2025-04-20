@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "robot"
-version = "0.0.1"
+version = "0.0.2"
 description = "Open source bimanual robot"
 authors = [
     { name = "NYU GRAIL" }
@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License"
 ]
-requires-python = "==3.10.*"
+requires-python = ">=3.9"
 dependencies = [
     "phoenix6",
     "numpy<2",
@@ -25,7 +25,6 @@ dependencies = [
     "opencv-python",
     "pyliblzfse",
     "Pillow",
-    "numpy-quaternion",
     "record3d @ git+ssh://git@github.com/eneserciyes/record3d.git",
     "hydra-core>=1.3.2",
     "mujoco>=3.2.7",
@@ -33,9 +32,7 @@ dependencies = [
     "tqdm",
     "omegaconf",
     "hydra-core",
-    "piper-sdk",
     "mink",
-    "lcm>=1.5.1",
     "loop-rate-limiters>=1.1.0",
 ]
 

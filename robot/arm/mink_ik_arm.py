@@ -105,7 +105,7 @@ class BimanualArmIK:
         )
 
         self.posture_task = mink.PostureTask(self.model, cost=np.array([1e-3] * 12))
-        self.tasks = [self.left_ee_task, self.right_ee_task] # TODO: add posture task
+        self.tasks = [self.left_ee_task, self.right_ee_task]  # TODO: add posture task
         self.limits = [mink.ConfigurationLimit(self.model), mink.VelocityLimit(self.model, velocity_limits)]
 
         # initial setup

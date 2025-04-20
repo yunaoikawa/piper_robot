@@ -145,22 +145,22 @@
 
 
     <actuator>
-        <position name="joint1_pos" joint="joint1" class="piper" kp="80" kv="5"/>
+        <position name="joint1_pos" joint="joint1" class="piper" kp="40" kv="5"/>
         <!-- <velocity name="joint1_vel" joint="joint1" kv="5" />
         <motor name="joint1_torque" joint="joint1" /> -->
-        <position name="joint2_pos" joint="joint2" class="piper" kp="80" kv="5"/>
+        <position name="joint2_pos" joint="joint2" class="piper" kp="40" kv="5"/>
         <!-- <velocity name="joint2_vel" joint="joint2" kv="5" />
         <motor name="joint2_torque" joint="joint2" /> -->
-        <position name="joint3_pos" joint="joint3" class="piper" kp="80" kv="5"/>
+        <position name="joint3_pos" joint="joint3" class="piper" kp="40" kv="5"/>
         <!-- <velocity name="joint3_vel" joint="joint3" kv="5" />
         <motor name="joint3_torque" joint="joint3" /> -->
-        <position name="joint4_pos" joint="joint4" class="piper" kp="40" kv="5"/>
+        <position name="joint4_pos" joint="joint4" class="piper" kp="20" kv="5"/>
         <!-- <velocity name="joint4_vel" joint="joint4" kv="5" />
         <motor name="joint4_torque" joint="joint4" /> -->
-        <position name="joint5_pos" joint="joint5" class="piper" kp="10" kv="1.5"/>
+        <position name="joint5_pos" joint="joint5" class="piper" kp="5" kv="1.5"/>
         <!-- <velocity name="joint5_vel" joint="joint5" kv="1.5" />
         <motor name="joint5_torque" joint="joint5" /> -->
-        <position name="joint6_pos" joint="joint6" class="piper" kp="10" kv="1.5" />
+        <position name="joint6_pos" joint="joint6" class="piper" kp="5" kv="1.5" />
         <!-- <velocity name="joint6_vel" joint="joint6" kv="1.5" />
         <motor name="joint6_torque" joint="joint6" /> -->
         <!-- <position name="gripper" joint="joint7" class="finger" kp="40" kv="5" /> -->

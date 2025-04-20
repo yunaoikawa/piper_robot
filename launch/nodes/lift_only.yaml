@@ -1,2 +1,0 @@
-- name: lift
-  module: robot.lift.lift_node
