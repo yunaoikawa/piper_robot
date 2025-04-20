@@ -69,8 +69,8 @@ class ControllerState:
 def parse_controller_state(controller_state_string: str) -> ControllerState:
     left_data, right_data = controller_state_string.split("|")
 
-    left_data = left_data.split(";")[1:-1]
-    right_data = right_data.split(";")[1:-1]
+    left_data_list = left_data.split(";")[1:-1]
+    right_data_list = right_data.split(";")[1:-1]
 
     def parse_bool(val: str) -> bool:
         return val.split(":")[1].lower().strip() == "true"
@@ -81,7 +81,7 @@ def parse_controller_state(controller_state_string: str) -> ControllerState:
     def parse_list_float(val: str) -> np.ndarray:
         return np.array(list(map(float, val.split(":")[1].split(","))))
 
-    def parse_section(data: list) -> Tuple:
+    def parse_section(data: list[str]) -> Tuple:
         return (
             # Buttons
             parse_bool(data[0]),
@@ -98,7 +98,7 @@ def parse_controller_state(controller_state_string: str) -> ControllerState:
             parse_list_float(data[8]),
         )
 
-    left_parsed = parse_section(left_data)
-    right_parsed = parse_section(right_data)
+    left_parsed = parse_section(left_data_list)
+    right_parsed = parse_section(right_data_list)
 
     return ControllerState(time.time(), *left_parsed, *right_parsed)
