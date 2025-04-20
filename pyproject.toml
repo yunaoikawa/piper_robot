@@ -17,20 +17,18 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
+    "dora-rs-cli",
     "phoenix6",
     "numpy",
     "pyzmq",
     "rerun-sdk",
-    # Sensors
     "pygame",
     "opencv-python",
     "pyliblzfse",
     "pillow",
     "record3d @ git+ssh://git@github.com/eneserciyes/record3d.git",
-    # Simulation and control
     "mujoco>=3.2.7",
     "mink",
-    # Utilities
     "tqdm",
     "loop-rate-limiters>=1.1.0",
 ]
