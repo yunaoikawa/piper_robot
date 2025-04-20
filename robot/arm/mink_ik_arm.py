@@ -54,8 +54,10 @@ class ArmIK:
         self.configuration.integrate_inplace(vel, self.solver_dt)
         return self.configuration.q[self.dof_ids]
 
-    def forward_kinematics(self, q: np.ndarray) -> mink.SE3:
-        # self.configuration.update(q)
+    def update_configuration(self, q: np.ndarray):
+        self.configuration.update(q)
+
+    def forward_kinematics(self) -> mink.SE3:
         return self.configuration.get_transform_frame_to_world(
             self.end_effector_task.frame_name, self.end_effector_task.frame_type
         )

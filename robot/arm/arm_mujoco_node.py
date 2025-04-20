@@ -61,12 +61,13 @@ class ArmMujoco:
         mink.move_mocap_to_frame(self.model, self.data, "pinch_site_target", "ee", "site")
         self.viewer.sync()
         self.ik_solver.init(q)
-        self.target = self.ik_solver.forward_kinematics(q)
+        self.target = self.ik_solver.forward_kinematics()
         print(f"target: {self.target}")
 
     def step(self):
         q = self.data.qpos.copy()
-        ee_pose = self.ik_solver.forward_kinematics(q)
+        # self.ik_solver.update_configuration(q)
+        ee_pose = self.ik_solver.forward_kinematics()
         if self.target is not None: # TODO: check timestamp for the target
             # update mocap viz
             self.data.mocap_pos[self.model.body("pinch_site_target").mocapid[0]] = self.target.translation()
