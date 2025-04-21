@@ -36,11 +36,11 @@ class ArmNode:
         # home
         q = np.array(self.ik_solver.get_home_q())
         print(f"q_home: {q}")
-        cmd = JointState(dof=self.robot_config.joint_dof)
+        cmd = JointState(self.robot_config.joint_dof)
         cmd.pos()[:] = q
         self.piper.set_joint_cmd(cmd)
         time.sleep(2.0)
-        q = np.array(self.piper.get_joint_state().pos)
+        q = np.array(self.piper.get_joint_state().pos())
         print(f"q_reached: {q}")
         self.ik_solver.init(q)
         self.target = self.ik_solver.forward_kinematics()
@@ -67,7 +67,7 @@ class ArmNode:
         if self.target is not None:
             qd = self.ik_solver.solve_ik(self.target)
             print(f"qd: {np.round(qd, 4)}")
-            cmd = JointState(dof=self.robot_config.joint_dof)
+            cmd = JointState(self.robot_config.joint_dof)
             cmd.pos()[:] = qd
             self.piper.set_joint_cmd(cmd)
 
@@ -97,7 +97,7 @@ class ArmNode:
 if __name__ == "__main__":
     _HERE = Path(__file__).parent
     _XML_PATH = (_HERE / "mujoco/scene_piper.xml").as_posix()
-    _URDF_PATH = (_HERE / "urdf/piper_no_gripper_description.urdf").as_posix()
+    _URDF_PATH = (_HERE / "urdf/piper_no_gripper_description.xml").as_posix()
     _CAN_PORT = os.environ.get("CAN_PORT", "can_right")
 
     arm_node = ArmNode(can_port=_CAN_PORT, mjcf_path=_XML_PATH, urdf_path=_URDF_PATH)
