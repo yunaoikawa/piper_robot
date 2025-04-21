@@ -13,7 +13,7 @@ from robot.arm.mink_ik_arm import ArmIK
 from robot.msgs.pose import Pose
 
 class ArmNode:
-    def __init__(self, can_port: str, mjcf_path: str, urdf_path: str, solver_dt: float = 0.03):
+    def __init__(self, can_port: str, mjcf_path: str, urdf_path: str, solver_dt: float = 0.01):
         self.can_port = can_port
         self.mjcf_path = mjcf_path
         self.solver_dt = solver_dt
@@ -35,13 +35,14 @@ class ArmNode:
         time.sleep(1.0)
         # home
         q = np.array(self.ik_solver.get_home_q())
-        print(f"q_home: {q}")
+        print(f"q_home: {np.round(q, 4)}")
         cmd = JointState(self.robot_config.joint_dof)
-        cmd.pos()[:] = q
+        cmd.timestamp = self.piper.get_timestamp() + 1.0
+        cmd.pos = q
         self.piper.set_joint_cmd(cmd)
         time.sleep(2.0)
-        q = np.array(self.piper.get_joint_state().pos())
-        print(f"q_reached: {q}")
+        q = self.piper.get_joint_state().pos
+        print(f"q_reached: {np.round(q, 4)}")
         self.ik_solver.init(q)
         self.target = self.ik_solver.forward_kinematics()
 
@@ -55,7 +56,7 @@ class ArmNode:
 
     def arm_command_handler(self, event: dict[str, Any]):
         pose = Pose.decode(event["value"], event["metadata"])
-        if not self.check_timestamp(pose.timestamp, 0.1):
+        if not self.check_timestamp(pose.timestamp, 0.05):
             return
 
         target = mink.SE3(pose.wxyz_xyz)
@@ -68,7 +69,7 @@ class ArmNode:
             qd = self.ik_solver.solve_ik(self.target)
             print(f"qd: {np.round(qd, 4)}")
             cmd = JointState(self.robot_config.joint_dof)
-            cmd.pos()[:] = qd
+            cmd.pos = qd
             self.piper.set_joint_cmd(cmd)
 
         pose_msg = Pose(time.perf_counter_ns(), ee_pose.wxyz_xyz)
