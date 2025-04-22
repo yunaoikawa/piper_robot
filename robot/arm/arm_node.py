@@ -4,7 +4,6 @@ import numpy as np
 from typing import Any
 from pathlib import Path
 
-# from piper_control import piper_control
 from piperlib import PiperJointController, RobotConfigFactory, ControllerConfigFactory, JointState
 import mink
 from dora import Node
@@ -67,7 +66,6 @@ class ArmNode:
         ee_pose = self.ik_solver.forward_kinematics() # update current joint positions
         if self.target is not None:
             qd = self.ik_solver.solve_ik(self.target)
-            print(f"qd: {np.round(qd, 4)}")
             cmd = JointState(self.robot_config.joint_dof)
             cmd.pos = qd
             self.piper.set_joint_cmd(cmd)
