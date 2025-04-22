@@ -7,7 +7,7 @@ nodes:
     outputs:
       - ee_pose
     env:
-      CAN_PORT: can_left
+      CAN_PORT: can_right
 
   - id: teleop
     path: teleop/oculus_open_teach_node.py
