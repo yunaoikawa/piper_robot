@@ -86,10 +86,8 @@ class BimanualArmNode:
         if self.left_target is not None and self.right_target is not None:
             qd_left, qd_right = self.ik_solver.solve_ik(self.left_target, self.right_target)
             left_cmd = JointState(6)
-            left_cmd.timestamp = self.left_piper.get_timestamp() + 1.0
             left_cmd.pos = qd_left
             right_cmd = JointState(6)
-            right_cmd.timestamp = self.right_piper.get_timestamp() + 1.0
             right_cmd.pos = qd_right
             self.left_piper.set_joint_cmd(left_cmd)
             self.right_piper.set_joint_cmd(right_cmd)
