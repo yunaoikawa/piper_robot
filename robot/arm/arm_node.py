@@ -96,7 +96,7 @@ class ArmNode:
 if __name__ == "__main__":
     _HERE = Path(__file__).parent
     _XML_PATH = (_HERE / "mujoco/scene_piper.xml").as_posix()
-    _URDF_PATH = (_HERE / "urdf/piper_description_right.xml").as_posix()
+    _URDF_PATH = (_HERE / "urdf/piper_description.xml").as_posix()
     _CAN_PORT = os.environ.get("CAN_PORT", "can_right")
 
     arm_node = ArmNode(can_port=_CAN_PORT, mjcf_path=_XML_PATH, urdf_path=_URDF_PATH)
