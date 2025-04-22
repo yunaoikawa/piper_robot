@@ -6,7 +6,6 @@ os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6
 from phoenix6 import configs, controls, hardware
 from loop_rate_limiters import RateLimiter
-import matplotlib.pyplot as plt
 
 from robot.base.constants import CONTROL_FREQ
 class Lift:
@@ -112,5 +111,5 @@ if __name__ == "__main__":
             pass
         finally:
             lift.set_neutral()
-            plt.plot(positions[::10])
-            plt.savefig("lift_position.png")
+            # plt.plot(positions[::10])
+            # plt.savefig("lift_position.png")
