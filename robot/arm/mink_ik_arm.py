@@ -129,7 +129,7 @@ class BimanualArmIK:
         self.left_ee_task.set_target(T_wL)
         self.right_ee_task.set_target(T_wR)
         vel = mink.solve_ik(
-            self.configuration, self.tasks, self.solver_dt, solver="quadprog", damping=1e-3, limits=self.limits
+            self.configuration, self.tasks, self.solver_dt, solver="daqp", damping=1e-3, limits=self.limits
         )
         self.configuration.integrate_inplace(vel, self.solver_dt)
         q = self.configuration.q[self.dof_ids]
