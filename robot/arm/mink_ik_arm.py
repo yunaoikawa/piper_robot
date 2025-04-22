@@ -4,7 +4,7 @@ import mink
 
 
 class ArmIK:
-    def __init__(self, mjcf_path: str, solver_dt=0.033):
+    def __init__(self, mjcf_path: str, solver_dt=0.01):
         self.model = mujoco.MjModel.from_xml_path(mjcf_path)
         self.solver_dt = solver_dt
 
@@ -64,7 +64,7 @@ class ArmIK:
 
 
 class BimanualArmIK:
-    def __init__(self, mjcf_path: str, solver_dt=0.033):
+    def __init__(self, mjcf_path: str, solver_dt=0.01):
         self.model = mujoco.MjModel.from_xml_path(mjcf_path)
         self.solver_dt = solver_dt
 
@@ -135,7 +135,7 @@ class BimanualArmIK:
         q = self.configuration.q[self.dof_ids]
         return q[:6], q[6:]
 
-    def forward_kinematics(self, q: np.ndarray) -> tuple[mink.SE3, mink.SE3]:
+    def forward_kinematics(self) -> tuple[mink.SE3, mink.SE3]:
         # self.configuration.update(q)
         return (
             self.configuration.get_transform_frame_to_world(self.left_ee_task.frame_name, self.left_ee_task.frame_type),
