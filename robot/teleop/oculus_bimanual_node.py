@@ -153,8 +153,10 @@ class OculusBimanualNode:
         vy = -controller_state.right_thumbstick_axes[0]
         vx = controller_state.right_thumbstick_axes[1]
         w = -controller_state.left_thumbstick_axes[0]
+        max_vel = np.array([0.5, 0.5, 1.57])
         target_velocity = np.array([vx, vy, w])
         target_velocity = apply_deadzone(target_velocity)
+        target_velocity = max_vel * target_velocity
         if sum(np.abs(target_velocity)) > 0.0:
             base_command = BaseCommand(
                 timestamp=time.perf_counter_ns(),

@@ -125,8 +125,8 @@ def main():
     args = parser.parse_args()
 
     _HERE = Path(__file__).parent
-    _LEFT_URDF_PATH = (_HERE / "urdf/piper_description.xml").as_posix()
-    _RIGHT_URDF_PATH = (_HERE / "urdf/piper_description.xml").as_posix()
+    _LEFT_URDF_PATH = (_HERE / "urdf/piper_description_left.xml").as_posix()
+    _RIGHT_URDF_PATH = (_HERE / "urdf/piper_description_right.xml").as_posix()
     bimanual_arm_node = BimanualArmNode(
         mjcf_path=(_HERE / args.mjcf_path).as_posix(), left_urdf_path=_LEFT_URDF_PATH, right_urdf_path=_RIGHT_URDF_PATH
     )
