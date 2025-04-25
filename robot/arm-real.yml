@@ -1,13 +1,12 @@
 nodes:
   - id: arm_piper
     path: arm/arm_node.py
+    args: "--mjcf_path mujoco/scene_piper.xml --urdf_path urdf/piper_description_right.xml --can_port can_right --solver_dt 0.01"
     inputs:
       tick: dora/timer/millis/10 # 100 Hz
       arm_command: teleop/arm_command
     outputs:
       - ee_pose
-    env:
-      CAN_PORT: can_right
 
   - id: teleop
     path: teleop/oculus_open_teach_node.py

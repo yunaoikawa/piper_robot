@@ -3,21 +3,16 @@ import numpy as np
 
 
 class FPSCounter:
-    def __init__(self):
-        self.last_time = time.time()  # Mark the initial time
-        self.frame_count = 0  # Counts how many frames have passed
-        self.fps = 0.0  # Calculated frames per second
+    def __init__(self, name: str):
+        self.name = name
+        self.elapsed_time_list: list[float] = []
 
-    def tick(self):
+    def __enter__(self):
         # Called each frame to update the count and possibly compute fps
-        self.frame_count += 1
-        current_time = time.time()
-        elapsed = current_time - self.last_time
+        self.enter_time = time.perf_counter_ns()
 
-        # If at least one second has passed, calculate FPS and reset counters
-        if elapsed >= 1.0:
-            self.fps = self.frame_count / elapsed
-            self.frame_count = 0
-            self.last_time = current_time
-            return self.fps
-        return None
+    def __exit__(self, *_):
+        self.elapsed_time_list.append((time.perf_counter_ns() - self.enter_time) / 1e6)
+        if len(self.elapsed_time_list) > 100:
+            print(f"{self.name} average time: {np.mean(self.elapsed_time_list)} ms")
+            self.elapsed_time_list = []

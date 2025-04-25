@@ -1,8 +1,8 @@
 import time
-import os
 import numpy as np
 from typing import Any
 from pathlib import Path
+import argparse
 
 from piperlib import PiperJointController, RobotConfigFactory, ControllerConfigFactory, JointState
 import mink
@@ -10,6 +10,8 @@ from dora import Node
 
 from robot.arm.mink_ik_arm import ArmIK
 from robot.msgs.pose import Pose
+from robot.arm.fps_counter import FPSCounter
+
 
 class ArmNode:
     def __init__(self, can_port: str, mjcf_path: str, urdf_path: str, solver_dt: float = 0.01):
@@ -21,9 +23,13 @@ class ArmNode:
         self.robot_config = RobotConfigFactory.get_instance().get_config("piper")
         self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
         self.robot_config.urdf_path = urdf_path
+        self.controller_config.controller_dt = 0.005
         self.piper = PiperJointController(self.robot_config, self.controller_config, self.can_port)
         self.target: mink.SE3 | None = None
         self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt)
+
+        # fps counter
+        self.ik_solver_fps_counter = FPSCounter("ik_solver")
 
         # communication
         self.node = Node()
@@ -63,9 +69,10 @@ class ArmNode:
 
     def step(self):
         # q = np.array(self.piper.get_joint_positions())
-        ee_pose = self.ik_solver.forward_kinematics() # update current joint positions
+        ee_pose = self.ik_solver.forward_kinematics()  # update current joint positions
         if self.target is not None:
-            qd = self.ik_solver.solve_ik(self.target)
+            with self.ik_solver_fps_counter:
+                qd = self.ik_solver.solve_ik(self.target)
             cmd = JointState(self.robot_config.joint_dof)
             cmd.pos = qd
             self.piper.set_joint_cmd(cmd)
@@ -95,9 +102,18 @@ class ArmNode:
 
 if __name__ == "__main__":
     _HERE = Path(__file__).parent
-    _XML_PATH = (_HERE / "mujoco/scene_piper.xml").as_posix()
-    _URDF_PATH = (_HERE / "urdf/piper_description.xml").as_posix()
-    _CAN_PORT = os.environ.get("CAN_PORT", "can_right")
 
-    arm_node = ArmNode(can_port=_CAN_PORT, mjcf_path=_XML_PATH, urdf_path=_URDF_PATH)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mjcf_path", type=str, required=True)
+    parser.add_argument("--urdf_path", type=str, required=True)
+    parser.add_argument("--can_port", type=str, required=True)
+    parser.add_argument("--solver_dt", type=float, required=True)
+    args = parser.parse_args()
+
+    arm_node = ArmNode(
+        can_port=args.can_port,
+        mjcf_path=(_HERE / args.mjcf_path).as_posix(),
+        urdf_path=(_HERE / args.urdf_path).as_posix(),
+        solver_dt=args.solver_dt,
+    )
     arm_node.spin()

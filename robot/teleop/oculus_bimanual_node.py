@@ -7,13 +7,13 @@ from typing import Any
 import mink
 
 from dora import Node
-# from piper_control.piper_control import GRIPPER_ANGLE_MAX
-GRIPPER_ANGLE_MAX = 0.7
 
 from robot.teleop.oculus_msgs import parse_controller_state
 from robot.network import VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
 from robot.msgs.bimanual_pose import BimanualPose, BimanualArmCommand
 from robot.msgs.base_command import BaseCommand, CommandType
+
+GRIPPER_ANGLE_MAX = 0.7
 
 def apply_deadzone(arr, deadzone_size=0.05):
     return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))

@@ -87,15 +87,14 @@ class BimanualArmNode:
             qd_left, qd_right = self.ik_solver.solve_ik(self.left_target, self.right_target)
             left_cmd = JointState(6)
             left_cmd.pos = qd_left
+            if self.left_gripper is not None:
+                left_cmd.gripper_pos = self.left_gripper
             right_cmd = JointState(6)
             right_cmd.pos = qd_right
+            if self.right_gripper is not None:
+                right_cmd.gripper_pos = self.right_gripper
             self.left_piper.set_joint_cmd(left_cmd)
             self.right_piper.set_joint_cmd(right_cmd)
-            # TODO: gripper control
-            # if self.left_gripper is not None:
-            #     self.left_piper.set_gripper_ctrl(position=self.left_gripper)
-            # if self.right_gripper is not None:
-            #     self.right_piper.set_gripper_ctrl(position=self.right_gripper)
 
         pose_msg = BimanualPose(time.perf_counter_ns(), left_ee_pose.wxyz_xyz, right_ee_pose.wxyz_xyz)
         self.node.send_output("bimanual_ee_pose", *pose_msg.encode())
