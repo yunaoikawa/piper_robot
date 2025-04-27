@@ -62,6 +62,8 @@ class TrapezoidalProfile:
             print("Trajectory completed")
             return self.target_pos
 
+TWO_PI = 2 * np.pi
+
 Motor1 = Motor(DM_Motor_Type.DM4310, 0x01, 0x11)
 serial_device = serial.Serial("/dev/ttyACM0", 921600, timeout=1)
 MotorControl1 = MotorControl(serial_device)
@@ -69,44 +71,61 @@ MotorControl1.addMotor(Motor1)
 
 MotorControl1.enable(Motor1)
 
-if MotorControl1.switchControlMode(Motor1, Control_Type.MIT):
-    print("switch MIT success")
+if MotorControl1.switchControlMode(Motor1, Control_Type.POS_VEL):
+    print("switch POS_VEL success")
 
-# MotorControl1.disable(Motor1)
+if MotorControl1.change_motor_param(Motor1, DM_variable.TMAX, 2.0):
+    print("TMAX set to 2.0")
 
-profile = TrapezoidalProfile(max_vel=3.0, max_accel=1.0)
-rate = RateLimiter(200)  # 1000 Hz
+profile = TrapezoidalProfile(max_vel=2*np.pi, max_accel=2*np.pi)
+MotorControl1.set_zero_position(Motor1)
 print(f"current position: {Motor1.getPosition():.3f} rad")
 pos = float(input("position:"))
 
 print(f"Moving to {pos:.3f} rad")
 
+
 positions = []
-targets = []
+velocities = []
+# targets = []
+torques = []
 ts = []
 
 try:
     duration = profile.plan_trajectory(Motor1.getPosition(), pos)
     print(f"Trajectory planned. Duration: {duration:.3f} seconds")
-    i = 0
+    rate = RateLimiter(200)  # 1000 Hz
     while True:
-        current_target = profile.get_target()
-        MotorControl1.controlMIT(Motor1, kp=10, kd=0.1, q=current_target, dq=0, tau=0)
-        if i % 5 == 0:
-            positions.append(Motor1.getPosition())
-            targets.append(current_target)
-            ts.append(time.time() - profile.start_time)
-            print(f"Target: {current_target:.3f} Current pos: {Motor1.getPosition():.3f}")
-            i = 0
+        for i in range(200 * 2):
+            # current_target = profile.get_target()
+            # MotorControl1.controlMIT(Motor1, kp=10, kd=0.1, q=current_target, dq=0, tau=0)
+            MotorControl1.control_Pos_Vel(Motor1, P_desired=pos * TWO_PI, V_desired=2*TWO_PI)
+            if i % 5 == 0:
+                positions.append(Motor1.getPosition())
+                velocities.append(Motor1.getVelocity())
+                torques.append(Motor1.getTorque())
+                # targets.append(current_target)
+                ts.append(time.time() - profile.start_time)
+                # print(f"Target: {current_target:.3f} Current pos: {Motor1.getPosition():.3f}")
 
-        i += 1
-        rate.sleep()
+            # i += 1
+            rate.sleep()
+        pos_s = input("position: ")
+        if pos_s == "exit":
+            break
+        else:
+            pos = float(pos_s)
+            duration = profile.plan_trajectory(Motor1.getPosition(), pos)
+            print(f"Trajectory planned. Duration: {duration:.3f} seconds")
 finally:
     import matplotlib.pyplot as plt
     plt.plot(ts, positions)
-    plt.plot(ts, targets)
+    # plt.plot(ts, targets)
+    plt.plot(ts, velocities)
+    plt.plot(ts, torques)
     plt.xlabel("Time (s)")
     plt.ylabel("Position (rad)")
+    plt.legend(["Position", "Velocity", "Torque"])
     plt.savefig("trajectory.png")
 
     MotorControl1.disable(Motor1)
