@@ -84,9 +84,9 @@ class OculusReader:
             print("WARN: no ee pose yet")
             return
 
-        if not self.check_timestamp(self.ee_pose.timestamp, 0.05):
-            print("WARN: ee pose timestamp is too old")
-            return
+        # if not self.check_timestamp(self.ee_pose.timestamp, 0.05):
+        #     print("WARN: ee pose timestamp is too old")
+        #     return
 
         ee_pose = mink.SE3(self.ee_pose.wxyz_xyz)
 
