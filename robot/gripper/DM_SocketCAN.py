@@ -839,16 +839,3 @@ class DamiaoPort:
 
     def controlMIT(self, motor, kp, kd, q, dq, tau):
         self.control.controlMIT(self.motors[motor], kp, kd, q, dq, tau)
-
-
-
-if __name__ == "__main__":
-    m = Motor(DM_Motor_Type.DM4310, 0x18, 0x19)
-    mc = MotorControl("can0", bitrate=1000000)
-
-    mc.addMotor(m)
-    mc.enable(m)
-    input("Press Enter to continue...")
-    mc.disable(m)
-
-    mc.canbus.shutdown()

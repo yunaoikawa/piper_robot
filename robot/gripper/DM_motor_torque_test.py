@@ -1,5 +1,4 @@
-from robot.gripper.DM_CAN import Motor, MotorControl, DM_variable, Control_Type, DM_Motor_Type
-import serial
+from robot.gripper.DM_SocketCAN import Motor, MotorControl, Control_Type, DM_Motor_Type
 from loop_rate_limiters import RateLimiter
 
 import numpy as np
@@ -13,8 +12,7 @@ VEL_DES = 2 * TWO_PI * 100
 GRIPPER_MAX_WIDTH = 22  # rad
 
 Motor1 = Motor(DM_Motor_Type.DM4310, 0x01, 0x11)
-serial_device = serial.Serial("/dev/ttyACM0", 921600, timeout=1)
-MotorControl1 = MotorControl(serial_device)
+MotorControl1 = MotorControl(channel="can_left")
 MotorControl1.addMotor(Motor1)
 
 MotorControl1.enable(Motor1)
@@ -32,6 +30,7 @@ def home():
     MotorControl1.set_zero_position(Motor1)
     print("Motor homed")
 
+input("Press enter to continue..")
 
 home()
 print(f"current position: {Motor1.getPosition():.3f} rad")
