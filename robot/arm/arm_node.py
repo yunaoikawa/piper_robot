@@ -42,7 +42,6 @@ class ArmNode:
         self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
         self.robot_config.urdf_path = urdf_path
         self.controller_config.controller_dt = 0.005
-        # self.controller_config.default_kp = np.array([2.0, 2.0, 2.0, 2.0, 2.0, 2.0])
         self.piper = PiperJointController(self.robot_config, self.controller_config, self.can_port)
         self.target: mink.SE3 | None = None
         self.target_timestamp: int | None = None
@@ -62,7 +61,7 @@ class ArmNode:
         self.piper.reset_to_home()
         time.sleep(1.0)
         # home
-        q = np.array(self.ik_solver.get_home_q())
+        q = np.zeros(6) # np.array(self.ik_solver.get_home_q())
         print(f"q_home: {np.round(q, 4)}")
         cmd = JointState(self.robot_config.joint_dof)
         cmd.timestamp = self.piper.get_timestamp() + 1.0
