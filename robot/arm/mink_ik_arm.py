@@ -49,7 +49,7 @@ class ArmIK:
             raise ValueError("IK solver not initialized")
         self.end_effector_task.set_target(T_wt)
         vel = mink.solve_ik(
-            self.configuration, self.tasks, self.solver_dt, solver="quadprog", damping=1e-3, limits=self.limits
+            self.configuration, self.tasks, self.solver_dt, solver="quadprog", damping=1e-5, limits=self.limits
         )
         self.configuration.integrate_inplace(vel, self.solver_dt)
         return self.configuration.q[self.dof_ids]

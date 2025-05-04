@@ -6,22 +6,30 @@ import argparse
 
 from piperlib import PiperJointController, RobotConfigFactory, ControllerConfigFactory, JointState
 import mink
+from mink import SE3
 from dora import Node
 
 from robot.arm.mink_ik_arm import ArmIK
 from robot.msgs.pose import Pose
 from robot.arm.fps_counter import FPSCounter
 
-class LowPassFilter:
-    def __init__(self, cutoff_freq: float, dt: float):
-        self.cutoff_freq = cutoff_freq
-        self.dt = dt
-        self.alpha = 2 * np.pi * self.cutoff_freq * self.dt / (1 + 2 * np.pi * self.cutoff_freq * self.dt)
-        self.prev_val = 0.0
+class SE3Filter:
+    def __init__(self, alpha):
+        self.alpha = alpha
+        self.y: SE3 = None
+        self.is_init = False
 
-    def filter(self, val: float) -> float:
-        self.prev_val = self.prev_val + self.alpha * (val - self.prev_val)
-        return self.prev_val
+    def next(self, x):
+        if not self.is_init:
+            self.y = x
+            self.is_init = True
+            return self.y.copy()
+        self.y = self.y.interpolate(x, self.alpha)
+        return self.y.copy()
+
+    def reset(self):
+        self.y = None
+        self.is_init = False
 
 class ArmNode:
     def __init__(self, can_port: str, mjcf_path: str, urdf_path: str, solver_dt: float = 0.01):
@@ -41,7 +49,7 @@ class ArmNode:
         self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt)
 
         # position low-pass filter
-        self.pos_lpf = LowPassFilter(cutoff_freq=10.0, dt=self.solver_dt)
+        self.se3_filter = SE3Filter(0.4)
 
         # fps counter
         self.ik_solver_fps_counter = FPSCounter("ik_solver")
@@ -84,9 +92,8 @@ class ArmNode:
         # self.update_joint_positions()
         ee_pose = self.ik_solver.forward_kinematics()  # update current joint positions
         if self.target is not None and self.target_timestamp is not None:
-            with self.ik_solver_fps_counter:
-                qd = self.ik_solver.solve_ik(self.target)
-                qd = self.pos_lpf.filter(qd)
+            filtered_target = self.se3_filter.next(self.target)
+            qd = self.ik_solver.solve_ik(filtered_target)
             cmd = JointState(self.robot_config.joint_dof)
             cmd.pos = qd
             self.piper.set_joint_cmd(cmd)

@@ -10,6 +10,7 @@ from dora import Node
 from robot.arm.mink_ik_arm import ArmIK
 from robot.msgs.pose import Pose
 
+
 class ArmMujoco:
     def __init__(self, mjcf_path: str, solver_dt: float = 0.03):
         self.mjcf_path = mjcf_path
