@@ -1,4 +1,4 @@
-from robot.gripper.DM_SocketCAN import Motor, MotorControl, Control_Type, DM_Motor_Type
+from robot.arm.gripper.DM_SocketCAN import Motor, MotorControl, Control_Type, DM_Motor_Type
 from loop_rate_limiters import RateLimiter
 
 import numpy as np
