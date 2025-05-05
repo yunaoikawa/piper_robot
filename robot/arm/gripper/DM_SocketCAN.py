@@ -207,6 +207,7 @@ class MotorControl:
         data_buf[5] = Vel_uint >> 8
         data_buf[6] = ides_uint & 0xff
         data_buf[7] = ides_uint >> 8
+        breakpoint()
         self.__send_data(motorid, data_buf)
         self.recv()  # receive the data from serial port
 
