@@ -207,10 +207,6 @@ class MotorControl:
         data_buf[5] = Vel_uint >> 8
         data_buf[6] = ides_uint & 0xff
         data_buf[7] = ides_uint >> 8
-        for i in range(8):
-            print(hex(data_buf[i]),end=" ")
-        print()
-        input("Press Enter to continue...")
         self.__send_data(motorid, data_buf)
         self.recv()  # receive the data from serial port
 
@@ -433,8 +429,6 @@ class MotorControl:
         else:
             # data is int
             data_buf[4:8] = data_to_uint8s(int(data))
-        print(f"data_buf: {' '.join(f'{byte:02X}' for byte in data_buf)}")
-        input("Press Enter to continue...")
         self.__send_data(0x7FF, data_buf)
 
     def switchControlMode(self, Motor, ControlMode):
