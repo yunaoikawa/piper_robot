@@ -10,11 +10,13 @@ from dora import Node
 
 from robot.teleop.oculus_msgs import parse_controller_state
 from robot.network import VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
-from robot.msgs.pose import Pose
+from robot.msgs.pose import Pose, ArmCommand
 
 
 def apply_deadzone(arr, deadzone_size=0.05):
     return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))
+
+GRIPPER_ANGLE_MAX = -22.0
 
 class OculusReader:
     def __init__(self):
@@ -112,8 +114,9 @@ class OculusReader:
             R_REt = self.X_ee_init.rotation() @ X_Rdelta.rotation()
 
             # publish the target pose
-            target_pose = Pose(time.perf_counter_ns(), np.concatenate([R_REt.wxyz, p_REt]))
-            self.node.send_output("arm_command", *target_pose.encode())
+            gripper = GRIPPER_ANGLE_MAX if controller_state.right_index_trigger < 0.5 else 0.0
+            arm_command = ArmCommand(time.perf_counter_ns(), np.concatenate([R_REt.wxyz, p_REt]), gripper)
+            self.node.send_output("arm_command", *arm_command.encode())
 
     def spin(self):
         for event in self.node:

@@ -10,7 +10,7 @@ from mink import SE3
 from dora import Node
 
 from robot.arm.mink_ik_arm import ArmIK
-from robot.msgs.pose import Pose
+from robot.msgs.pose import Pose, ArmCommand
 from robot.arm.fps_counter import FPSCounter
 
 class SE3Filter:
@@ -44,6 +44,7 @@ class ArmNode:
         self.controller_config.controller_dt = 0.005
         self.piper = PiperJointController(self.robot_config, self.controller_config, self.can_port)
         self.target: mink.SE3 | None = None
+        self.gripper_target: float | None = None
         self.target_timestamp: int | None = None
         self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt)
 
@@ -61,7 +62,7 @@ class ArmNode:
         self.piper.reset_to_home()
         time.sleep(1.0)
         # home
-        q = np.zeros(6) # np.array(self.ik_solver.get_home_q())
+        q = np.array(self.ik_solver.get_home_q())
         print(f"q_home: {np.round(q, 4)}")
         cmd = JointState(self.robot_config.joint_dof)
         cmd.timestamp = self.piper.get_timestamp() + 1.0
@@ -82,19 +83,20 @@ class ArmNode:
         return True
 
     def arm_command_handler(self, event: dict[str, Any]):
-        pose = Pose.decode(event["value"], event["metadata"])
-        target = mink.SE3(pose.wxyz_xyz)
-        self.target = target
-        self.target_timestamp = pose.timestamp
+        arm_command = ArmCommand.decode(event["value"], event["metadata"])
+        self.target = mink.SE3(arm_command.wxyz_xyz)
+        self.gripper_target = arm_command.gripper
+        self.target_timestamp = arm_command.timestamp
 
     def step(self):
-        # self.update_joint_positions()
         ee_pose = self.ik_solver.forward_kinematics()  # update current joint positions
         if self.target is not None and self.target_timestamp is not None:
             filtered_target = self.se3_filter.next(self.target)
             qd = self.ik_solver.solve_ik(filtered_target)
             cmd = JointState(self.robot_config.joint_dof)
             cmd.pos = qd
+            if self.gripper_target is not None:
+                cmd.gripper_pos = self.gripper_target
             self.piper.set_joint_cmd(cmd)
 
         pose_msg = Pose(time.perf_counter_ns(), ee_pose.wxyz_xyz)
