@@ -286,6 +286,7 @@ class MotorControl:
             # t_rotor = data[7]
             # print(hex(id), err, id, pos, vel, tau, goal_tau, t_mos, t_rotor)
             # CANID = data_recv.arbitration_id
+            print(f"can id: {data_recv.arbitration_id}")
             CANID = data_recv.data[0]
             # CMD = data_recv.data[3]
             CMD = 0x11  # 飯田：修正の必要あり
