@@ -337,6 +337,7 @@ class MotorControl:
                 MasterID=data[0] & 0x0f
                 if MasterID in self.motors_map:
                     q_uint = np.uint16((np.uint16(data[1]) << 8) | data[2])
+                    print(f"q_uint: {q_uint}")
                     dq_uint = np.uint16((np.uint16(data[3]) << 4) | (data[4] >> 4))
                     tau_uint = np.uint16(((data[4] & 0xf) << 8) | data[5])
                     t_mos = data[6]
