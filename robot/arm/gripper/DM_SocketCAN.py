@@ -433,6 +433,8 @@ class MotorControl:
         else:
             # data is int
             data_buf[4:8] = data_to_uint8s(int(data))
+        print(f"data_buf: {data_buf}")
+        input("Press Enter to continue...")
         self.__send_data(0x7FF, data_buf)
 
     def switchControlMode(self, Motor, ControlMode):
