@@ -22,7 +22,6 @@ if MotorControl1.switchControlMode(Motor1, Control_Type.Torque_Pos):
 
 
 def home():
-    print(f"current position: {Motor1.getPosition():.3f} rad")
     MotorControl1.set_zero_position(Motor1)
     MotorControl1.control_pos_force(
         Motor1, Pos_des=GRIPPER_MAX_WIDTH + 1, Vel_des=HOMING_VEL, i_des=I_LIMIT
@@ -50,13 +49,12 @@ try:
             MotorControl1.control_pos_force(Motor1, Pos_des=pos, Vel_des=VEL_DES, i_des=I_LIMIT)
             if i % 5 == 0:
                 positions.append(Motor1.getPosition())
-                print(f"position: {positions[-1]:.3f} rad")
                 velocities.append(Motor1.getVelocity())
                 torques.append(Motor1.getTorque())
                 ts.append(time.time() - start_time)
             rate.sleep()
         pos_s = input("pos: ")
-        if pos_s == "exit":
+        if pos_s == "quit":
             break
         else:
             pos = float(pos_s)
