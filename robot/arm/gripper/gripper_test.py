@@ -33,6 +33,7 @@ def home():
 input("Press enter to continue..")
 
 home()
+time.sleep(0.5)
 print(f"current position: {Motor1.getPosition():.3f} rad")
 pos = float(input("position:"))
 
