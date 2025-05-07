@@ -43,7 +43,7 @@ class ArmNode:
         self.robot_config.urdf_path = urdf_path
         self.controller_config.controller_dt = 0.005
         self.controller_config.default_kp = np.array([20.0, 20.0, 20.0, 16.0, 16.0, 16.0])
-        self.controller_config.default_kd = np.array([1.5, 1.5, 1.5, 1.5, 1.5, 1.5])
+        self.controller_config.default_kd = np.array([0.2, 0.2, 0.2, 0.2, 0.2, 0.2])
         self.piper = PiperJointController(self.robot_config, self.controller_config, self.can_port)
         self.target: mink.SE3 | None = None
         self.gripper_target: float | None = None
