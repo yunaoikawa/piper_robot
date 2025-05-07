@@ -4,7 +4,7 @@ nodes:
     args: "--mjcf_path mujoco/scene_piper.xml --urdf_path urdf/piper_description_left.xml --can_port can_left --solver_dt 0.01"
     inputs:
       tick: dora/timer/millis/10 # 10 Hz
-      arm_command: teleop/arm_command
+      # arm_command: teleop/arm_command
     outputs:
       - ee_pose
 
