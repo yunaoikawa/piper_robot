@@ -26,7 +26,7 @@ class ArmIK:
             frame_name="ee",
             frame_type="site",
             position_cost=1.0,
-            orientation_cost=0.1,
+            orientation_cost=1.0,
             lm_damping=1.0,
         )
         self.posture_task = mink.PostureTask(self.model, cost=np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3]))
