@@ -69,6 +69,7 @@ class ArmNode:
         cmd = JointState(self.robot_config.joint_dof)
         cmd.timestamp = self.piper.get_timestamp() + 1.0
         cmd.pos = q
+        cmd.gripper_pos = -22.0
         self.piper.set_joint_cmd(cmd)
         time.sleep(2.0)
         q = self.piper.get_joint_state().pos
