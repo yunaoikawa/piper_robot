@@ -14,23 +14,15 @@ if __name__ == "__main__":
 
     # target = arm_node.get_ee_pose()
 
-    target = mink.SE3.from_rotation_and_translation(
-        rotation=mink.SO3(np.array([0.0, 0.0, 0.0, 1.0])),
-        translation=np.array([0.0, 0.0, 0.0]),
-    )
+    # Create initial target pose at origin
+    target = mink.SE3.from_translation(np.array([0.0, 0.0, 0.0]))
 
-    go_backward_delta = mink.SE3.from_rotation_and_translation(
-        rotation=mink.SO3(np.array([1.0, 0.0, 0.0, 0.0])),
-        translation=np.array([-0.25, 0.0, 0.0]),
-    )
-    go_forward_delta = mink.SE3.from_rotation_and_translation(
-        rotation=mink.SO3(np.array([0.0, 0.0, 0.0, 1.0])),
-        translation=np.array([0.25, 0.0, 0.0]),
-    )
+    # Create translation delta of +0.25m in X direction
+    delta = mink.SE3.from_translation(np.array([0.25, 0.0, 0.0]))
 
-    while True:
-        target = go_forward_delta.multiply(target)
-        print(target.wxyz_xyz)
+    # Apply the translation
+    target = delta.multiply(target)
+    print(target.wxyz_xyz)
         # arm_node.set_ee_target(target, gripper_target=-22.0, preview_time=1.5)
         # input("Press Enter to go forward...")
         # target.wxyz_xyz += np.array([0.0, 0.0, 0.0, 0.0, -0.5, 0.0, 0.0])
