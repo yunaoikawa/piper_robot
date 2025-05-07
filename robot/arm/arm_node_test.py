@@ -22,7 +22,9 @@ if __name__ == "__main__":
 
     # Apply the translation
     target = delta.multiply(target)
-    print(target.wxyz_xyz)
+    print(target)
+    target = delta.multiply(target)
+    print(target)
         # arm_node.set_ee_target(target, gripper_target=-22.0, preview_time=1.5)
         # input("Press Enter to go forward...")
         # target.wxyz_xyz += np.array([0.0, 0.0, 0.0, 0.0, -0.5, 0.0, 0.0])
