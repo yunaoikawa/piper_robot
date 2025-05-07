@@ -54,7 +54,7 @@ class ArmIK:
             )
             self.configuration.integrate_inplace(vel, self.solver_dt)
             err = self.end_effector_task.compute_error(self.configuration)
-            if err <= eps:
+            if np.linalg.norm(err) <= eps:
                 break
 
         return self.configuration.q[self.dof_ids]
