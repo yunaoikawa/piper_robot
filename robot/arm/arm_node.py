@@ -90,20 +90,26 @@ class ArmNode:
     def arm_command_handler(self, event: dict[str, Any]):
         arm_command = ArmCommand.decode(event["value"], event["metadata"])
         self.target = mink.SE3(arm_command.wxyz_xyz)
-        self.gripper_target = arm_command.gripper
-        self.target_timestamp = arm_command.timestamp
+        qd = self.ik_solver.solve_ik(self.target)
+        cmd = JointState(self.robot_config.joint_dof)
+        cmd.pos = qd
+        if arm_command.gripper is not None:
+            cmd.gripper_pos = arm_command.gripper
+        cmd.timestamp = self.piper.get_timestamp() + 0.05
+        self.piper.set_joint_cmd(cmd)
 
     def step(self):
+        self.update_joint_positions()
         ee_pose = self.ik_solver.forward_kinematics()  # update current joint positions
-        if self.target is not None:
-            filtered_target = self.se3_filter.next(self.target)
-            qd = self.ik_solver.solve_ik(filtered_target)
-            cmd = JointState(self.robot_config.joint_dof)
-            cmd.pos = qd
-            if self.gripper_target is not None:
-                cmd.gripper_pos = self.gripper_target
-            cmd.timestamp = self.piper.get_timestamp() + 0.05
-            self.piper.set_joint_cmd(cmd)
+        # if self.target is not None:
+        #     # filtered_target = self.se3_filter.next(self.target)
+        #     qd = self.ik_solver.solve_ik(self.target)
+        #     cmd = JointState(self.robot_config.joint_dof)
+        #     cmd.pos = qd
+        #     if self.gripper_target is not None:
+        #         cmd.gripper_pos = self.gripper_target
+        #     cmd.timestamp = self.piper.get_timestamp() + 0.05
+        #     self.piper.set_joint_cmd(cmd)
 
         pose_msg = Pose(time.perf_counter_ns(), ee_pose.wxyz_xyz)
         self.node.send_output("ee_pose", *pose_msg.encode())
