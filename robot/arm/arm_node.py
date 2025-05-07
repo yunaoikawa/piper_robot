@@ -42,7 +42,7 @@ class ArmNode:
         self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
         self.robot_config.urdf_path = urdf_path
         self.controller_config.controller_dt = 0.005
-        self.controller_config.default_kp = np.array([20.0, 20.0, 20.0, 16.0, 16.0, 16.0])
+        self.controller_config.default_kp = np.array([5.0, 5.0, 5.0, 5.0, 5.0, 5.0])
         self.controller_config.default_kd = np.array([0.2, 0.2, 0.2, 0.2, 0.2, 0.2])
         self.piper = PiperJointController(self.robot_config, self.controller_config, self.can_port)
         self.target: mink.SE3 | None = None
@@ -95,10 +95,10 @@ class ArmNode:
         cmd.pos = qd
         if arm_command.gripper is not None:
             cmd.gripper_pos = arm_command.gripper
-        cmd.timestamp = self.piper.get_timestamp() + 0.05
+        cmd.timestamp = self.piper.get_timestamp() + 0.1
         self.piper.set_joint_cmd(cmd)
 
-    def set_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.05):
+    def set_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
         self.target = ee_target
         qd = self.ik_solver.solve_ik(self.target)
         cmd = JointState(self.robot_config.joint_dof)
