@@ -98,6 +98,16 @@ class ArmNode:
         cmd.timestamp = self.piper.get_timestamp() + 0.05
         self.piper.set_joint_cmd(cmd)
 
+    def set_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.05):
+        self.target = ee_target
+        qd = self.ik_solver.solve_ik(self.target)
+        cmd = JointState(self.robot_config.joint_dof)
+        cmd.pos = qd
+        if gripper_target is not None:
+            cmd.gripper_pos = gripper_target
+        cmd.timestamp = self.piper.get_timestamp() + preview_time
+        self.piper.set_joint_cmd(cmd)
+
     def get_ee_pose(self) -> mink.SE3:
         self.update_joint_positions()
         return self.ik_solver.forward_kinematics()
