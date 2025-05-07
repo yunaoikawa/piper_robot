@@ -37,3 +37,5 @@ if __name__ == "__main__":
     print(target)
     input("Press Enter to go forward...")
     arm_node.set_ee_target(target, gripper_target=-22.0, preview_time=1.5)
+
+    input("Press Enter to exit...")
