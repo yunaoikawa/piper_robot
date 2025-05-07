@@ -57,7 +57,7 @@ class ArmNode:
         self.ik_solver_fps_counter = FPSCounter("ik_solver")
 
         # communication
-        self.node = Node()
+        # self.node = Node()
         self.init()
 
     def init(self):
