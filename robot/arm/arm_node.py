@@ -95,13 +95,14 @@ class ArmNode:
 
     def step(self):
         ee_pose = self.ik_solver.forward_kinematics()  # update current joint positions
-        if self.target is not None and self.target_timestamp is not None:
+        if self.target is not None:
             filtered_target = self.se3_filter.next(self.target)
             qd = self.ik_solver.solve_ik(filtered_target)
             cmd = JointState(self.robot_config.joint_dof)
             cmd.pos = qd
             if self.gripper_target is not None:
                 cmd.gripper_pos = self.gripper_target
+            cmd.timestamp = self.piper.get_timestamp() + 0.05
             self.piper.set_joint_cmd(cmd)
 
         pose_msg = Pose(time.perf_counter_ns(), ee_pose.wxyz_xyz)

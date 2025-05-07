@@ -44,14 +44,19 @@ class ArmIK:
     def get_home_q(self) -> np.ndarray:
         return self.model.key("home").qpos[self.dof_ids]
 
-    def solve_ik(self, T_wt: mink.SE3):
+    def solve_ik(self, T_wt: mink.SE3, eps: float = 1e-3, max_iter: int = 50):
         if not self.initalized_:
             raise ValueError("IK solver not initialized")
         self.end_effector_task.set_target(T_wt)
-        vel = mink.solve_ik(
-            self.configuration, self.tasks, self.solver_dt, solver="quadprog", damping=1e-5, limits=self.limits
-        )
-        self.configuration.integrate_inplace(vel, self.solver_dt)
+        for _ in range(max_iter):
+            vel = mink.solve_ik(
+                self.configuration, self.tasks, self.solver_dt, solver="quadprog", damping=1e-5, limits=self.limits
+            )
+            self.configuration.integrate_inplace(vel, self.solver_dt)
+            err = self.end_effector_task.compute_error(self.configuration)
+            if err <= eps:
+                break
+
         return self.configuration.q[self.dof_ids]
 
     def update_configuration(self, q: np.ndarray):

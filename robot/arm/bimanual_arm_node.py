@@ -70,8 +70,6 @@ class BimanualArmNode:
 
     def bimanual_arm_command_handler(self, event: dict[str, Any]):
         bimanual_arm_command = BimanualArmCommand.decode(event["value"], event["metadata"])
-        if not self.check_timestamp(bimanual_arm_command.timestamp, 0.1):  # TODO: no need to check here
-            return
 
         left_pose = mink.SE3(bimanual_arm_command.left_wxyz_xyz)
         right_pose = mink.SE3(bimanual_arm_command.right_wxyz_xyz)
