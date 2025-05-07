@@ -8,10 +8,10 @@ nodes:
     outputs:
       - ee_pose
 
-  - id: teleop
-    path: teleop/oculus_open_teach_node.py
-    inputs:
-      tick: dora/timer/millis/10 # 10 Hz
-      ee_pose: arm_piper/ee_pose
-    outputs:
-      - arm_command
+  # - id: teleop
+  #   path: teleop/oculus_open_teach_node.py
+  #   inputs:
+  #     tick: dora/timer/millis/10 # 10 Hz
+  #     ee_pose: arm_piper/ee_pose
+  #   outputs:
+  #     - arm_command
