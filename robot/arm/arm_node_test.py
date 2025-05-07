@@ -7,7 +7,7 @@ if __name__ == "__main__":
     arm_node = ArmNode(
         can_port="can_left",
         mjcf_path=(_HERE / "mujoco/scene_piper.xml").as_posix(),
-        urdf_path=(_HERE / "urdf/piper_description_left.urdf").as_posix(),
+        urdf_path=(_HERE / "urdf/piper_description_left.xml").as_posix(),
         solver_dt=0.01
     )
 
