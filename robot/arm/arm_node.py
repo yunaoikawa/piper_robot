@@ -117,7 +117,7 @@ class ArmNode:
         ee_pose = self.ik_solver.forward_kinematics()  # update current joint positions
 
         pose_msg = Pose(time.perf_counter_ns(), ee_pose.wxyz_xyz)
-        self.node.send_output("ee_pose", *pose_msg.encode())
+        # self.node.send_output("ee_pose", *pose_msg.encode())
 
     def update_joint_positions(self):
         q = self.piper.get_joint_state().pos
