@@ -61,6 +61,8 @@ class ArmNode:
     def init(self):
         self.piper.reset_to_home()
         time.sleep(1.0)
+        self.piper.home_gripper()
+
         # home
         q = np.array(self.ik_solver.get_home_q())
         print(f"q_home: {np.round(q, 4)}")
