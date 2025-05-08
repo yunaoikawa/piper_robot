@@ -29,9 +29,6 @@
     </default>
 
     <asset>
-        <material name="gray_mat" rgba="0.59 0.59 0.59 1" />
-        <material name="dark_gray_mat" rgba="0.086 0.086 0.086 1" />
-        <material name="light_medium_gray_mat" rgba="0.85 0.85 0.85 1" />
         <texture name="metal" type="cube" file="metal.png" />
         <material name="metalic" texture="metal" texrepeat="3 3" reflectance="0.7"
             texuniform="false" />
@@ -54,15 +51,12 @@
         <mesh name="gripper_base" file="gripper_base.stl" />
         <mesh name="link7" file="link7.stl" />
         <mesh name="link8" file="link8.stl" />
-        <mesh name="gripper_body" file="meshes/gripper_body.stl" scale="0.001 0.001 0.001" />
-        <mesh name="finger" file="meshes/finger.stl" scale="0.001 0.001 0.001" />
-        <mesh name="foam_insert" file="meshes/foam_insert.stl" scale="0.0011 0.0011 0.001" />
-        <mesh name="iphone" file="meshes/iphone.stl" scale="0.001 0.001 0.001" />
-        <mesh name="foam_collision" file="meshes/foam_insert.stl" scale="0.0011 0.00125 0.001" />
+        <mesh name="gripper_body" file="gripper_body.stl" scale="0.001 0.001 0.001" />
+        <mesh name="iphone" file="iphone.stl" scale="0.001 0.001 0.001" />
     </asset>
 
     <worldbody>
-        <light name="spotlight" mode="targetbodycom" target="link8" pos="0 0 1" />
+        <light name="spotlight" mode="targetbodycom" target="link6" pos="0 0 1" />
         <body name="base_link" childclass="piper" gravcomp="1">
             <!-- <joint name="lift" axis="0 0 1" type="slide" range="0.0 0.39"/> -->
             <inertial pos="-0.00473641 2.56829e-05 0.0414515"
@@ -116,72 +110,31 @@
                                     <geom class="visual" density="0" mesh="link6"
                                         material="light_medium_gray_mat" />
                                     <geom class="collision" mesh="link6" />
-                                    <body name="gripper_base" pos="0.015 0.0 0.05"
-                                        euler="1.57 -1.57 0" gravcomp="1">
+                                    <!-- 7.8mm -->
+                                    <body name="gripper_base" pos="0.0275 0.01875 0.0798"
+                                        euler="3.14 -1.57 0" gravcomp="1">
                                         <inertial pos="-0.000183807 8.05033e-05 0.0321437"
                                             quat="0.999976 9.08444e-05 0.00689649 0.000788512"
                                             mass="0.45"
                                             diaginertia="0.000929442 0.000714469 0.000394318" />
-                                        <geom name="gripper_body_visual" mesh="gripper_body"
-                                            class="visual" material="white" />
-                                        <geom name="gripper_body_collision" mesh="gripper_body"
-                                            class="collision_gripper" />
+                                        <geom name="gripper_body_visual" mesh="gripper_body" class="visual" material="white" />
+                                        <geom name="gripper_body_collision" mesh="gripper_body" class="collision_gripper" />
 
-                                        <body name="iphone_body" pos="0 0 0" gravcomp="1">
+                                        <body name="iphone_body" pos="-0.0075 0.015 0.017" euler="0 0 1.57" gravcomp="1">
                                             <geom name="iphone_visual" mesh="iphone" class="visual"
                                                 material="gray" />
                                             <geom name="iphone_collision" mesh="iphone"
                                                 class="collision" />
 
                                             <body name="camera_body" pos="0.0 -0.036 0.1"
-                                                euler="1.309 0 0.0" gravcomp="1">
+                                                euler="-0.2617993878 0.0 0.0" gravcomp="1">
+                                                <site name="ee" pos="0.0 0.0 0.0" />
                                                 <geom type="box" size="0.01 0.01 0.01"
                                                     rgba="0.1 0.5 0.1 0" contype="0" conaffinity="0" />
                                                 <camera name="egocentric" mode="fixed" fovy="53.1" />
                                             </body>
                                         </body>
 
-                                        <site name="ee" pos="0.0 -0.036 0.1" />
-
-                                        <body name="fingers" pos="0 0 0.0" gravcomp="1">
-                                            <body name="left_finger" pos="0 0 -0.0042" gravcomp="1">
-                                                <!-- <joint name="finger_left_joint" axis="0 0 1"
-                                                class="finger_hinge" pos="-0.0242 0.04224 0.0" /> -->
-                                                <geom name="left_finger_visual" mesh="finger"
-                                                    class="visual" material="light_blue" />
-                                                <geom name="left_finger_foam_visual"
-                                                    mesh="foam_insert" class="visual"
-                                                    material="black"
-                                                    pos="-0.00468 0.101585 0.00197" euler="0 0 3.75" />
-                                                <geom name="left_finger_collision" type="box"
-                                                    size="0.005 0.043 0.0131" rgba="1 0 0 0"
-                                                    pos="-0.058 0.095 0.0179" euler="0 0 0.61"
-                                                    contype="1" conaffinity="1" class="friction" />
-                                                <geom name="left_bolt" type="cylinder"
-                                                    size="0.0038 0.001" material="metalic"
-                                                    pos="-0.024 0.04228 0.0315"
-                                                    contype="0" conaffinity="0" />
-                                            </body>
-
-                                            <body name="right_finger" pos="0 0 0.0317"
-                                                euler="0 3.1415 0" gravcomp="1">
-                                                <!-- <joint name="finger_right_joint" axis="0 0 1"
-                                                class="finger_hinge" pos="-0.0242 0.04224 0.0" /> -->
-                                                <geom name="right_finger_visual" mesh="finger"
-                                                    class="visual" material="light_blue" />
-                                                <geom name="right_finger_foam" mesh="foam_insert"
-                                                    class="visual" material="black"
-                                                    pos="-0.00468 0.101585 0.00197" euler="0 0 3.75" />
-                                                <geom name="right_finger_collision" type="box"
-                                                    size="0.005 0.043 0.0131" rgba="1 0 0 0"
-                                                    pos="-0.058 0.095 0.0179" euler="0 0 0.61"
-                                                    contype="1" conaffinity="1" class="friction" />
-                                                <geom name="right_bolt" type="cylinder"
-                                                    size="0.0038 0.001" material="metalic"
-                                                    pos="-0.0242 0.04224 0.0043"
-                                                    contype="0" conaffinity="0" />
-                                            </body>
-                                        </body>
                                     </body>
                                     <!-- <body name="gripper_base" gravcomp="1">
                                         <inertial pos="-0.000183807 8.05033e-05 0.0321437"
