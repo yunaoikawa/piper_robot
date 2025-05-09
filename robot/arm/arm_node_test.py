@@ -12,30 +12,24 @@ if __name__ == "__main__":
         solver_dt=0.01,
     )
 
-    target = arm_node.get_ee_pose()
-    print("Current pose:", target)
+    X_EE = arm_node.get_ee_pose()
+    print("Current pose:", X_EE)
 
     # Create initial target pose at origin
     # target = mink.SE3.from_translation(np.array([0.0, 0.0, 0.0]))
 
-    delta_forward = mink.SE3.from_translation(np.array([0.00, 0.05, 0.0]))
-    delta_forward_large = mink.SE3.from_translation(np.array([0.00, 0.1, 0.0]))
-    delta_backward_large = mink.SE3.from_translation(np.array([-0.00, -0.1, 0.0]))
+    X_EE_EE_forward = mink.SE3.from_translation(np.array([0.00, 0.1, 0.0]))
+    X_EE_EE_backward = mink.SE3.from_translation(np.array([-0.00, -0.1, 0.0]))
 
     # Apply the translation
-    target = delta_forward.multiply(target)
-    print(target)
+    X_EE_forward = X_EE.multiply(X_EE_EE_forward)
+    print(X_EE_forward)
     input("Press Enter to go forward...")
-    arm_node.set_ee_target(target, gripper_target=-22.0, preview_time=1.5)
+    arm_node.set_ee_target(X_EE_forward, gripper_target=-22.0, preview_time=1.5)
 
-    target = delta_backward_large.multiply(target)
-    print(target)
+    X_EE_backward = X_EE.multiply(X_EE_EE_backward)
+    print(X_EE_backward)
     input("Press Enter to go backward...")
-    arm_node.set_ee_target(target, gripper_target=-22.0, preview_time=1.5)
-
-    target = delta_forward_large.multiply(target)
-    print(target)
-    input("Press Enter to go forward...")
-    arm_node.set_ee_target(target, gripper_target=-22.0, preview_time=1.5)
+    arm_node.set_ee_target(X_EE_backward, gripper_target=-22.0, preview_time=1.5)
 
     input("Press Enter to exit...")
