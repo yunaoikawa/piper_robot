@@ -127,7 +127,7 @@
                                                 class="collision" />
 
                                             <body name="camera_body" pos="0.0 -0.036 0.1"
-                                                euler="-0.2617993878 0.0 0.0" gravcomp="1">
+                                                euler="-0.2617993878 3.14159265359 0.0" gravcomp="1">
                                                 <site name="ee" pos="0.0 0.0 0.0" />
                                                 <geom type="box" size="0.01 0.01 0.01"
                                                     rgba="0.1 0.5 0.1 0" contype="0" conaffinity="0" />
