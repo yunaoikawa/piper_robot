@@ -18,9 +18,9 @@ if __name__ == "__main__":
     # Create initial target pose at origin
     # target = mink.SE3.from_translation(np.array([0.0, 0.0, 0.0]))
 
-    delta_forward = mink.SE3.from_translation(np.array([0.25, 0.0, 0.0]))
-    delta_forward_large = mink.SE3.from_translation(np.array([0.5, 0.0, 0.0]))
-    delta_backward_large = mink.SE3.from_translation(np.array([-0.5, 0.0, 0.0]))
+    delta_forward = mink.SE3.from_translation(np.array([0.00, 0.05, 0.0]))
+    delta_forward_large = mink.SE3.from_translation(np.array([0.00, 0.1, 0.0]))
+    delta_backward_large = mink.SE3.from_translation(np.array([-0.00, -0.1, 0.0]))
 
     # Apply the translation
     target = delta_forward.multiply(target)
