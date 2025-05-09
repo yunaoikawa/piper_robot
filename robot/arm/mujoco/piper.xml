@@ -54,7 +54,7 @@
 
     <worldbody>
         <light name="spotlight" mode="targetbodycom" target="link6" pos="0 0 1" />
-        <body name="base_link" childclass="piper" gravcomp="1">
+        <body name="base_link" euler="-0.7854 0 0" childclass="piper" gravcomp="1">
             <!-- <joint name="lift" axis="0 0 1" type="slide" range="0.0 0.39"/> -->
             <inertial pos="-0.00473641 2.56829e-05 0.0414515"
                 quat="0.70428 0.034288 0.0339756 0.708279" mass="1.02"
