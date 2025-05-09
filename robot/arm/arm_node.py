@@ -1,6 +1,6 @@
 import time
 import numpy as np
-# from typing import Any
+from typing import Optional
 from pathlib import Path
 # import argparse
 
@@ -36,7 +36,7 @@ GRIPPER_OPEN = -22.0
 
 class ArmNode:
     def __init__(
-        self, can_port: str, mjcf_path: str | None = None, urdf_path: str | None = None, solver_dt: float = 0.01
+        self, can_port: str, mjcf_path: Optional[str] = None, urdf_path: Optional[str] = None, solver_dt: float = 0.01
     ):
         _HERE = Path(__file__).parent
         self.can_port = can_port
