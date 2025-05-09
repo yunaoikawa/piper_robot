@@ -2,7 +2,7 @@ import mujoco
 import mujoco.viewer
 import mink
 import time
-from typing import Any
+from typing import Any, Optional
 from pathlib import Path
 
 from dora import Node
@@ -28,7 +28,7 @@ class ArmMujoco:
         self.viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
 
         # initialize arm
-        self.target: mink.SE3 | None = None
+        self.target: Optional[mink.SE3] = None
         self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt)
 
         # communication

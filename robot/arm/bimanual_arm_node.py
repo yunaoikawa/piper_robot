@@ -1,6 +1,6 @@
 import time
 import numpy as np
-from typing import Any
+from typing import Any, Optional
 from pathlib import Path
 import argparse
 
@@ -28,10 +28,10 @@ class BimanualArmNode:
         self.right_piper = PiperJointController(right_robot_config, controller_config, "can_right")
 
         # initialize ik
-        self.left_target: mink.SE3 | None = None
-        self.right_target: mink.SE3 | None = None
-        self.left_gripper: float | None = None
-        self.right_gripper: float | None = None
+        self.left_target: Optional[mink.SE3] = None
+        self.right_target: Optional[mink.SE3] = None
+        self.left_gripper: Optional[float] = None
+        self.right_gripper: Optional[float] = None
         self.ik_solver = BimanualArmIK(mjcf_path, solver_dt=self.solver_dt)
 
         # communication

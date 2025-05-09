@@ -3,7 +3,7 @@ import mujoco.viewer
 import mink
 import time
 import numpy as np
-from typing import Any
+from typing import Any, Optional
 from pathlib import Path
 import argparse
 
@@ -30,10 +30,10 @@ class BimanualArmMujoco:
         self.viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
 
         # initialize arm
-        self.left_target: mink.SE3 | None = None
-        self.right_target: mink.SE3 | None = None
-        self.left_gripper: float | None = None
-        self.right_gripper: float | None = None
+        self.left_target: Optional[mink.SE3] = None
+        self.right_target: Optional[mink.SE3] = None
+        self.left_gripper: Optional[float] = None
+        self.right_gripper: Optional[float] = None
         self.ik_solver = BimanualArmIK(mjcf_path, solver_dt=self.solver_dt)
 
         # communication
