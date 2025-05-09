@@ -29,9 +29,6 @@
     </default>
 
     <asset>
-        <texture name="metal" type="cube" file="metal.png" />
-        <material name="metalic" texture="metal" texrepeat="3 3" reflectance="0.7"
-            texuniform="false" />
         <material name="white" rgba="1 1 1 1" />
         <material name="gray" rgba="0.15 0.15 0.15 1" />
         <material name="light_gray" rgba="0.6 0.6 0.6 1" />
