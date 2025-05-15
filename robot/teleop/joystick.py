@@ -8,10 +8,7 @@ import numpy as np
 import pygame
 from pygame.joystick import Joystick
 from loop_rate_limiters import RateLimiter
-# from dora import RateLimiter
 
-# from robot.msgs.base_command import BaseCommand, CommandType
-# from robot.base.base_node import CommandType
 from robot.base.base_node import Base
 
 XBOX_CONTROLLER_MAP = {
@@ -42,17 +39,17 @@ controller_map = XBOX_CONTROLLER_MAP
 def apply_deadzone(arr, deadzone_size=0.05):
     return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))
 
+
 class JoystickNode:
     def __init__(self):
         self.joystick = Joystick(0)
         self.max_vels = [np.array([0.5, 0.5, 1.57]), np.array([0.25, 0.25, 1.57]), np.array([0.75, 0.75, 1.57])]
         self.max_vel_setting = 0
+        self.vel_alpha = 0.95
         self.control_loop_running = False
         self.base = Base()
         self.base.start_control()
         self.base.home_lift()
-        # self.node = Node()
-        self.vel_alpha = 0.95
 
     def control_loop(self):
         rate = RateLimiter(60)
@@ -92,24 +89,12 @@ class JoystickNode:
 
             rate.sleep()
 
-    # def stop(self):
-    #     pass
-
-    # def spin(self):
-    #     for event in self.node:
-    #         event_type = event["type"]
-    #         if event_type == "INPUT":
-    #             event_id = event["id"]
-    #             if event_id == "tick":
-    #                 self.step()
-    #         elif event_type == "STOP":
-    #             self.stop()
-
 
 def main():
     pygame.init()
     node = JoystickNode()
     node.control_loop()
+
 
 if __name__ == "__main__":
     main()

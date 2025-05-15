@@ -204,22 +204,11 @@ class Base:
         self.base_target = np.zeros(3)
         self.lift_err = 0
         self.last_command_time = time.perf_counter_ns()
-        # self._log_counter = 0
-
-        # self.node = Node()
-        # homing the lift and starting the control loop
-        # self.initialized_ = False
-        # self.init()
 
         self.control_loop_thread: Union[threading.Thread, None] = threading.Thread(
             target=self.control_loop, daemon=True
         )
         self.control_loop_running = False
-
-    # def init(self):
-    #     self.lift.home()
-    #     # self.start_control()
-    #     self.initialized_ = True
 
     def home_lift(self):
         self.lift.home()
@@ -302,7 +291,6 @@ class Base:
                 phoenix6.unmanaged.feed_enable(0.01)
                 self.lift.set_velocity_control(np.sign(lift_err) * 0.05)
 
-            # phoenix6.unmanaged.feed_enable(0.01)
             rate_limiter.sleep()
 
     def _update_state(self) -> None:
@@ -346,60 +334,6 @@ class Base:
             print("warning: command queue is full")
         command = {"type": command_type, "target": target}
         self._command_queue.put(command, block=False)
-
-    # def step(self):
-    #     self._update_state()
-    #     if not self._command_queue.empty():
-    #         command = self._command_queue.get()
-    #         self.last_command_time = time.perf_counter_ns()
-    #         if command["type"] == CommandType.BASE_VELOCITY:
-    #             self.base_target = command["target"]
-    #             self.disable_motors = False
-    #         elif command["type"] == CommandType.LIFT_POSITION:
-    #             lift_target = command["target"][0]
-    #             self.lift_err = (lift_target - self.lift.get_position())
-    #             self.disable_lift = abs(self.lift_err) < 0.001
-
-    #     if (time.perf_counter_ns() - self.last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
-    #         self.base_target = np.zeros(3)
-    #         self.lift_err = 0
-    #         self.disable_motors = True
-    #         self.disable_lift = True
-
-    #     if self.disable_motors:
-    #         for s, d in zip(self.steer_motors, self.drive_motors):
-    #             s.set_neutral()
-    #             d.set_neutral()
-    #     else:
-    #         phoenix6.unmanaged.feed_enable(0.1)
-    #         wheel_speeds, wheel_angles = self._vehicle_velocity_to_angle_and_speed(self.base_target)
-    #         for i in range(NUM_SWERVES):
-    #             self.steer_motors[i].set_position(wheel_angles[i])
-    #             self.drive_motors[i].set_velocity(wheel_speeds[i])
-
-    #     if self.disable_lift:
-    #         self.lift.set_neutral()
-    #     else:
-    #         phoenix6.unmanaged.feed_enable(0.01)
-    #         self.lift.set_velocity_control(np.sign(self.lift_err) * 0.05)
-
-    # def base_command_handler(self, event: dict[str, Any]):
-    #     command = BaseCommand.decode(event["value"], event["metadata"])
-    #     self.set_target(command)
-
-    # def spin(self):
-    #     while not self.initialized_:
-    #         time.sleep(0.1)
-
-    #     for event in self.node:
-    #         event_type = event["type"]
-    #         if event_type == "INPUT":
-    #             event_id = event["id"]
-    #             if event_id == "base_command":
-    #                 self.base_command_handler(event)
-    #             elif event_id == "tick":
-    #                 self.step()
-
 
 if __name__ == "__main__":
     base = Base()
