@@ -69,8 +69,8 @@ class Lift:
 
         while True:
             self.update_state()
-            if call_enable:
-                phoenix6.unmanaged.feed_enable(0.02)
+            # if call_enable:
+            phoenix6.unmanaged.feed_enable(0.02)
             self.set_velocity_control(vel)
             pos_update_counter += 1
             if pos_update_counter > 50 and pos_update_counter % 5 == 0:
@@ -87,6 +87,7 @@ class Lift:
         self._homed = True
 
     def set_neutral(self) -> None:
+        if self._homing: return # don't set neutral when homing
         self.lift_motor.set_control(self.neutral_request)
 
     def set_velocity_control(self, velocity: float) -> None:
@@ -104,7 +105,7 @@ if __name__ == "__main__":
     lift.set_neutral()
     time.sleep(2.0)
     input("Press Enter to start")
-    HOME = True
+    HOME = False
     if HOME:
         lift.home()
     else:

@@ -221,7 +221,7 @@ class Base:
     #     self.initialized_ = True
 
     def home_lift(self):
-        self.lift.home(call_enable=False)
+        self.lift.home()
 
     def start_control(self):
         if self.control_loop_thread is None:
@@ -289,7 +289,7 @@ class Base:
                     s.set_neutral()
                     d.set_neutral()
             else:
-                # phoenix6.unmanaged.feed_enable(0.1)
+                phoenix6.unmanaged.feed_enable(0.01)
                 wheel_speeds, wheel_angles = self._vehicle_velocity_to_angle_and_speed(target)
                 for i in range(NUM_SWERVES):
                     self.steer_motors[i].set_position(wheel_angles[i])
@@ -298,10 +298,10 @@ class Base:
             if disable_lift:
                 self.lift.set_neutral()
             else:
-                # phoenix6.unmanaged.feed_enable(0.01)
+                phoenix6.unmanaged.feed_enable(0.01)
                 self.lift.set_velocity_control(np.sign(lift_err) * 0.05)
 
-            phoenix6.unmanaged.feed_enable(0.01)
+            # phoenix6.unmanaged.feed_enable(0.01)
             rate_limiter.sleep()
 
     def _update_state(self) -> None:
