@@ -46,6 +46,7 @@ class CommandType(IntEnum):
     BASE_POSITION = 2
     LIFT_POSITION = 3
 
+
 class SteerMotor:
     def __init__(self, num: int):
         self.num = num
@@ -69,7 +70,7 @@ class SteerMotor:
 
         # Motor configuration
         self.fx_cfg = configs.TalonFXConfiguration()
-        self.fx_cfg.slot0.k_s = 4
+        self.fx_cfg.slot0.k_s = 2
         self.fx_cfg.slot0.static_feedforward_sign = signals.StaticFeedforwardSignValue.USE_CLOSED_LOOP_SIGN
         self.fx_cfg.slot0.k_p = 80.0
         self.fx_cfg.slot0.k_i = 0.0
@@ -414,6 +415,3 @@ if __name__ == "__main__":
     while True:
         base.set_target_base_velocity(np.array([0.0, 0.0, 0.78]))
         rate.sleep()
-
-
-
