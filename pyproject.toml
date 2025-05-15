@@ -17,16 +17,11 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "dora-rs-cli",
     "phoenix6",
     "numpy",
     "pyzmq",
-    "rerun-sdk",
     "pygame",
-    "opencv-python",
-    "pyliblzfse",
     "pillow",
-    "record3d",
     "mujoco>=3.2.7",
     "mink",
     "tqdm",
