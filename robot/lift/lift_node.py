@@ -55,7 +55,7 @@ class Lift:
     def get_velocity(self) -> float:
         return -self.velocity_signal.value * 0.004 # [m/s]
 
-    def home(self, upper_limit: bool = True) -> None:
+    def home(self, upper_limit: bool = True, call_enable: bool = True) -> None:
         vel = 0.05 if upper_limit else -0.05
         self.update_state()
 
@@ -69,7 +69,8 @@ class Lift:
 
         while True:
             self.update_state()
-            phoenix6.unmanaged.feed_enable(0.02)
+            if call_enable:
+                phoenix6.unmanaged.feed_enable(0.02)
             self.set_velocity_control(vel)
             pos_update_counter += 1
             if pos_update_counter > 50 and pos_update_counter % 5 == 0:
