@@ -1,7 +1,7 @@
 import os
 import time
 import math
-from typing import Tuple, cast, Any
+from typing import Tuple, cast, Any, Union
 import numpy as np
 from queue import Queue
 
@@ -26,7 +26,7 @@ from robot.base.constants import (
 )
 
 
-def diff_angle(a: np.ndarray, b: np.ndarray | float) -> np.ndarray:
+def diff_angle(a: np.ndarray, b: Union[np.ndarray, float]) -> np.ndarray:
     return ((a - b) + np.pi) % (2 * np.pi) - np.pi
 
 
