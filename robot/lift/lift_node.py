@@ -64,6 +64,8 @@ class Lift:
         current_pos = last_pos
 
         rate_limiter = RateLimiter(100)
+        self._homing = True
+
         while True:
             self.update_state()
             phoenix6.unmanaged.feed_enable(0.02)
@@ -79,13 +81,14 @@ class Lift:
                 last_pos = current_pos
             rate_limiter.sleep()
 
+        self._homing = False
         self._homed = True
 
     def set_neutral(self) -> None:
         self.lift_motor.set_control(self.neutral_request)
 
     def set_velocity_control(self, velocity: float) -> None:
-        if not self._homed:
+        if not self._homed and not self._homing:
             warnings.warn("Lift is not homed, setting velocity to 0")
             return
         self.lift_motor.set_control(self.velocity_request.with_velocity(-velocity / 0.004))
