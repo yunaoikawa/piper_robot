@@ -50,10 +50,13 @@ class JoystickNode:
         self.control_loop_running = False
         self.base = Base()
         self.base.start_control()
+        self.base.home_lift()
         # self.node = Node()
+        self.vel_alpha = 0.95
 
     def control_loop(self):
         rate = RateLimiter(60)
+        last_target_velocity = np.array([0.0, 0.0, 0.0])
         while True:
             pygame.event.pump()
             if not self.control_loop_running and self.joystick.get_button(controller_map["start"]):
@@ -78,6 +81,9 @@ class JoystickNode:
                 target_velocity = apply_deadzone(target_velocity)
 
                 target_velocity = self.max_vels[self.max_vel_setting] * target_velocity
+                target_velocity = (1 - self.vel_alpha) * target_velocity + self.vel_alpha * last_target_velocity
+                last_target_velocity = target_velocity
+
                 lift_target = self.joystick.get_hat(0)[1]  # pad Y axis
                 if sum(np.abs(target_velocity)) > 0.0:
                     self.base.set_target_base_velocity(target_velocity)
