@@ -42,6 +42,7 @@ class Lift:
         self.velocity_request = controls.VelocityTorqueCurrentFOC(0, slot=1)
         self.neutral_request = controls.NeutralOut()
         self._homed = False
+        self._homing = False
 
     def get_position(self) -> float:
         # zero position - fully retracted - 0
@@ -106,13 +107,14 @@ if __name__ == "__main__":
     if HOME:
         lift.home()
     else:
+        lift._homed = True
         rate = RateLimiter(100)
         positions = []
         try:
             while True:
                 lift.update_state()
                 phoenix6.unmanaged.feed_enable(0.1)
-                # lift.set_velocity_control(-0.05)
+                lift.set_velocity_control(-0.05)
                 print("position: ", lift.get_position())
                 positions.append(lift.get_position())
                 rate.sleep()
