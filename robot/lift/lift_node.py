@@ -8,7 +8,7 @@ import phoenix6
 from phoenix6 import configs, controls, hardware
 from loop_rate_limiters import RateLimiter
 
-from robot.base.constants import CONTROL_FREQ
+CONTROL_FREQ = 250
 
 class Lift:
     def __init__(self):
