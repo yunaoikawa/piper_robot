@@ -400,7 +400,7 @@ class Base:
 
 if __name__ == "__main__":
     base = Base()
-    base.start_control()
+    # base.start_control()
     time.sleep(2)
 
     input("Press enter to rotate..")

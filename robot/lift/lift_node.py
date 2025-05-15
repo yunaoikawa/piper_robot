@@ -27,8 +27,8 @@ class Lift:
         self.lift_motor_cfg.slot1.k_i = 0.0
         self.lift_motor_cfg.slot1.k_d = 0.0
 
-        self.lift_motor_cfg.torque_current.peak_forward_torque_current = 120
-        self.lift_motor_cfg.torque_current.peak_reverse_torque_current = -120
+        self.lift_motor_cfg.torque_current.peak_forward_torque_current = 30
+        self.lift_motor_cfg.torque_current.peak_reverse_torque_current = -30
         self.lift_motor_cfg.audio.beep_on_boot = False
 
         self.min_pos, self.max_pos = 0.0, 0.39 # [m]
@@ -103,7 +103,7 @@ if __name__ == "__main__":
     lift.set_neutral()
     time.sleep(2.0)
     input("Press Enter to start")
-    HOME = False
+    HOME = True
     if HOME:
         lift.home()
     else:
