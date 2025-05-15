@@ -401,9 +401,11 @@ class Base:
 if __name__ == "__main__":
     base = Base()
     base.start_control()
-    input("Press enter to rotate..")
-    rate = RateLimiter(15)
+    time.sleep(2)
 
-    while True:
-        base.set_target_base_velocity(np.array([0.0, 0.0, 0.78]))
-        rate.sleep()
+    input("Press enter to rotate..")
+    # rate = RateLimiter(15)
+    base.home_lift()
+
+
+
