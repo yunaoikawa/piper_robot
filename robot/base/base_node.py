@@ -12,21 +12,7 @@ os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
-# from dora import Node
-
 from robot.lift.lift_node import Lift
-# from robot.msgs.base_command import BaseCommand, CommandType
-# from robot.base.constants import (
-#     POLICY_CONTROL_PERIOD_NS,
-#     ENCODER_MAGNET_OFFSETS,
-#     TWO_PI,
-#     DRIVE_GEAR_RATIO,
-#     CONTROL_FREQ,
-#     NUM_SWERVES,
-#     LENGTH,
-#     WIDTH,
-#     TIRE_RADIUS,
-# )
 
 # policy
 POLICY_CONTROL_FREQ = 10
@@ -410,3 +396,14 @@ class Base:
     #                 self.base_command_handler(event)
     #             elif event_id == "tick":
     #                 self.step()
+
+
+if __name__ == "__main__":
+    base = Base()
+    base.start_control()
+    input("Press enter to rotate..")
+    rate = RateLimiter(15)
+
+    while True:
+        base.set_target_base_velocity(np.array([0.0, 0.0, 0.78]))
+        rate.sleep()
