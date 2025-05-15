@@ -83,7 +83,7 @@ class JoystickNode:
             if lift_target != 0:
                 lift_command = BaseCommand(
                     timestamp=time.perf_counter_ns(),
-                    type=CommandType.LIFT,
+                    type=CommandType.LIFT_POSITION,
                     target=np.array([0.39 if lift_target > 0 else 0.0]),
                 )
                 self.node.send_output("base_command", *lift_command.encode())

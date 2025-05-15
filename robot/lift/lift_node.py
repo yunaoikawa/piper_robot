@@ -1,5 +1,6 @@
 import os
 import time
+import warnings
 from typing import cast
 
 os.environ["CTR_TARGET"] = "Hardware"
@@ -8,6 +9,7 @@ from phoenix6 import configs, controls, hardware
 from loop_rate_limiters import RateLimiter
 
 from robot.base.constants import CONTROL_FREQ
+
 class Lift:
     def __init__(self):
         self.lift_motor = hardware.TalonFX(9, canbus="Drivetrain")
@@ -37,10 +39,9 @@ class Lift:
         if not status.is_ok():
             raise Exception(f"Failed to apply TalonFX configuration: {status}")
 
-        # self.position_request = controls.DynamicMotionMagicTorqueCurrentFOC(0, 20, 10, 100, slot=0)
         self.velocity_request = controls.VelocityTorqueCurrentFOC(0, slot=1)
         self.neutral_request = controls.NeutralOut()
-        # self.lift_motor.set_position(0)
+        self._homed = False
 
     def get_position(self) -> float:
         # zero position - fully retracted - 0
@@ -78,10 +79,15 @@ class Lift:
                 last_pos = current_pos
             rate_limiter.sleep()
 
+        self._homed = True
+
     def set_neutral(self) -> None:
         self.lift_motor.set_control(self.neutral_request)
 
     def set_velocity_control(self, velocity: float) -> None:
+        if not self._homed:
+            warnings.warn("Lift is not homed, setting velocity to 0")
+            return
         self.lift_motor.set_control(self.velocity_request.with_velocity(-velocity / 0.004))
 
     def update_state(self):
@@ -111,5 +117,3 @@ if __name__ == "__main__":
             pass
         finally:
             lift.set_neutral()
-            # plt.plot(positions[::10])
-            # plt.savefig("lift_position.png")

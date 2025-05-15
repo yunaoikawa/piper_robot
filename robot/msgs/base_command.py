@@ -7,7 +7,7 @@ import pyarrow as pa
 class CommandType(IntEnum):
     BASE_VELOCITY = 1
     BASE_POSITION = 2
-    LIFT = 3
+    LIFT_POSITION = 3
 
 @dataclass
 class BaseCommand:
