@@ -405,9 +405,15 @@ if __name__ == "__main__":
     base.start_control()
     time.sleep(2)
 
-    input("Press enter to rotate..")
-    # rate = RateLimiter(15)
+    input("Press enter to home lift..")
     base.home_lift()
+
+    input("Press enter to rotate..")
+
+    rate = RateLimiter(50)
+    while True:
+        base.set_target_base_velocity(np.array([0.0, 0.0, 0.78]))
+        rate.sleep()
 
 
 
