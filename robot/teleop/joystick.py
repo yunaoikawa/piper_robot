@@ -82,7 +82,7 @@ class JoystickNode:
                 last_target_velocity = target_velocity
 
                 lift_target = self.joystick.get_hat(0)[1]  # pad Y axis
-                if sum(np.abs(target_velocity)) > 0.0:
+                if sum(np.abs(target_velocity)) > 1e-2:
                     self.base.set_target_base_velocity(target_velocity)
                 if lift_target != 0:
                     self.base.set_target_lift(np.array([0.39 if lift_target > 0 else 0.0]))
