@@ -9,7 +9,7 @@ import pygame
 from pygame.joystick import Joystick
 from loop_rate_limiters import RateLimiter
 
-from robot.base import Base
+from robot.rpc import RPCClient
 
 XBOX_CONTROLLER_MAP = {
     "start": 7,
@@ -47,9 +47,8 @@ class JoystickNode:
         self.max_vel_setting = 0
         self.vel_alpha = 0.9
         self.control_loop_running = False
-        self.base = Base()
-        self.base.start_control()
-        self.base.home_lift()
+        self.cone_e = RPCClient('localhost', 8081)
+        self.cone_e.init()
 
     def control_loop(self):
         rate = RateLimiter(60, name="joystick")
@@ -83,9 +82,9 @@ class JoystickNode:
 
                 lift_target = self.joystick.get_hat(0)[1]  # pad Y axis
                 if sum(np.abs(target_velocity)) > 1e-2:
-                    self.base.set_target_base_velocity(target_velocity)
+                    self.cone_e.set_base_velocity(target_velocity)
                 if lift_target != 0:
-                    self.base.set_target_lift(np.array([0.39 if lift_target > 0 else 0.0]))
+                    self.cone_e.set_lift_position(np.array([0.39 if lift_target > 0 else 0.0]))
 
             rate.sleep()
 

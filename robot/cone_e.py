@@ -73,8 +73,8 @@ class ConeE:
         self.left_arm.set_ee_target(ee_target, gripper_target, preview_time)
 
     @require_initialization
-    def home_left_arm(self):
-        self.left_arm.home()
+    def home_left_arm(self, gripper_target: float = 1.0):
+        self.left_arm.home(gripper_target)
 
     @require_initialization
     def get_left_ee_pose(self) -> np.ndarray:
@@ -116,7 +116,7 @@ class ConeE:
 
 def main():
     cone_e = ConeE()
-    server = RPCServer(cone_e, 'localhost', 5000, threaded=False)
+    server = RPCServer(cone_e, 'localhost', 8081, threaded=False)
     atexit.register(server.stop)
     server.start()
 
