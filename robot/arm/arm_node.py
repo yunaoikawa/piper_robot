@@ -55,6 +55,7 @@ class ArmNode:
         cmd.gripper_pos = 1.0 * GRIPPER_OPEN
         self.piper.set_joint_cmd(cmd)
         time.sleep(2.0)
+
         q = self.piper.get_joint_state().pos
         print(f"q_reached: {np.round(q, 4)}")
         self.ik_solver.init(q)
