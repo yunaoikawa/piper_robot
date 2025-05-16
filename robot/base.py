@@ -198,7 +198,7 @@ class Base:
         self.x = np.zeros(3)  # x, y, θ
         self.dx = np.zeros(3)  # vx, vy, ω
 
-        self._command_queue: Queue[dict[str, Any]] = Queue(1)
+        self._command_queue: Queue[dict[str, Any]] = Queue(3)
         self.disable_motors = True
         self.disable_lift = True
         self.base_target = np.zeros(3)
