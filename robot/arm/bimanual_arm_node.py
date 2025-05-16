@@ -8,7 +8,7 @@ from piperlib import PiperJointController, RobotConfigFactory, ControllerConfigF
 import mink
 from dora import Node
 
-from robot.arm.mink_ik_arm import BimanualArmIK
+from robot.arm.ik_solver import BimanualArmIK
 from robot.msgs.bimanual_pose import BimanualPose, BimanualArmCommand
 
 

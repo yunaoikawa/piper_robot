@@ -9,10 +9,15 @@ import mink
 from dora import Node
 
 from robot.teleop.oculus_msgs import parse_controller_state
-from robot.network import VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
+# from robot.network import VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
 from robot.msgs.bimanual_pose import BimanualPose, BimanualArmCommand
 from robot.msgs.base_command import BaseCommand, CommandType
 
+# VR Constants
+VR_TCP_HOST = "10.19.165.216"
+# VR_TCP_HOST = "10.19.189.139"
+VR_TCP_PORT = 5555
+VR_CONTROLLER_TOPIC = b"oculus_controller"
 GRIPPER_ANGLE_MAX = 0.7
 
 def apply_deadzone(arr, deadzone_size=0.05):

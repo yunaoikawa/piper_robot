@@ -10,7 +10,7 @@ import phoenix6.unmanaged
 
 from phoenix6 import controls
 
-from robot.base.base_node import SteerMotor, DriveMotor
+from robot.base import SteerMotor, DriveMotor
 
 
 def test_steer_motor():

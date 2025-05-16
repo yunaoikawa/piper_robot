@@ -6,7 +6,7 @@ from pathlib import Path
 from piperlib import PiperJointController, RobotConfigFactory, ControllerConfigFactory, JointState
 import mink
 
-from robot.arm.mink_ik_arm import ArmIK
+from robot.arm.ik_solver import ArmIK
 
 GRIPPER_OPEN = -22.0
 

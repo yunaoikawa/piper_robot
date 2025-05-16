@@ -12,7 +12,7 @@ os.environ["CTR_TARGET"] = "Hardware"
 import phoenix6.unmanaged
 from phoenix6 import configs, controls, hardware, signals
 
-from robot.lift.lift_node import Lift
+from robot.lift import Lift
 
 # policy
 POLICY_CONTROL_FREQ = 10

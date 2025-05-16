@@ -1,4 +1,4 @@
-from robot.arm.arm_node import ArmNode
+from robot.arm.arm import ArmNode
 from pathlib import Path
 import numpy as np
 import mink

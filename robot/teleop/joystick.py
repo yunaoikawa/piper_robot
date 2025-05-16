@@ -9,7 +9,7 @@ import pygame
 from pygame.joystick import Joystick
 from loop_rate_limiters import RateLimiter
 
-from robot.base.base_node import Base
+from robot.base import Base
 
 XBOX_CONTROLLER_MAP = {
     "start": 7,

@@ -1,4 +1,4 @@
-from robot.base.base_node import Base
+from robot.base import Base
 
 if __name__ == "__main__":
     vehicle = Base()

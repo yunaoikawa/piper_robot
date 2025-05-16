@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dora import Node
 
-from robot.arm.mink_ik_arm import ArmIK
+from robot.arm.ik_solver import ArmIK
 from robot.msgs.pose import Pose
 
 
