@@ -1,10 +1,13 @@
-from robot.base import Base
-from robot.arm.arm import ArmNode
 import warnings
 import functools
 import time
 import numpy as np
 import mink
+import atexit
+
+from robot.base import Base
+from robot.arm.arm import ArmNode
+from robot.rpc import RPCServer
 
 
 def require_initialization(func):
@@ -18,10 +21,10 @@ def require_initialization(func):
 
 
 class ConeE:
-    def __init__(self):
+    def __init__(self, base_max_vel=np.array((1.0, 1.0, 1.57)), base_max_accel=np.array((1.0, 1.0, 1.57))):
         self._initialized = False
 
-        self.base = Base()
+        self.base = Base(max_vel=base_max_vel, max_accel=base_max_accel)
         self.left_arm = ArmNode(can_port="can_left")
         # self.right_arm = ArmNode(can_port="can_right")
 
@@ -106,3 +109,13 @@ class ConeE:
     @require_initialization
     def get_right_joint_positions(self) -> np.ndarray:
         return self.right_arm.get_joint_positions()
+
+
+def main():
+    cone_e = ConeE()
+    server = RPCServer(cone_e, 'localhost', 5000, threaded=False)
+    atexit.register(server.stop)
+    server.start()
+
+if __name__ == "__main__":
+    main()
