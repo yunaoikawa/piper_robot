@@ -1,9 +1,9 @@
-import warnings
 import functools
 import time
 import numpy as np
 import mink
 import atexit
+import logging
 
 from robot.base import Base
 from robot.arm.arm import ArmNode
@@ -14,10 +14,16 @@ def require_initialization(func):
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
         if not self._initialized:
-            warnings.warn(f"{func.__name__} called before ConeE was initialized")
+            logger.warning(f"{func.__name__} called before ConeE was initialized")
             return None
         return func(self, *args, **kwargs)
     return wrapper
+
+logger = logging.getLogger(__name__)
+formatter = logging.Formatter('%(asctime)s: %(levelname)s - %(message)s')
+handler = logging.StreamHandler()
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 class ConeE:
@@ -29,6 +35,10 @@ class ConeE:
         # self.right_arm = ArmNode(can_port="can_right")
 
     def init(self):
+        if self._initialized:
+            logger.warning("ConeE already initialized")
+            return
+
         self.base.start_control()
         time.sleep(0.5)
         self.base.home_lift()
