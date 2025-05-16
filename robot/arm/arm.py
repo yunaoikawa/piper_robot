@@ -40,8 +40,6 @@ class ArmNode:
         self.ik_solver = ArmIK(self.mjcf_path, solver_dt=self.solver_dt)
         self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, 0.78])
 
-        self.init()
-
     def init(self):
         self.piper.reset_to_home()
         time.sleep(1.0)

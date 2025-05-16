@@ -2,7 +2,7 @@ from robot.base import Base
 from robot.arm.arm import ArmNode
 import warnings
 import functools
-
+import time
 import numpy as np
 import mink
 
@@ -26,10 +26,13 @@ class ConeE:
         # self.right_arm = ArmNode(can_port="can_right")
 
     def init(self):
+        self.base.start_control()
+        time.sleep(0.5)
         self.base.home_lift()
+        time.sleep(0.5)
+        # TODO: call gripper homing inside arm_init
         self.left_arm.init()
 
-        # TODO: call gripper homing process here
         self._initialized = True
 
     # Base and lift
