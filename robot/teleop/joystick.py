@@ -45,7 +45,7 @@ class JoystickNode:
         self.joystick = Joystick(0)
         self.max_vels = [np.array([0.5, 0.5, 1.57]), np.array([0.25, 0.25, 1.57]), np.array([0.75, 0.75, 1.57])]
         self.max_vel_setting = 0
-        self.vel_alpha = 0.95
+        self.vel_alpha = 0.9
         self.control_loop_running = False
         self.base = Base()
         self.base.start_control()
