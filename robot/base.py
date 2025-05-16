@@ -232,10 +232,14 @@ class Base:
         self._enqueue_command(CommandType.BASE_VELOCITY, target)
 
     def set_target_base_position(self, target: np.ndarray):
-        self._enqueue_command(CommandType.BASE_POSITION, target)
+        raise NotImplementedError("Position control not implemented yet")
+        # self._enqueue_command(CommandType.BASE_POSITION, target)
 
     def set_target_lift(self, target: np.ndarray):
         self._enqueue_command(CommandType.LIFT_POSITION, target)
+
+    def get_lift_position(self) -> float:
+        return self.lift.get_position()
 
     def get_encoder_offsets(self):
         offsets = []
@@ -268,7 +272,8 @@ class Base:
                     lift_err = lift_target - self.lift.get_position()
                     disable_lift = abs(lift_err) < 0.001
                 elif command["type"] == CommandType.BASE_POSITION:
-                    raise NotImplementedError("Position control not implemented yet")
+                    pass
+                    # raise NotImplementedError("Position control not implemented yet")
 
             if (time.perf_counter_ns() - last_command_time) > 2.5 * POLICY_CONTROL_PERIOD_NS:
                 disable_motors = True

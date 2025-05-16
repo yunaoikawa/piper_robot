@@ -47,14 +47,14 @@ class ArmNode:
         time.sleep(1.0)
 
         # home
-        q = self.home_q.copy()
-        print(f"q_home: {np.round(q, 4)}")
-        cmd = JointState(self.robot_config.joint_dof)
-        cmd.timestamp = self.piper.get_timestamp() + 1.0
-        cmd.pos = q
-        cmd.gripper_pos = 1.0 * GRIPPER_OPEN
-        self.piper.set_joint_cmd(cmd)
-        time.sleep(2.0)
+        # q = self.home_q.copy()
+        # print(f"q_home: {np.round(q, 4)}")
+        # cmd = JointState(self.robot_config.joint_dof)
+        # cmd.timestamp = self.piper.get_timestamp() + 1.0
+        # cmd.pos = q
+        # cmd.gripper_pos = 1.0 * GRIPPER_OPEN
+        # self.piper.set_joint_cmd(cmd)
+        # time.sleep(2.0)
 
         q = self.piper.get_joint_state().pos
         print(f"q_reached: {np.round(q, 4)}")
@@ -76,6 +76,18 @@ class ArmNode:
         cmd.pos = q
         cmd.gripper_pos = gripper_target * GRIPPER_OPEN
         self.piper.set_joint_cmd(cmd)
+        time.sleep(2.0)
+        self.update_joint_positions()
+
+    def set_joint_target(
+        self, joint_target: np.ndarray, gripper_target: float | None = None, preview_time: float = 0.1
+    ):
+        cmd = JointState(self.robot_config.joint_dof)
+        cmd.pos = joint_target
+        cmd.timestamp = self.piper.get_timestamp() + preview_time
+        if gripper_target is not None:
+            cmd.gripper_pos = gripper_target * GRIPPER_OPEN
+        self.piper.set_joint_cmd(cmd)
 
     def set_ee_target(self, ee_target: mink.SE3, gripper_target: Optional[float] = None, preview_time: float = 0.1):
         self.target = ee_target
@@ -86,6 +98,9 @@ class ArmNode:
             cmd.gripper_pos = gripper_target * GRIPPER_OPEN
         cmd.timestamp = self.piper.get_timestamp() + preview_time
         self.piper.set_joint_cmd(cmd)
+
+    def get_joint_positions(self) -> np.ndarray:
+        return self.piper.get_joint_state().pos
 
     def get_ee_pose(self) -> mink.SE3:
         self.update_joint_positions()
