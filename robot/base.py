@@ -252,7 +252,7 @@ class Base:
         disable_motors = True
         disable_lift = True
         last_command_time = time.perf_counter_ns()
-        rate_limiter = RateLimiter(CONTROL_FREQ)
+        rate_limiter = RateLimiter(CONTROL_FREQ, name="base-controller")
 
         while self.control_loop_running:
             self._update_state()

@@ -52,7 +52,7 @@ class JoystickNode:
         self.base.home_lift()
 
     def control_loop(self):
-        rate = RateLimiter(60)
+        rate = RateLimiter(60, name="joystick")
         last_target_velocity = np.array([0.0, 0.0, 0.0])
         while True:
             pygame.event.pump()
