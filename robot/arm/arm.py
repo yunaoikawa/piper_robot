@@ -10,14 +10,23 @@ from robot.arm.ik_solver import ArmIK
 
 GRIPPER_OPEN = -22.0
 
+
 class ArmNode:
     def __init__(
-        self, can_port: str, mjcf_path: Optional[str] = None, urdf_path: Optional[str] = None, solver_dt: float = 0.01, is_left_arm: bool = True
+        self,
+        can_port: str,
+        mjcf_path: Optional[str] = None,
+        urdf_path: Optional[str] = None,
+        solver_dt: float = 0.01,
+        is_left_arm: bool = True,
     ):
         _HERE = Path(__file__).parent
         self.can_port = can_port
         if mjcf_path is None:
-            self.mjcf_path = (_HERE / "mujoco/scene_piper.xml").as_posix()
+            if is_left_arm:
+                self.mjcf_path = (_HERE / "mujoco/scene_piper_left.xml").as_posix()
+            else:
+                self.mjcf_path = (_HERE / "mujoco/scene_piper_right.xml").as_posix()
         else:
             self.mjcf_path = mjcf_path
         if urdf_path is None:
@@ -44,7 +53,7 @@ class ArmNode:
         if is_left_arm:
             self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, 0.78])
         else:
-            self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, 0.912, -0.78])
+            self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, -0.78])
 
     def init(self):
         self.piper.reset_to_home()

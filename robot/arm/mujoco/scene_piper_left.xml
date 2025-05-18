@@ -1,5 +1,5 @@
 <mujoco model="piper_scene">
-    <include file="piper.xml" />
+    <include file="piper_left.xml" />
 
     <statistic center="0 0 0.1" extent="0.4" />
 
