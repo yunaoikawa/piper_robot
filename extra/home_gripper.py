@@ -30,3 +30,27 @@ def home():
 home()
 time.sleep(0.5)
 print(f"current position: {Motor1.getPosition():.3f} rad")
+
+# for i in range(100 * 3):
+#     MotorControl1.control_pos_force(
+#         Motor1, Pos_des=-GRIPPER_MAX_WIDTH, Vel_des=VEL_DES, i_des=I_LIMIT
+#     )
+#     time.sleep(0.01)
+
+# input("Press Enter to continue")
+
+# for i in range(100 * 3):
+#     MotorControl1.control_pos_force(
+#         Motor1, Pos_des=GRIPPER_MAX_WIDTH + 1, Vel_des=VEL_DES, i_des=I_LIMIT
+#     )
+#     time.sleep(0.01)
+
+# input("Press Enter to continue")
+
+# for i in range(100 * 3):
+#     MotorControl1.control_pos_force(
+#         Motor1, Pos_des=-GRIPPER_MAX_WIDTH, Vel_des=VEL_DES, i_des=I_LIMIT
+#     )
+#     time.sleep(0.01)
+
+# input("Press Enter to continue")

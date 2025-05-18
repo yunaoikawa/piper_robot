@@ -12,7 +12,7 @@ GRIPPER_OPEN = -22.0
 
 class ArmNode:
     def __init__(
-        self, can_port: str, mjcf_path: Optional[str] = None, urdf_path: Optional[str] = None, solver_dt: float = 0.01
+        self, can_port: str, mjcf_path: Optional[str] = None, urdf_path: Optional[str] = None, solver_dt: float = 0.01, is_left_arm: bool = True
     ):
         _HERE = Path(__file__).parent
         self.can_port = can_port
@@ -21,7 +21,10 @@ class ArmNode:
         else:
             self.mjcf_path = mjcf_path
         if urdf_path is None:
-            self.urdf_path = (_HERE / "urdf/piper_description_left.xml").as_posix()
+            if is_left_arm:
+                self.urdf_path = (_HERE / "urdf/piper_description_left.xml").as_posix()
+            else:
+                self.urdf_path = (_HERE / "urdf/piper_description_right.xml").as_posix()
         else:
             self.urdf_path = urdf_path
         self.solver_dt = solver_dt
@@ -38,7 +41,10 @@ class ArmNode:
         self.gripper_target: Optional[float] = None
         self.target_timestamp: Optional[int] = None
         self.ik_solver = ArmIK(self.mjcf_path, solver_dt=self.solver_dt)
-        self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, 0.78])
+        if is_left_arm:
+            self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, 0.78])
+        else:
+            self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, 0.912, -0.78])
 
     def init(self):
         self.piper.reset_to_home()

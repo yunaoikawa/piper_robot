@@ -25,7 +25,7 @@ class ConeE:
 
         self.base = Base(max_vel=base_max_vel, max_accel=base_max_accel)
         self.left_arm = ArmNode(can_port="can_left")
-        # self.right_arm = ArmNode(can_port="can_right")
+        self.right_arm = ArmNode(can_port="can_right", is_left_arm=False)
 
     def init(self):
         if self._initialized:
@@ -38,6 +38,7 @@ class ConeE:
         time.sleep(0.5)
         # TODO: call gripper homing inside arm_init
         self.left_arm.init()
+        self.right_arm.init()
 
         self._initialized = True
 

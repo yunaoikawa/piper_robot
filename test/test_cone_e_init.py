@@ -1,7 +1,8 @@
-from robot.cone_e import ConeE
+from robot.rpc import RPCClient
 
 def main():
-    cone_e = ConeE()
+    cone_e = RPCClient('localhost', 8081)
+
     input("Press Enter to initialize ConeE")
     cone_e.init()
     input("Press Enter to exit")
