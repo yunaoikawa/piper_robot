@@ -1,19 +1,13 @@
 import zmq
 import numpy as np
-# import time
 import atexit
 import threading
 from loop_rate_limiters import RateLimiter
-# from typing import Any
 
 import mink
 
-# from dora import Node
-
 from robot.teleop.oculus_msgs import parse_controller_state
 
-# from robot.network import VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
-# from robot.msgs.pose import Pose, ArmCommand
 from robot.rpc import RPCClient
 
 
@@ -38,8 +32,6 @@ class OculusReader:
         self.X_Cinit = None
         self.X_ee_init = None
 
-        # communication
-        # self.node = Node()
         self.cone_e = RPCClient("localhost", 8081)
         self.cone_e.init()
         self.cone_e.home_right_arm()
@@ -76,18 +68,6 @@ class OculusReader:
         stick_socket.close()
         context.destroy()
 
-    # def arm_ee_pose_handler(self, event: dict[str, Any]):
-    #     ee_pose = Pose.decode(event["value"], event["metadata"])
-    #     self.ee_pose = ee_pose
-
-    # def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
-    #     current_time = time.perf_counter_ns()
-    #     delay = (current_time - timestamp) / 1e9
-    #     if delay > max_delay or delay < 0:
-    #         print(f"Skipping message because of delay: {delay}s")
-    #         return False
-    #     return True
-
     def control_loop(self):
         rate = RateLimiter(20)
         while not self.stop_event.is_set():
@@ -96,16 +76,7 @@ class OculusReader:
             if controller_state is None:
                 print("WARN: no controller state yet")
                 rate.sleep()
-                # time.sleep(0.1)
                 continue
-
-            # if self.ee_pose is None:
-            #     print("WARN: no ee pose yet")
-            #     return
-
-            # if not self.check_timestamp(self.ee_pose.timestamp, 0.05):
-            #     print("WARN: ee pose timestamp is too old")
-            #     return
 
             ee_pose = mink.SE3(wxyz_xyz=self.cone_e.get_right_ee_pose())
 
@@ -121,7 +92,7 @@ class OculusReader:
             if self.start_teleop:
                 if self.X_Cinit is None or self.X_ee_init is None:
                     print("WARN: no initial pose yet")
-                    rate.sleep()  # time.sleep(0.1)
+                    rate.sleep()
                     continue
                 X_Ctarget = controller_state.right_SE3
                 X_Cdelta = self.X_Cinit.inverse().multiply(X_Ctarget)
@@ -136,30 +107,12 @@ class OculusReader:
                 self.cone_e.set_right_ee_target(
                     ee_target_wxyz_xyz=np.concatenate([R_REt.wxyz, p_REt]), gripper_target=gripper, preview_time=0.1
                 )
-                # arm_command = ArmCommand(time.perf_counter_ns(), np.concatenate([R_REt.wxyz, p_REt]), gripper)
-                # self.node.send_output("arm_command", *arm_command.encode())
 
             rate.sleep()
 
     def stop(self):
         self.stop_event.set()
         self.oculus_thread.join()
-
-    # def spin(self):
-    #     for event in self.node:
-    #         event_type = event["type"]
-    #         if event_type == "INPUT":
-    #             event_id = event["id"]
-
-    #             if event_id == "ee_pose":
-    #                 self.arm_ee_pose_handler(event)
-
-    #             elif event_id == "tick":
-    #                 self.step()
-
-    #         elif event_type == "STOP":
-    #             self.stop_event.set()
-    #             self.oculus_thread.join()
 
 
 def main():
