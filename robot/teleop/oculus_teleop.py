@@ -139,6 +139,8 @@ class OculusReader:
                 # arm_command = ArmCommand(time.perf_counter_ns(), np.concatenate([R_REt.wxyz, p_REt]), gripper)
                 # self.node.send_output("arm_command", *arm_command.encode())
 
+            rate.sleep()
+
     def stop(self):
         self.stop_event.set()
         self.oculus_thread.join()
