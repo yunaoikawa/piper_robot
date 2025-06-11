@@ -15,7 +15,7 @@ from robot.rpc import RPCServer
 
 
 class ArmMujoco:
-    def __init__(self, mjcf_path: str, solver_dt: float = 0.03):
+    def __init__(self, mjcf_path: str, solver_dt: float = 0.01):
         self.mjcf_path = mjcf_path
         self.solver_dt = solver_dt
 
