@@ -49,7 +49,7 @@ class ArmNode:
         self.target: Optional[mink.SE3] = None
         self.gripper_target: Optional[float] = None
         self.target_timestamp: Optional[int] = None
-        self.ik_solver = ArmIK(self.mjcf_path, solver_dt=self.solver_dt)
+        self.ik_solver = ArmIK(self.mjcf_path, solver_dt=self.solver_dt, joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"], ee_frame="ee")
         if is_left_arm:
             self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, 0.78])
         else:

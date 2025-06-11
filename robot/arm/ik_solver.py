@@ -5,7 +5,7 @@ import mink
 
 class ArmIK:
     def __init__(
-        self, mjcf_path: str, solver_dt=0.01, joint_names: list[str] | None = None, ee_frame: str | None = None
+        self, mjcf_path: str, solver_dt=0.01, joint_names: list[str] | None = None, ee_frame: str | None = None, use_lift: bool = False
     ):
         self.model = mujoco.MjModel.from_xml_path(mjcf_path)
         self.solver_dt = solver_dt
@@ -27,7 +27,8 @@ class ArmIK:
         # velocity_limits = {k: np.pi / 2 if "joint" in k else 0.05 for k in joint_names}
         self.dof_ids = np.array([self.model.joint(name).id for name in joint_names])
         self.actuator_ids = np.array([self.model.actuator(name + "_pos").id for name in joint_names if "joint" in name])
-        self.lift_actuator_id = self.model.actuator("Lift").id
+        if use_lift:
+            self.lift_actuator_id = self.model.actuator("Lift").id
 
         self.configuration = mink.Configuration(self.model)
         self.end_effector_task = mink.FrameTask(
@@ -37,17 +38,19 @@ class ArmIK:
             orientation_cost=1.0,
             lm_damping=1.0,
         )
-        self.lift_equality_task = mink.EqualityConstraintTask(
-            self.model,
-            cost=1.0,
-        )
         # lift_cost = [1e-1] * 2
         # arm_cost = [1e-3] * 6
         # posture_cost = lift_cost + arm_cost + arm_cost
         # self.posture_task = mink.PostureTask(
         #     self.model, cost=np.array(posture_cost)
         # )
-        self.tasks = [self.end_effector_task, self.lift_equality_task]  # , self.posture_task]
+        self.tasks = [self.end_effector_task]
+        if use_lift:
+            self.lift_equality_task = mink.EqualityConstraintTask(
+                self.model,
+                cost=1.0,
+            )
+            self.tasks.append(self.lift_equality_task)
         self.limits = [mink.ConfigurationLimit(self.model)]  # , mink.VelocityLimit(self.model, velocity_limits)]
 
         # initial setup
