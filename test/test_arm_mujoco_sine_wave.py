@@ -13,10 +13,10 @@ def main():
 
     input("Press Enter to start sine wave")
 
-    t = np.linspace(0.0, 50.0, 501)
-    rate_limiter = RateLimiter(10)
+    t = np.linspace(0.0, 10.0, 1001)
+    rate_limiter = RateLimiter(100)
 
-    traj_duration = 50.0
+    traj_duration = 10.0
     period = 0.1  # m
 
     y_traj = 0.2 * t / traj_duration

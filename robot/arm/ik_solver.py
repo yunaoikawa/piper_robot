@@ -41,8 +41,13 @@ class ArmIK:
             self.model,
             cost=1.0,
         )
-        # self.posture_task = mink.PostureTask(self.model, cost=np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3]))
-        self.tasks = [self.end_effector_task, self.lift_equality_task]
+        # lift_cost = [1e-1] * 2
+        # arm_cost = [1e-3] * 6
+        # posture_cost = lift_cost + arm_cost + arm_cost
+        # self.posture_task = mink.PostureTask(
+        #     self.model, cost=np.array(posture_cost)
+        # )
+        self.tasks = [self.end_effector_task, self.lift_equality_task]  # , self.posture_task]
         self.limits = [mink.ConfigurationLimit(self.model)]  # , mink.VelocityLimit(self.model, velocity_limits)]
 
         # initial setup
