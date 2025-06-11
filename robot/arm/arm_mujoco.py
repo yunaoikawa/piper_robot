@@ -61,9 +61,13 @@ class ArmMujoco:
     #     target = mink.SE3(pose.wxyz_xyz)
     #     self.target = target
 
-    def set_ee_target(self, target: mink.SE3):
-        # self.target = target
-        qd = self.ik_solver.solve_ik(target)
+    def get_ee_pose(self) -> np.ndarray:
+        q = self.data.qpos.copy()
+        self.ik_solver.update_configuration(q)
+        return self.ik_solver.forward_kinematics().wxyz_xyz
+
+    def set_ee_target(self, target: np.ndarray):
+        qd = self.ik_solver.solve_ik(mink.SE3(wxyz_xyz=target))
         print("desired q: ", qd)
         with self.q_desired_lock:
             self.q_desired = qd
