@@ -4,7 +4,9 @@ from matplotlib.animation import FuncAnimation
 import numpy as np
 
 def main():
-    arm_mujoco = RPCClient("localhost", 8081)
+    cone_e = RPCClient("localhost", 8081)
+
+    print("Starting live plot")
 
     # Create figure and subplots
     fig, axs = plt.subplots(2, 3, figsize=(12, 8))
@@ -33,7 +35,7 @@ def main():
         nonlocal joint_positions, time_points
         try:
             # Get new joint positions
-            new_positions = arm_mujoco.get_joint_positions()[:6]
+            new_positions = cone_e.get_left_joint_positions()[:6]
 
             # Update data
             joint_positions = np.roll(joint_positions, -1, axis=1)

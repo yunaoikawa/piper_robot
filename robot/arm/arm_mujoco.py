@@ -33,7 +33,7 @@ class ArmMujoco:
         # initialize arm
         self.q_desired: Optional[np.ndarray] = None
         self.q_desired_lock = threading.Lock()
-        self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt)
+        self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt, use_lift=True)
 
         self.control_loop_thread: threading.Thread | None = threading.Thread(target=self.control_loop, daemon=True)
         self.control_loop_running = False
