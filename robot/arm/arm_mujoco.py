@@ -6,11 +6,13 @@ import numpy as np
 import threading
 from typing import Optional
 from pathlib import Path
+import atexit
 
 from loop_rate_limiters import RateLimiter
 # from dora import Node
 
 from robot.arm.ik_solver import ArmIK
+from robot.rpc import RPCServer
 # from robot.msgs.pose import Pose
 
 
@@ -62,6 +64,7 @@ class ArmMujoco:
     def set_ee_target(self, target: mink.SE3):
         # self.target = target
         qd = self.ik_solver.solve_ik(target)
+        print("desired q: ", qd)
         with self.q_desired_lock:
             self.q_desired = qd
         # self.data.qpos[self.ik_solver.dof_ids] = qd
@@ -102,7 +105,7 @@ class ArmMujoco:
 
     def control_loop(self):
         rate_limiter = RateLimiter(200)
-        while True:
+        while self.control_loop_running:
             # q = self.data.qpos.copy()
             # self.ik_solver.update_configuration(q)
             # ee_pose = self.ik_solver.forward_kinematics()
@@ -142,8 +145,11 @@ class ArmMujoco:
 if __name__ == "__main__":
     _HERE = Path(__file__).parent.parent
     arm_mujoco = ArmMujoco(mjcf_path=(_HERE / "cone-e-description" / "scene.mjcf").as_posix())
-    arm_mujoco.start_control()
-    # time.sleep(1.0)
-    # arm_mujoco.set_ee_target(mink.SE3(0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
-    input("Press Enter to stop control")
-    arm_mujoco.stop_control()
+    rpc_server = RPCServer(arm_mujoco, 'localhost', 8081, threaded=False)
+    atexit.register(rpc_server.stop)
+    rpc_server.start()
+    # arm_mujoco.start_control()
+    # # time.sleep(1.0)
+    # # arm_mujoco.set_ee_target(mink.SE3(0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    # input("Press Enter to stop control")
+    # arm_mujoco.stop_control()
