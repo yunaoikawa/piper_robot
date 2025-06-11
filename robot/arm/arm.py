@@ -74,13 +74,13 @@ class ArmNode:
         self.ik_solver.init(q)
         self.target = self.ik_solver.forward_kinematics()
 
-    def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
-        current_time = time.perf_counter_ns()
-        delay = (current_time - timestamp) / 1e9
-        if delay > max_delay or delay < 0:
-            print(f"Skipping message because of delay: {delay}s")
-            return False
-        return True
+    # def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
+    #     current_time = time.perf_counter_ns()
+    #     delay = (current_time - timestamp) / 1e9
+    #     if delay > max_delay or delay < 0:
+    #         print(f"Skipping message because of delay: {delay}s")
+    #         return False
+    #     return True
 
     def home(self, gripper_target: float = 1.0):
         q = self.home_q.copy()

@@ -53,6 +53,11 @@ class ArmMujoco:
         with self.q_desired_lock:
             self.q_desired = qd
 
+    def set_joint_target(self, joint_target: np.ndarray, lift_target: float=0.0):
+        q = np.concatenate([joint_target, np.array([lift_target/2, lift_target/2])])
+        with self.q_desired_lock:
+            self.q_desired = q
+
     def start_control(self):
         if self.control_loop_thread is None:
             print("To initiate a new control loop, create a new instance of ArmMujoco first")
