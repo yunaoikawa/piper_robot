@@ -9,11 +9,9 @@ from pathlib import Path
 import atexit
 
 from loop_rate_limiters import RateLimiter
-# from dora import Node
 
 from robot.arm.ik_solver import ArmIK
 from robot.rpc import RPCServer
-# from robot.msgs.pose import Pose
 
 
 class ArmMujoco:
@@ -35,44 +33,25 @@ class ArmMujoco:
         # initialize arm
         self.q_desired: Optional[np.ndarray] = None
         self.q_desired_lock = threading.Lock()
-        # self.target: Optional[mink.SE3] = None
         self.ik_solver = ArmIK(mjcf_path, solver_dt=self.solver_dt)
 
         self.control_loop_thread: threading.Thread | None = threading.Thread(target=self.control_loop, daemon=True)
         self.control_loop_running = False
 
-        # communication
-        # self.node = Node()
-        # self.init()
+    def get_joint_positions(self) -> np.ndarray:
+        return self.data.qpos.copy()[self.ik_solver.dof_ids]
 
-    def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
-        current_time = time.perf_counter_ns()
-        delay = (current_time - timestamp) / 1e9
-        if delay > max_delay or delay < 0:
-            print(f"Skipping message because of delay: {delay}s")
-            return False
-        return True
-
-    # def arm_command_handler(self, event: dict[str, Any]):
-    #     pose = Pose.decode(event["value"], event["metadata"])
-    #     if not self.check_timestamp(pose.timestamp, 0.1):
-    #         return
-
-    #     target = mink.SE3(pose.wxyz_xyz)
-    #     self.target = target
-
-    def get_ee_pose(self) -> np.ndarray:
+    def get_ee_pose(self) -> mink.SE3:
         q = self.data.qpos.copy()
         self.ik_solver.update_configuration(q)
-        return self.ik_solver.forward_kinematics().wxyz_xyz
+        return self.ik_solver.forward_kinematics()
 
-    def set_ee_target(self, target: np.ndarray):
-        qd = self.ik_solver.solve_ik(mink.SE3(wxyz_xyz=target))
-        print("desired q: ", qd)
+    def set_ee_target(self, target: mink.SE3):
+        self.ik_solver.update_configuration(self.data.qpos.copy())
+        qd, is_solved = self.ik_solver.solve_ik(target)
+        print(f"desired q: {np.round(qd, 4)} | is_solved: {is_solved}")
         with self.q_desired_lock:
             self.q_desired = qd
-        # self.data.qpos[self.ik_solver.dof_ids] = qd
-        # self.data.ctrl[self.ik_solver.actuator_ids] = qd
 
     def start_control(self):
         if self.control_loop_thread is None:
@@ -99,52 +78,21 @@ class ArmMujoco:
         mujoco.mj_forward(self.model, self.data)
         time.sleep(0.1)
         q = self.data.qpos.copy()
-        # mink.move_mocap_to_frame(self.model, self.data, "pinch_site_target", "ee", "site")
         self.viewer.sync()
         self.ik_solver.init(q)
         with self.q_desired_lock:
             self.q_desired = q[self.ik_solver.dof_ids]
-        # self.target = self.ik_solver.forward_kinematics()
-        # print(f"target: {self.target}")
 
     def control_loop(self):
         rate_limiter = RateLimiter(200)
         while self.control_loop_running:
-            # q = self.data.qpos.copy()
-            # self.ik_solver.update_configuration(q)
-            # ee_pose = self.ik_solver.forward_kinematics()
-            if self.q_desired is not None: # TODO: check timestamp for the target
-                # update mocap viz
-                # self.data.mocap_pos[self.model.body("pinch_site_target").mocapid[0]] = self.target.translation()
-                # self.data.mocap_quat[self.model.body("pinch_site_target").mocapid[0]] = self.target.rotation().wxyz
-                # solve ik
-                # qd = self.ik_solver.solve_ik(self.target)
-                # self.data.qpos[self.ik_solver.dof_ids] = self.q_desired
+            if self.q_desired is not None:
                 with self.q_desired_lock:
                     self.data.ctrl[self.ik_solver.actuator_ids] = self.q_desired
             # step mujoco
             mujoco.mj_step(self.model, self.data)
             self.viewer.sync()
             rate_limiter.sleep()
-        # send ee pose
-        # pose_msg = Pose(time.perf_counter_ns(), ee_pose.wxyz_xyz)
-        # self.node.send_output("ee_pose", *pose_msg.encode())
-
-    # def spin(self):
-    #     for event in self.node:
-    #         event_type = event["type"]
-    #         if event_type == "INPUT":
-    #             event_id = event["id"]
-
-    #             if event_id == "arm_command":
-    #                 self.arm_command_handler(event)
-
-    #             elif event_id == "tick":
-    #                 self.step()
-
-    #         elif event_type == "STOP":
-    #             self.stop()
-
 
 if __name__ == "__main__":
     _HERE = Path(__file__).parent.parent
@@ -152,8 +100,3 @@ if __name__ == "__main__":
     rpc_server = RPCServer(arm_mujoco, 'localhost', 8081, threaded=False)
     atexit.register(rpc_server.stop)
     rpc_server.start()
-    # arm_mujoco.start_control()
-    # # time.sleep(1.0)
-    # # arm_mujoco.set_ee_target(mink.SE3(0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
-    # input("Press Enter to stop control")
-    # arm_mujoco.stop_control()
