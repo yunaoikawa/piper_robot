@@ -18,13 +18,16 @@ class ArmIK:
                 "left_arm_joint4",
                 "left_arm_joint5",
                 "left_arm_joint6",
+                "Slider_1",
+                "Slider_2",
             ]
         if ee_frame is None:
             ee_frame = "left_arm_ee"
 
         # velocity_limits = {k: np.pi / 2 if "joint" in k else 0.05 for k in joint_names}
         self.dof_ids = np.array([self.model.joint(name).id for name in joint_names])
-        self.actuator_ids = np.array([self.model.actuator(name + "_pos").id for name in joint_names])
+        self.actuator_ids = np.array([self.model.actuator(name + "_pos").id for name in joint_names if "joint" in name])
+        self.lift_actuator_id = self.model.actuator("Lift").id
 
         self.configuration = mink.Configuration(self.model)
         self.end_effector_task = mink.FrameTask(
@@ -34,8 +37,12 @@ class ArmIK:
             orientation_cost=1.0,
             lm_damping=1.0,
         )
+        self.lift_equality_task = mink.EqualityConstraintTask(
+            self.model,
+            cost=1.0,
+        )
         # self.posture_task = mink.PostureTask(self.model, cost=np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3]))
-        self.tasks = [self.end_effector_task]
+        self.tasks = [self.end_effector_task, self.lift_equality_task]
         self.limits = [mink.ConfigurationLimit(self.model)]  # , mink.VelocityLimit(self.model, velocity_limits)]
 
         # initial setup

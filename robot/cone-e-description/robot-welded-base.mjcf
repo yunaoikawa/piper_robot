@@ -19,14 +19,19 @@
         <geom material="visualgeom" type="mesh" contype="0" conaffinity="0" group="2" density="0"/>
       </default>
       <default class="collision">
-        <geom type="capsule" condim="3" contype="0" conaffinity="1" priority="1" group="1" solref="0.005 1"
+        <geom type="capsule" condim="3" contype="0" conaffinity="1" priority="1" group="3" solref="0.005 1"
           friction="1 0.01 0.01" />
         <equality solimp="0.99 0.999 1e-05" solref="0.005 1" />
       </default>
       <default class="wheel">
         <!-- 4 is friction that opposes rotation around the contact normal -->
-        <geom type="mesh" condim="4" contype="0" conaffinity="1" priority="1" group="1" solref="0.005 1"
+        <geom type="mesh" condim="4" contype="0" conaffinity="1" priority="1" group="3" solref="0.005 1"
           friction="1.2 0.005 0.005" />
+      </default>
+
+      <default class="telescope">
+        <joint type="slide" axis="0 0 1" damping="50" stiffness="0.02" armature="0.01" range="0 0.208" frictionloss="1.5"/>
+        <general ctrlrange="0 0.416" gainprm="150" biasprm="0 -100 -10" forcerange="-56 56"/>
       </default>
     </default>
 
@@ -182,16 +187,16 @@
           </body>
         </body>
         <body name="Lift_Middle" pos="-0.509400 -0.209550 0.000317"
-          quat="-1.2247452309842457e-07 -0.7071068967259713 -1.22474483074382e-07 0.7071066656470838">
-          <!-- <joint name="Slider_1" type="slide" ref="0.0" class="motor" range="0 0.208000" axis="0 0 1" /> -->
+          quat="-1.2247452309842457e-07 -0.7071068967259713 -1.22474483074382e-07 0.7071066656470838" gravcomp="1">
+          <joint name="Slider_1" class="telescope"/>
           <inertial pos="0 0 -0.104000" quat="1.0 0.0 0.0 0.0" mass="1.460741"
             diaginertia="0.007792 0.007792 0.005051" />
           <geom name="Lift_Middle_collision" pos="0 0 0" quat="1.0 0.0 0.0 0.0" type="mesh"
             mesh="Lift_Middle.stl" class="collision" />
           <geom name="Lift_Middle_visual" pos="0 0 0" quat="1.0 0.0 0.0 0.0"
             material="Lift_Middle_material" type="mesh" mesh="Lift_Middle.stl" class="visual" />
-          <body name="Lift_Top" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
-            <!-- <joint name="Slider_2" type="slide" ref="0.0" class="motor" range="0 0.208000" axis="0 0 1" /> -->
+          <body name="Lift_Top" pos="0 0 0" quat="1.0 0.0 0.0 0.0" gravcomp="1">
+            <joint name="Slider_2" class="telescope"/>
             <inertial pos="0.000005 -0.000004 -0.024234" quat="1.0 0.0 0.0 0.0" mass="4.435110"
               diaginertia="0.042873 0.040894 0.045651" />
             <geom name="Lift_Top_collision" pos="0 0 0" quat="1.0 0.0 0.0 0.0" type="mesh"
@@ -199,7 +204,7 @@
             <geom name="Lift_Top_visual" pos="0 0 0" quat="1.0 0.0 0.0 0.0"
               material="Lift_Middle_material" type="mesh" mesh="Lift_Top.stl" class="visual" />
 
-              <body name="left_arm_link0" euler="0.7854 0 3.14" pos="-0.005 -0.0925 0.0575" childclass="piper" gravcomp="1">
+              <body name="left_arm_link0" euler="0.0 0 3.14" pos="-0.005 -0.0925 0.0575" childclass="piper" gravcomp="1">
                 <inertial pos="-0.00473641 2.56829e-05 0.0414515"
                   quat="0.70428 0.034288 0.0339756 0.708279" mass="1.02"
                   diaginertia="0.00282612 0.00269117 0.000879394" />
@@ -384,9 +389,11 @@
     <position name="front_right_steer_ctrl" joint="front_right_steer" class="steering_joint" />
     <velocity name="drive_front_right_ctrl" joint="drive_front_right" class="drive_joint" />
     <position name="back_right_steer_ctrl" joint="back_right_steer" class="steering_joint" />
-    <velocity name="drive_back_right_ctrl" joint="drive_back_right" class="drive_joint" />
-    <motor name="Slider_1_ctrl" joint="Slider_1" class="motor" />
-    <motor name="Slider_2_ctrl" joint="Slider_2" class="motor" /> -->
+    <velocity name="drive_back_right_ctrl" joint="drive_back_right" class="drive_joint" /> -->
+
+    <!-- <position name="Lift" joint="Slider_1" kp="100" kv="20" ctrlrange="0 0.416"/> -->
+    <position name="Lift" tendon="lift" class="telescope" />
+    <!-- <position name="Slider_2_pos" joint="Slider_2" kp="100" kv="20" inheritrange="1"/> -->
 
     <!-- Piper actuators -->
      <!-- Left arm -->
@@ -434,6 +441,17 @@
     <exclude body1="Lift_Middle" body2="Lift_Top" />
   </contact>
 
+  <tendon>
+    <fixed name="lift">
+      <joint joint="Slider_1" coef="1"/>
+      <joint joint="Slider_2" coef="1"/>
+    </fixed>
+  </tendon>
+
+  <equality>
+    <joint joint1="Slider_1" joint2="Slider_2"/>
+  </equality>
+
   <sensor>
     <framepos name="base_site_pos" objtype="site" objname="base_site" />
     <framequat name="base_site_quat" objtype="site" objname="base_site" />
@@ -443,13 +461,15 @@
   </sensor>
 
   <keyframe>
-    <key name="home" qpos="0.0 1.58065 -0.578175 0.0 -0.912 0.78
-                          0.0 1.58065 -0.578175 0.0 -0.912 -0.78"
-                     ctrl="0.0 1.58065 -0.578175 0.0 -0.912 0.78
-                          0.0 1.58065 -0.578175 0.0 -0.912 -0.78" />
-    <key name="zero" qpos="0 0 0 0 0 0
+    <key name="home" qpos="0.1 0.1
+                          0.0 1.55 -1.5 0.0 0.0 0.0
+                          0.0 1.55 -1.5 0.0 0.0 0.0"
+                     ctrl="0.2
+                     0.0 1.55 -1.5 0.0 0.0 0.0
+                          0.0 1.55 -1.5 0.0 0.0 0.0" />
+    <!-- <key name="zero" qpos="0 0 0 0 0 0
                            0 0 0 0 0 0"
                      ctrl="0 0 0 0 0 0
-                           0 0 0 0 0 0" />
+                           0 0 0 0 0 0" /> -->
   </keyframe>
 </mujoco>

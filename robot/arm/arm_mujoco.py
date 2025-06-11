@@ -88,7 +88,8 @@ class ArmMujoco:
         while self.control_loop_running:
             if self.q_desired is not None:
                 with self.q_desired_lock:
-                    self.data.ctrl[self.ik_solver.actuator_ids] = self.q_desired
+                    self.data.ctrl[self.ik_solver.actuator_ids] = self.q_desired[:-2]
+                    self.data.ctrl[self.ik_solver.lift_actuator_id] = self.q_desired[-2:].sum()
             # step mujoco
             mujoco.mj_step(self.model, self.data)
             self.viewer.sync()

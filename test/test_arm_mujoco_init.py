@@ -1,22 +1,6 @@
 from robot.rpc import RPCClient
 import numpy as np
 
-def compute_tracking_error(target_1, target_2):
-    tracking_error_pos = np.linalg.norm(target_2[-3:] - target_1[-3:])
-    # Get quaternion difference between target poses
-    q1 = target_1[:4]  # wxyz format
-    q2 = target_2[:4]
-    # Compute relative rotation quaternion
-    q_diff = np.zeros(4)
-    q_diff[0] = q1[0]*q2[0] + q1[1]*q2[1] + q1[2]*q2[2] + q1[3]*q2[3]
-    q_diff[1] = -q1[1]*q2[0] + q1[0]*q2[1] + q1[3]*q2[2] - q1[2]*q2[3]
-    q_diff[2] = -q1[2]*q2[0] - q1[3]*q2[1] + q1[0]*q2[2] + q1[1]*q2[3]
-    q_diff[3] = -q1[3]*q2[0] + q1[2]*q2[1] - q1[1]*q2[2] + q1[0]*q2[3]
-    # Convert to angle
-    tracking_error_ori = 2 * np.arccos(np.clip(q_diff[0], -1.0, 1.0))
-    return np.array([tracking_error_pos, tracking_error_ori])
-
-
 def main():
     arm_mujoco = RPCClient('localhost', 8081)
 
