@@ -20,12 +20,14 @@ def require_initialization(func):
 
 
 class ConeE:
-    def __init__(self, base_max_vel=np.array((1.0, 1.0, 1.57)), base_max_accel=np.array((1.0, 1.0, 1.57))):
+    def __init__(self, base_max_vel=np.array((1.0, 1.0, 1.57)), base_max_accel=np.array((1.0, 1.0, 1.57)), no_arms=False):
         self._initialized = False
 
         self.base = Base(max_vel=base_max_vel, max_accel=base_max_accel)
-        self.left_arm = ArmNode(can_port="can_left")
-        self.right_arm = ArmNode(can_port="can_right", is_left_arm=False)
+        self.no_arms = no_arms
+        if not self.no_arms:
+            self.left_arm = ArmNode(can_port="can_left")
+            self.right_arm = ArmNode(can_port="can_right", is_left_arm=False)
 
     def init(self):
         if self._initialized:
@@ -37,8 +39,9 @@ class ConeE:
         self.base.home_lift()
         time.sleep(0.5)
         # TODO: call gripper homing inside arm_init
-        self.left_arm.init()
-        self.right_arm.init()
+        if not self.no_arms:
+            self.left_arm.init()
+            self.right_arm.init()
 
         self._initialized = True
 
@@ -116,7 +119,7 @@ class ConeE:
 
 
 def main():
-    cone_e = ConeE()
+    cone_e = ConeE(no_arms=True)
     server = RPCServer(cone_e, 'localhost', 8081, threaded=False)
     atexit.register(server.stop)
     server.start()

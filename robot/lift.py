@@ -22,13 +22,15 @@ class Lift:
 
         self.lift_motor_cfg = configs.TalonFXConfiguration()
 
+        self.lift_ratio = 0.006 * (16 / 60)
+
         # velocity control gains
         self.lift_motor_cfg.slot1.k_p = 5.0
         self.lift_motor_cfg.slot1.k_i = 0.0
         self.lift_motor_cfg.slot1.k_d = 0.0
 
-        self.lift_motor_cfg.torque_current.peak_forward_torque_current = 50
-        self.lift_motor_cfg.torque_current.peak_reverse_torque_current = -50
+        self.lift_motor_cfg.torque_current.peak_forward_torque_current = 25
+        self.lift_motor_cfg.torque_current.peak_reverse_torque_current = -25
         self.lift_motor_cfg.audio.beep_on_boot = False
 
         self.min_pos, self.max_pos = 0.0, 0.39 # [m]
@@ -48,12 +50,12 @@ class Lift:
         # zero position - fully retracted - 0
         # lead screw pitch = 6mm per rev
         # motor pulley teeth = 16
-        # shaft pulley teeth = 24
-        # 16/24 * 6 = 4mm per rev
-        return -self.position_signal.value * 0.004 # [m]
+        # shaft pulley teeth = 60
+        # 16/60 * 6 = 1.6mm per rev
+        return -self.position_signal.value * self.lift_ratio # [m]
 
     def get_velocity(self) -> float:
-        return -self.velocity_signal.value * 0.004 # [m/s]
+        return -self.velocity_signal.value * self.lift_ratio # [m/s]
 
     def home(self, upper_limit: bool = True, call_enable: bool = True) -> None:
         vel = 0.05 if upper_limit else -0.05
@@ -78,7 +80,7 @@ class Lift:
                 print("current_pos: ", current_pos)
                 if abs(current_pos - last_pos) < pos_tolerance:
                     print("Lift homing complete")
-                    self.lift_motor.set_position(-0.39/0.004 if upper_limit else 0.0)
+                    self.lift_motor.set_position(-self.max_pos/self.lift_ratio if upper_limit else 0.0)
                     break
                 last_pos = current_pos
             rate_limiter.sleep()
@@ -94,7 +96,7 @@ class Lift:
         if not self._homed and not self._homing:
             warnings.warn("Lift is not homed, setting velocity to 0")
             return
-        self.lift_motor.set_control(self.velocity_request.with_velocity(-velocity / 0.004))
+        self.lift_motor.set_control(self.velocity_request.with_velocity(-velocity / self.lift_ratio))
 
     def update_state(self):
         phoenix6.BaseStatusSignal.refresh_all(self.status_signals)
@@ -105,7 +107,7 @@ if __name__ == "__main__":
     lift.set_neutral()
     time.sleep(2.0)
     input("Press Enter to start")
-    HOME = False
+    HOME = True
     if HOME:
         lift.home()
     else:
