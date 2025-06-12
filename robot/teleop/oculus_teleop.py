@@ -1,6 +1,7 @@
 import zmq
 import numpy as np
 import atexit
+import time
 import threading
 from loop_rate_limiters import RateLimiter
 
@@ -55,8 +56,8 @@ class OculusReader:
 
         # initialize the polling set
         # poller.register(stick_socket, zmq.POLLIN)
-        # last_command_timestamp = None
-        # interval_history = []
+        last_command_timestamp = None
+        interval_history = []
 
         while not self.stop_event.is_set():
             # events = dict(poller.poll(1000))
@@ -64,12 +65,12 @@ class OculusReader:
             _, message = stick_socket.recv_multipart()
             with self.controller_state_lock_:
                 self.controller_state = parse_controller_state(message.decode())
-                # if last_command_timestamp is not None:
-                #     interval_now = time.time() - last_command_timestamp
-                #     interval_history.append(interval_now)
-                # last_command_timestamp = time.time()
+                if last_command_timestamp is not None:
+                    interval_now = time.time() - last_command_timestamp
+                    interval_history.append(interval_now)
+                last_command_timestamp = time.time()
 
-        # np.array(interval_history).tofile("interval_history.npy")
+        np.array(interval_history).tofile("interval_history.bin")
         stick_socket.close()
         context.destroy()
 
