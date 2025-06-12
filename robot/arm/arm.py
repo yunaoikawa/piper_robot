@@ -3,7 +3,7 @@ import numpy as np
 from typing import Optional
 from pathlib import Path
 
-from piperlib import PiperJointController, RobotConfigFactory, ControllerConfigFactory, JointState
+from piperlib import PiperJointController, RobotConfigFactory, ControllerConfigFactory, JointState, Gain
 import mink
 
 from robot.arm.ik_solver import ArmIK
@@ -111,6 +111,10 @@ class ArmNode:
             cmd.gripper_pos = gripper_target * GRIPPER_OPEN
         cmd.timestamp = self.piper.get_timestamp() + preview_time
         self.piper.set_joint_cmd(cmd)
+
+    def set_gain(self, kp: np.ndarray, kd: np.ndarray):
+        gain = Gain(kp, kd)
+        self.piper.set_gain(gain)
 
     def get_joint_positions(self) -> np.ndarray:
         return self.piper.get_joint_state().pos

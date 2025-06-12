@@ -12,7 +12,7 @@ def main():
     rr.init("arm_joint_plotter")
     rr.connect(addr=ENES_MACBOOK_IP)
 
-    rate_limiter = RateLimiter(100)
+    rate_limiter = RateLimiter(10)
 
     try:
         while True:

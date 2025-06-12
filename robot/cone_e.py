@@ -77,6 +77,10 @@ class ConeE:
         self.left_arm.set_ee_target(ee_target, gripper_target, preview_time)
 
     @require_initialization
+    def set_left_gain(self, kp: np.ndarray, kd: np.ndarray):
+        self.left_arm.set_gain(kp, kd)
+
+    @require_initialization
     def home_left_arm(self, gripper_target: float = 1.0):
         self.left_arm.home(gripper_target)
 
@@ -104,6 +108,10 @@ class ConeE:
     ):
         ee_target = mink.SE3(wxyz_xyz=ee_target_wxyz_xyz)
         self.right_arm.set_ee_target(ee_target, gripper_target, preview_time)
+
+    @require_initialization
+    def set_right_gain(self, kp: np.ndarray, kd: np.ndarray):
+        self.right_arm.set_gain(kp, kd)
 
     @require_initialization
     def home_right_arm(self):
