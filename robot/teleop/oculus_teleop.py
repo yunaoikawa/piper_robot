@@ -78,7 +78,7 @@ class OculusReader:
                 rate.sleep()
                 continue
 
-            ee_pose = mink.SE3(wxyz_xyz=self.cone_e.get_right_ee_pose())
+            ee_pose = self.cone_e.get_right_ee_pose()
 
             if controller_state.right_a:
                 print("start teleop")
@@ -105,7 +105,7 @@ class OculusReader:
                 # publish the target pose
                 gripper = GRIPPER_ANGLE_MAX if controller_state.right_index_trigger < 0.5 else 0.0
                 self.cone_e.set_right_ee_target(
-                    ee_target_wxyz_xyz=np.concatenate([R_REt.wxyz, p_REt]), gripper_target=gripper, preview_time=0.1
+                    target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])), gripper_target=gripper, preview_time=0.1
                 )
 
             rate.sleep()

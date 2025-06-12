@@ -5,7 +5,12 @@ import mink
 
 class ArmIK:
     def __init__(
-        self, mjcf_path: str, solver_dt=0.01, joint_names: list[str] | None = None, ee_frame: str | None = None, use_lift: bool = False
+        self,
+        mjcf_path: str,
+        solver_dt=0.01,
+        joint_names: list[str] | None = None,
+        ee_frame: str | None = None,
+        use_lift: bool = False,
     ):
         self.model = mujoco.MjModel.from_xml_path(mjcf_path)
         self.solver_dt = solver_dt

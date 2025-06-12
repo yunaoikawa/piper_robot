@@ -18,12 +18,12 @@ def main():
 
     while True:
         for waypoint in waypoints:
-            arm_mujoco.set_joint_target(waypoint, lift_target=0.0)
+            arm_mujoco.set_left_joint_target(waypoint)
             time.sleep(0.05)
 
         input("Go back to start")
         for waypoint in waypoints[::-1]:
-            arm_mujoco.set_joint_target(waypoint, lift_target=0.0)
+            arm_mujoco.set_left_joint_target(waypoint)
             time.sleep(0.05)
 
         input("Go forward")

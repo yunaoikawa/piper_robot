@@ -68,7 +68,7 @@ class ConeEMujoco:
         self.control_loop_thread: threading.Thread | None = threading.Thread(target=self.control_loop, daemon=True)
         self.control_loop_running = False
 
-    def set_left_ee_target(self, target: mink.SE3):
+    def set_left_ee_target(self, target: mink.SE3, gripper_target: float = 0.0, preview_time: float = 0.0):
         self.left_ik_solver.update_configuration(self.data.qpos.copy())
         qd, is_solved = self.left_ik_solver.solve_ik(target)
         print(f"desired q: {np.round(qd, 4)} | is_solved: {is_solved}")
@@ -87,7 +87,7 @@ class ConeEMujoco:
         self.left_ik_solver.update_configuration(q)
         return self.left_ik_solver.forward_kinematics()
 
-    def set_right_ee_target(self, target: mink.SE3):
+    def set_right_ee_target(self, target: mink.SE3, gripper_target: float = 0.0, preview_time: float = 0.0):
         self.right_ik_solver.update_configuration(self.data.qpos.copy())
         qd, is_solved = self.right_ik_solver.solve_ik(target)
         print(f"desired q: {np.round(qd, 4)} | is_solved: {is_solved}")
@@ -110,7 +110,7 @@ class ConeEMujoco:
         if self.control_loop_thread is None:
             print("To initiate a new control loop, create a new instance of ArmMujoco first")
             return
-        self.init()
+        # self.init()
         self.control_loop_running = True
         self.control_loop_thread.start()
 
@@ -124,21 +124,31 @@ class ConeEMujoco:
         self.viewer.close()
 
     def init(self):
-        # home
-        left_home_q = self.left_ik_solver.get_home_q()
-        self.data.qpos[self.left_ik_solver.dof_ids] = left_home_q
-        right_home_q = self.right_ik_solver.get_home_q()
-        self.data.qpos[self.right_ik_solver.dof_ids] = right_home_q
-        mujoco.mj_forward(self.model, self.data)
+        self.start_control()
         time.sleep(0.1)
+        # # home
+        # left_home_q = self.left_ik_solver.get_home_q()
+        # self.data.qpos[self.left_ik_solver.dof_ids] = left_home_q
+        # right_home_q = self.right_ik_solver.get_home_q()
+        # self.data.qpos[self.right_ik_solver.dof_ids] = right_home_q
+        # mujoco.mj_forward(self.model, self.data)
+        # time.sleep(0.1)
         q = self.data.qpos.copy()
-        self.viewer.sync()
+        # self.viewer.sync()
         self.left_ik_solver.init(q)
         self.right_ik_solver.init(q)
         with self.left_q_desired_lock:
             self.left_q_desired = q[self.left_ik_solver.dof_ids]
         with self.right_q_desired_lock:
             self.right_q_desired = q[self.right_ik_solver.dof_ids]
+
+    def home_left_arm(self):
+        with self.left_q_desired_lock:
+            self.left_q_desired = self.left_ik_solver.get_home_q()
+
+    def home_right_arm(self):
+        with self.right_q_desired_lock:
+            self.right_q_desired = self.right_ik_solver.get_home_q()
 
     def control_loop(self):
         rate_limiter = RateLimiter(200)
@@ -156,7 +166,7 @@ class ConeEMujoco:
 
 
 if __name__ == "__main__":
-    _HERE = Path(__file__).parent.parent
+    _HERE = Path(__file__).parent
     cone_e_mujoco = ConeEMujoco(mjcf_path=(_HERE / "cone-e-description" / "scene.mjcf").as_posix())
     rpc_server = RPCServer(cone_e_mujoco, "localhost", 8081, threaded=False)
     atexit.register(rpc_server.stop)
