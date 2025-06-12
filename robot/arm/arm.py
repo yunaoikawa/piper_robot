@@ -104,7 +104,7 @@ class ArmNode:
 
     def set_ee_target(self, ee_target: mink.SE3, gripper_target: Optional[float] = None, preview_time: float = 0.1):
         self.target = ee_target
-        qd = self.ik_solver.solve_ik(self.target)
+        qd, _ = self.ik_solver.solve_ik(self.target)
         cmd = JointState(self.robot_config.joint_dof)
         cmd.pos = qd
         if gripper_target is not None:

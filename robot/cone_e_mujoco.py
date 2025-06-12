@@ -68,9 +68,9 @@ class ConeEMujoco:
         self.control_loop_thread: threading.Thread | None = threading.Thread(target=self.control_loop, daemon=True)
         self.control_loop_running = False
 
-    def set_left_ee_target(self, target: mink.SE3, gripper_target: float = 0.0, preview_time: float = 0.0):
+    def set_left_ee_target(self, ee_target: mink.SE3, gripper_target: float = 0.0, preview_time: float = 0.0):
         self.left_ik_solver.update_configuration(self.data.qpos.copy())
-        qd, is_solved = self.left_ik_solver.solve_ik(target)
+        qd, is_solved = self.left_ik_solver.solve_ik(ee_target)
         print(f"desired q: {np.round(qd, 4)} | is_solved: {is_solved}")
         with self.left_q_desired_lock:
             self.left_q_desired = qd
@@ -87,9 +87,9 @@ class ConeEMujoco:
         self.left_ik_solver.update_configuration(q)
         return self.left_ik_solver.forward_kinematics()
 
-    def set_right_ee_target(self, target: mink.SE3, gripper_target: float = 0.0, preview_time: float = 0.0):
+    def set_right_ee_target(self, ee_target: mink.SE3, gripper_target: float = 0.0, preview_time: float = 0.0):
         self.right_ik_solver.update_configuration(self.data.qpos.copy())
-        qd, is_solved = self.right_ik_solver.solve_ik(target)
+        qd, is_solved = self.right_ik_solver.solve_ik(ee_target)
         print(f"desired q: {np.round(qd, 4)} | is_solved: {is_solved}")
         with self.right_q_desired_lock:
             self.right_q_desired = qd

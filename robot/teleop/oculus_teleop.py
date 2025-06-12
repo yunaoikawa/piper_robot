@@ -111,7 +111,7 @@ class OculusReader:
                 # publish the target pose
                 gripper = GRIPPER_ANGLE_MAX if controller_state.right_index_trigger < 0.5 else 0.0
                 self.cone_e.set_right_ee_target(
-                    target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])), gripper_target=gripper, preview_time=0.05
+                    ee_target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])), gripper_target=gripper, preview_time=0.05
                 )
 
             rate.sleep()

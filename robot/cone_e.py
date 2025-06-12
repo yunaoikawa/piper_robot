@@ -71,9 +71,9 @@ class ConeE:
 
     @require_initialization
     def set_left_ee_target(
-        self, ee_target_wxyz_xyz: np.ndarray, gripper_target: float | None = None, preview_time: float = 0.1
+        self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1
     ):
-        ee_target = mink.SE3(wxyz_xyz=ee_target_wxyz_xyz)
+        # ee_target = mink.SE3(wxyz_xyz=ee_target_wxyz_xyz)
         self.left_arm.set_ee_target(ee_target, gripper_target, preview_time)
 
     @require_initialization
@@ -85,11 +85,11 @@ class ConeE:
         self.left_arm.home(gripper_target)
 
     @require_initialization
-    def get_left_ee_pose(self) -> np.ndarray:
+    def get_left_ee_pose(self) -> mink.SE3:
         """
         Returns the pose of the left arm's end effector in the world frame (qw, qx, qy, qz, x, y, z).
         """
-        return self.left_arm.get_ee_pose().wxyz_xyz
+        return self.left_arm.get_ee_pose()
 
     @require_initialization
     def get_left_joint_positions(self) -> np.ndarray:
@@ -104,9 +104,9 @@ class ConeE:
 
     @require_initialization
     def set_right_ee_target(
-        self, ee_target_wxyz_xyz: np.ndarray, gripper_target: float | None = None, preview_time: float = 0.1
+        self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1
     ):
-        ee_target = mink.SE3(wxyz_xyz=ee_target_wxyz_xyz)
+        # ee_target = mink.SE3(wxyz_xyz=ee_target_wxyz_xyz)
         self.right_arm.set_ee_target(ee_target, gripper_target, preview_time)
 
     @require_initialization
@@ -118,8 +118,8 @@ class ConeE:
         self.right_arm.home()
 
     @require_initialization
-    def get_right_ee_pose(self) -> np.ndarray:
-        return self.right_arm.get_ee_pose().wxyz_xyz
+    def get_right_ee_pose(self) -> mink.SE3:
+        return self.right_arm.get_ee_pose()
 
     @require_initialization
     def get_right_joint_positions(self) -> np.ndarray:
