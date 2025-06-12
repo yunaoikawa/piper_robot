@@ -2,11 +2,15 @@ from robot.rpc import RPCClient
 import numpy as np
 import time
 
-
 def main():
     cone_e = RPCClient("localhost", 8081)
 
     input("Press Enter to start")
+
+    current_kp = np.array([5, 5, 5, 3, 3, 3])
+    current_kd = np.array([0.2, 0.2, 0.2, 0.1, 0.1, 0.1])
+
+    cone_e.set_left_gain(current_kp, current_kd)
 
     start_joint_targets = np.zeros(6)
     end_joint_targets = np.array([0.2,0.2,-0.2,0.3,-0.2,0.5])
@@ -32,11 +36,30 @@ def main():
             time.sleep(0.05)
 
         input("Go back to start")
+
         for waypoint in waypoints[::-1]:
             cone_e.set_left_joint_target(waypoint, preview_time=0)
             time.sleep(0.05)
 
-        input("Go forward")
+        kp_str = input("Go forward. Set kp: ")
+
+        if kp_str != "":
+            try:
+                current_kp = np.array(kp_str.split(",")).astype(float)
+            except ValueError:
+                print("Invalid kp")
+                continue
+
+        kd_str = input("Set kd: ")
+        if kd_str != "":
+            try:
+                current_kd = np.array(kd_str.split(",")).astype(float)
+            except ValueError:
+                print("Invalid kd")
+                continue
+
+        cone_e.set_left_gain(current_kp, current_kd)
+        time.sleep(0.1)
 
 
 if __name__ == "__main__":
