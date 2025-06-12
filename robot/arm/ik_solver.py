@@ -62,7 +62,9 @@ class SingleArmIK:
         self.initalized_ = False
 
     def init(self, q):
-        self.configuration.update(q)
+        current_q = self.configuration.q.copy()
+        current_q[self.dof_ids] = q
+        self.configuration.update(current_q)
         # self.posture_task.set_target_from_configuration(self.configuration)
         self.initalized_ = True
 
@@ -87,7 +89,9 @@ class SingleArmIK:
         return self.configuration.q[self.dof_ids], is_solved
 
     def update_configuration(self, q: np.ndarray):
-        self.configuration.update(q)
+        current_q = self.configuration.q.copy()
+        current_q[self.dof_ids] = q
+        self.configuration.update(current_q)
 
     def forward_kinematics(self) -> mink.SE3:
         return self.configuration.get_transform_frame_to_world(

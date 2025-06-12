@@ -15,20 +15,20 @@ class ArmNode:
     def __init__(
         self,
         can_port: str,
-        mjcf_path: Optional[str] = None,
+        mjcf_path: str,
         urdf_path: Optional[str] = None,
         solver_dt: float = 0.01,
         is_left_arm: bool = True,
     ):
         _HERE = Path(__file__).parent
         self.can_port = can_port
-        if mjcf_path is None:
-            if is_left_arm:
-                self.mjcf_path = (_HERE / "mujoco/scene_piper_left.xml").as_posix()
-            else:
-                self.mjcf_path = (_HERE / "mujoco/scene_piper_right.xml").as_posix()
-        else:
-            self.mjcf_path = mjcf_path
+        # if mjcf_path is None:
+        #     if is_left_arm:
+        #         self.mjcf_path = (_HERE / "mujoco/scene_piper_left.xml").as_posix()
+        #     else:
+        #         self.mjcf_path = (_HERE / "mujoco/scene_piper_right.xml").as_posix()
+        # else:
+        #     self.mjcf_path = mjcf_path
         if urdf_path is None:
             if is_left_arm:
                 self.urdf_path = (_HERE / "urdf/piper_description_left.xml").as_posix()
@@ -49,11 +49,39 @@ class ArmNode:
         self.target: Optional[mink.SE3] = None
         self.gripper_target: Optional[float] = None
         self.target_timestamp: Optional[int] = None
-        self.ik_solver = SingleArmIK(self.mjcf_path, solver_dt=self.solver_dt, joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"], ee_frame="ee")
         if is_left_arm:
+            joint_names = [
+                "left_arm_joint1",
+                "left_arm_joint2",
+                "left_arm_joint3",
+                "left_arm_joint4",
+                "left_arm_joint5",
+                "left_arm_joint6",
+            ]
+            ee_frame = "left_arm_ee"
             self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, 0.78])
         else:
+            joint_names = [
+                "right_arm_joint1",
+                "right_arm_joint2",
+                "right_arm_joint3",
+                "right_arm_joint4",
+                "right_arm_joint5",
+                "right_arm_joint6",
+            ]
+            ee_frame = "right_arm_ee"
             self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, -0.78])
+
+        self.ik_solver = SingleArmIK(
+            mjcf_path,
+            solver_dt=self.solver_dt,
+            joint_names=joint_names,
+            ee_frame=ee_frame,
+        )
+        # if is_left_arm:
+        #     self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, 0.78])
+        # else:
+        #     self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, -0.78])
 
     def init(self):
         self.piper.reset_to_home()

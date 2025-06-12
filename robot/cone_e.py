@@ -3,6 +3,7 @@ import time
 import numpy as np
 import mink
 import atexit
+from pathlib import Path
 
 from robot.base import Base
 from robot.arm.arm import ArmNode
@@ -16,18 +17,29 @@ def require_initialization(func):
             print(f"Warning: {func.__name__} called before ConeE was initialized")
             return None
         return func(self, *args, **kwargs)
+
     return wrapper
 
 
 class ConeE:
-    def __init__(self, base_max_vel=np.array((1.0, 1.0, 1.57)), base_max_accel=np.array((1.0, 1.0, 1.57)), no_arms=False):
+    def __init__(
+        self, base_max_vel=np.array((1.0, 1.0, 1.57)), base_max_accel=np.array((1.0, 1.0, 1.57)), no_arms=False
+    ):
         self._initialized = False
 
         self.base = Base(max_vel=base_max_vel, max_accel=base_max_accel)
         self.no_arms = no_arms
         if not self.no_arms:
-            self.left_arm = ArmNode(can_port="can_left")
-            self.right_arm = ArmNode(can_port="can_right", is_left_arm=False)
+            _HERE = Path(__file__).parent
+            self.left_arm = ArmNode(
+                can_port="can_left",
+                mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix()
+            )
+            self.right_arm = ArmNode(
+                can_port="can_right",
+                mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix(),
+                is_left_arm=False,
+            )
 
     def init(self):
         if self._initialized:
@@ -70,9 +82,7 @@ class ConeE:
         self.left_arm.set_joint_target(joint_target, gripper_target, preview_time)
 
     @require_initialization
-    def set_left_ee_target(
-        self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1
-    ):
+    def set_left_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
         # ee_target = mink.SE3(wxyz_xyz=ee_target_wxyz_xyz)
         self.left_arm.set_ee_target(ee_target, gripper_target, preview_time)
 
@@ -103,9 +113,7 @@ class ConeE:
         self.right_arm.set_joint_target(joint_target, gripper_target, preview_time)
 
     @require_initialization
-    def set_right_ee_target(
-        self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1
-    ):
+    def set_right_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
         # ee_target = mink.SE3(wxyz_xyz=ee_target_wxyz_xyz)
         self.right_arm.set_ee_target(ee_target, gripper_target, preview_time)
 
@@ -128,9 +136,10 @@ class ConeE:
 
 def main():
     cone_e = ConeE(no_arms=False)
-    server = RPCServer(cone_e, 'localhost', 8081, threaded=False)
+    server = RPCServer(cone_e, "localhost", 8081, threaded=False)
     atexit.register(server.stop)
     server.start()
+
 
 if __name__ == "__main__":
     main()
