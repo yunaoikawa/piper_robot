@@ -10,7 +10,7 @@ import atexit
 
 from loop_rate_limiters import RateLimiter
 
-from robot.arm.ik_solver import ArmIK
+from robot.arm.ik_solver import SingleArmIK
 from robot.rpc import RPCServer
 
 
@@ -33,10 +33,10 @@ class ConeEMujoco:
         # initialize arm
         self.left_q_desired: Optional[np.ndarray] = None
         self.left_q_desired_lock = threading.Lock()
-        self.left_ik_solver = ArmIK(
+        self.left_ik_solver = SingleArmIK(
             mjcf_path,
             solver_dt=self.solver_dt,
-            use_lift=False,
+            # use_lift=False,
             joint_names=[
                 "left_arm_joint1",
                 "left_arm_joint2",
@@ -50,10 +50,10 @@ class ConeEMujoco:
 
         self.right_q_desired: Optional[np.ndarray] = None
         self.right_q_desired_lock = threading.Lock()
-        self.right_ik_solver = ArmIK(
+        self.right_ik_solver = SingleArmIK(
             mjcf_path,
             solver_dt=self.solver_dt,
-            use_lift=False,
+            # use_lift=False,
             joint_names=[
                 "right_arm_joint1",
                 "right_arm_joint2",

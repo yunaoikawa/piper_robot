@@ -3,14 +3,14 @@ import mujoco
 import mink
 
 
-class ArmIK:
+class SingleArmIK:
     def __init__(
         self,
         mjcf_path: str,
         solver_dt=0.01,
         joint_names: list[str] | None = None,
         ee_frame: str | None = None,
-        use_lift: bool = False,
+        # use_lift: bool = False,
     ):
         self.model = mujoco.MjModel.from_xml_path(mjcf_path)
         self.solver_dt = solver_dt
@@ -23,8 +23,8 @@ class ArmIK:
                 "left_arm_joint4",
                 "left_arm_joint5",
                 "left_arm_joint6",
-                "Slider_1",
-                "Slider_2",
+                # "Slider_1",
+                # "Slider_2",
             ]
         if ee_frame is None:
             ee_frame = "left_arm_ee"
@@ -32,8 +32,8 @@ class ArmIK:
         # velocity_limits = {k: np.pi / 2 if "joint" in k else 0.05 for k in joint_names}
         self.dof_ids = np.array([self.model.joint(name).id for name in joint_names])
         self.actuator_ids = np.array([self.model.actuator(name + "_pos").id for name in joint_names if "joint" in name])
-        if use_lift:
-            self.lift_actuator_id = self.model.actuator("Lift").id
+        # if use_lift:
+        #     self.lift_actuator_id = self.model.actuator("Lift").id
 
         self.configuration = mink.Configuration(self.model)
         self.end_effector_task = mink.FrameTask(
@@ -50,12 +50,12 @@ class ArmIK:
         #     self.model, cost=np.array(posture_cost)
         # )
         self.tasks = [self.end_effector_task]
-        if use_lift:
-            self.lift_equality_task = mink.EqualityConstraintTask(
-                self.model,
-                cost=1.0,
-            )
-            self.tasks.append(self.lift_equality_task)
+        # if use_lift:
+        #     self.lift_equality_task = mink.EqualityConstraintTask(
+        #         self.model,
+        #         cost=1.0,
+        #     )
+        #     self.tasks.append(self.lift_equality_task)
         self.limits = [mink.ConfigurationLimit(self.model)]  # , mink.VelocityLimit(self.model, velocity_limits)]
 
         # initial setup

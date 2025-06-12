@@ -6,7 +6,7 @@ from pathlib import Path
 from piperlib import PiperJointController, RobotConfigFactory, ControllerConfigFactory, JointState, Gain
 import mink
 
-from robot.arm.ik_solver import ArmIK
+from robot.arm.ik_solver import SingleArmIK
 
 GRIPPER_OPEN = -22.0
 
@@ -43,13 +43,13 @@ class ArmNode:
         self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
         self.robot_config.urdf_path = self.urdf_path
         self.controller_config.controller_dt = 0.005
-        self.controller_config.default_kp = np.array([5.0, 5.0, 5.0, 5.0, 5.0, 5.0])
-        self.controller_config.default_kd = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+        self.controller_config.default_kp = np.array([5.0, 5.0, 5.0, 3.0, 3.0, 3.0])
+        self.controller_config.default_kd = np.array([0.2, 0.2, 0.2, 0.1, 0.1, 0.1])
         self.piper = PiperJointController(self.robot_config, self.controller_config, self.can_port)
         self.target: Optional[mink.SE3] = None
         self.gripper_target: Optional[float] = None
         self.target_timestamp: Optional[int] = None
-        self.ik_solver = ArmIK(self.mjcf_path, solver_dt=self.solver_dt, joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"], ee_frame="ee")
+        self.ik_solver = SingleArmIK(self.mjcf_path, solver_dt=self.solver_dt, joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"], ee_frame="ee")
         if is_left_arm:
             self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, 0.78])
         else:
