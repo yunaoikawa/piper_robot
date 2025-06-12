@@ -46,7 +46,7 @@ class OculusReader:
 
     def oculus_handler(self):
         context = zmq.Context()
-        poller = zmq.Poller()
+        # poller = zmq.Poller()
 
         # Connect to the VR controller
         stick_socket = context.socket(zmq.SUB)
@@ -54,17 +54,22 @@ class OculusReader:
         stick_socket.subscribe(VR_CONTROLLER_TOPIC)
 
         # initialize the polling set
-        poller.register(stick_socket, zmq.POLLIN)
+        # poller.register(stick_socket, zmq.POLLIN)
+        # last_command_timestamp = None
+        # interval_history = []
 
         while not self.stop_event.is_set():
-            events = dict(poller.poll(1000))
-            if stick_socket in events:
-                _, message = stick_socket.recv_multipart()
-                with self.controller_state_lock_:
-                    self.controller_state = parse_controller_state(message.decode())
+            # events = dict(poller.poll(1000))
+            # if stick_socket in events:
+            _, message = stick_socket.recv_multipart()
+            with self.controller_state_lock_:
+                self.controller_state = parse_controller_state(message.decode())
+                # if last_command_timestamp is not None:
+                #     interval_now = time.time() - last_command_timestamp
+                #     interval_history.append(interval_now)
+                # last_command_timestamp = time.time()
 
-        # close the context
-        poller.unregister(stick_socket)
+        # np.array(interval_history).tofile("interval_history.npy")
         stick_socket.close()
         context.destroy()
 
@@ -105,7 +110,7 @@ class OculusReader:
                 # publish the target pose
                 gripper = GRIPPER_ANGLE_MAX if controller_state.right_index_trigger < 0.5 else 0.0
                 self.cone_e.set_right_ee_target(
-                    target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])), gripper_target=gripper, preview_time=0.1
+                    target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])), gripper_target=gripper, preview_time=0.05
                 )
 
             rate.sleep()
