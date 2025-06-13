@@ -342,7 +342,7 @@
                           <geom class="collision" mesh="link6" />
                           <site name="right_arm_ee" pos="0.0 0.0 0.0" euler="0 -1.57 0" />
                           <!-- 7.8mm -->
-                          <body name="right_arm_gripper_base" pos="0.0275 0.01875 0.0798"
+                          <!-- <body name="right_arm_gripper_base" pos="0.0275 0.01875 0.0798"
                             euler="3.14 -1.57 0" gravcomp="1">
                             <inertial pos="-0.000183807 8.05033e-05 0.0321437"
                               quat="0.999976 9.08444e-05 0.00689649 0.000788512"
@@ -363,7 +363,7 @@
                                 <camera name="right_arm_egocentric" mode="fixed" fovy="53.1" />
                               </body>
                             </body>
-                          </body>
+                          </body> -->
                         </body>
                       </body>
                     </body>
