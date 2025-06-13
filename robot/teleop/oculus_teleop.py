@@ -3,7 +3,6 @@ import numpy as np
 import atexit
 import time
 import threading
-from loop_rate_limiters import RateLimiter
 
 import mink
 
@@ -37,52 +36,26 @@ class OculusReader:
         self.cone_e.init()
         self.cone_e.home_right_arm()
 
-        # Oculus thread
-        self.controller_state_lock_ = threading.Lock()
-        self.controller_state = None
+        self.interval_history = []
         self.stop_event = threading.Event()
 
-        self.oculus_thread = threading.Thread(target=self.oculus_handler)
-        self.oculus_thread.start()
-
-    def oculus_handler(self):
+    def control_loop(self):
         context = zmq.Context()
-        # poller = zmq.Poller()
-
-        # Connect to the VR controller
         stick_socket = context.socket(zmq.SUB)
         stick_socket.connect("tcp://{}:{}".format(VR_TCP_HOST, VR_TCP_PORT))
         stick_socket.subscribe(VR_CONTROLLER_TOPIC)
 
-        # initialize the polling set
-        # poller.register(stick_socket, zmq.POLLIN)
         last_command_timestamp = None
-        interval_history = []
 
         while not self.stop_event.is_set():
-            # events = dict(poller.poll(1000))
-            # if stick_socket in events:
             _, message = stick_socket.recv_multipart()
-            with self.controller_state_lock_:
-                self.controller_state = parse_controller_state(message.decode())
-                if last_command_timestamp is not None:
-                    interval_now = time.time() - last_command_timestamp
-                    interval_history.append(interval_now)
-                last_command_timestamp = time.time()
-
-        np.array(interval_history).tofile("interval_history.bin")
-        stick_socket.close()
-        context.destroy()
-
-    def control_loop(self):
-        rate = RateLimiter(20)
-        while not self.stop_event.is_set():
-            with self.controller_state_lock_:
-                controller_state = self.controller_state
-            if controller_state is None:
-                print("WARN: no controller state yet")
-                rate.sleep()
-                continue
+            controller_state = parse_controller_state(message.decode())
+            if last_command_timestamp is not None:
+                interval = time.time() - last_command_timestamp
+                self.interval_history.append(interval)
+            else:
+                interval = 0.01
+            last_command_timestamp = time.time()
 
             ee_pose = self.cone_e.get_right_ee_pose()
 
@@ -98,7 +71,7 @@ class OculusReader:
             if self.start_teleop:
                 if self.X_Cinit is None or self.X_ee_init is None:
                     print("WARN: no initial pose yet")
-                    rate.sleep()
+                    time.sleep(0.01)
                     continue
                 X_Ctarget = controller_state.right_SE3
                 X_Cdelta = self.X_Cinit.inverse().multiply(X_Ctarget)
@@ -111,14 +84,17 @@ class OculusReader:
                 # publish the target pose
                 gripper = GRIPPER_ANGLE_MAX if controller_state.right_index_trigger < 0.5 else 0.0
                 self.cone_e.set_right_ee_target(
-                    ee_target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])), gripper_target=gripper, preview_time=0.05
+                    ee_target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])),
+                    gripper_target=gripper,
+                    preview_time=0.05,
                 )
 
-            rate.sleep()
+        stick_socket.close()
+        context.destroy()
 
     def stop(self):
+        np.array(self.interval_history).tofile("interval_history.bin")
         self.stop_event.set()
-        self.oculus_thread.join()
 
 
 def main():

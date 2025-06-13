@@ -36,7 +36,6 @@ class ConeEMujoco:
         self.left_ik_solver = SingleArmIK(
             mjcf_path,
             solver_dt=self.solver_dt,
-            # use_lift=False,
             joint_names=[
                 "left_arm_joint1",
                 "left_arm_joint2",
@@ -53,7 +52,6 @@ class ConeEMujoco:
         self.right_ik_solver = SingleArmIK(
             mjcf_path,
             solver_dt=self.solver_dt,
-            # use_lift=False,
             joint_names=[
                 "right_arm_joint1",
                 "right_arm_joint2",
@@ -126,15 +124,8 @@ class ConeEMujoco:
     def init(self):
         self.start_control()
         time.sleep(0.1)
-        # # home
-        # left_home_q = self.left_ik_solver.get_home_q()
-        # self.data.qpos[self.left_ik_solver.dof_ids] = left_home_q
-        # right_home_q = self.right_ik_solver.get_home_q()
-        # self.data.qpos[self.right_ik_solver.dof_ids] = right_home_q
-        # mujoco.mj_forward(self.model, self.data)
-        # time.sleep(0.1)
+        # home
         q = self.data.qpos.copy()
-        # self.viewer.sync()
         self.left_ik_solver.init(q)
         self.right_ik_solver.init(q)
         with self.left_q_desired_lock:
