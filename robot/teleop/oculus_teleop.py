@@ -16,7 +16,8 @@ def apply_deadzone(arr, deadzone_size=0.05):
 
 
 # VR Constants
-VR_TCP_HOST = "10.19.165.216"
+VR_TCP_HOST = "192.168.1.111" # on netgear local router
+# VR_TCP_HOST = "10.19.165.216"
 # VR_TCP_HOST = "10.19.189.139"
 VR_TCP_PORT = 5555
 VR_CONTROLLER_TOPIC = b"oculus_controller"
