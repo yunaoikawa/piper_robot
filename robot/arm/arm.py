@@ -43,9 +43,10 @@ class ArmNode:
         self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
         self.robot_config.urdf_path = self.urdf_path
         self.controller_config.controller_dt = 0.01
-        self.controller_config.default_kp = np.array([5.0, 5.0, 5.0, 5.0, 5.0, 5.0])
-        self.controller_config.default_kd = np.array([0.2, 0.2, 0.2, 0.2, 0.2, 0.2])
+        self.controller_config.default_kp = np.array([2.5, 2.5, 2.5, 1.0, 1.0, 1.0])
+        self.controller_config.default_kd = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
         self.controller_config.gravity_compensation = True
+        self.controller_config.interpolation_method = "cubic"
         self.piper = PiperJointController(self.robot_config, self.controller_config, self.can_port)
         self.target: Optional[mink.SE3] = None
         self.gripper_target: Optional[float] = None
@@ -71,7 +72,8 @@ class ArmNode:
                 "right_arm_joint6",
             ]
             ee_frame = "right_arm_ee"
-            self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, -0.78])
+            # self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, -0.78])
+            self.home_q = np.array([0.0, 1.54, -0.875, 0, -0.5, 0])
 
         self.ik_solver = SingleArmIK(
             mjcf_path,
