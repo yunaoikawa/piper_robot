@@ -6,10 +6,11 @@ import mink
 if __name__ == "__main__":
     _HERE = Path(__file__).parent
     arm_node = ArmNode(
-        can_port="can_left",
-        mjcf_path=(_HERE / "mujoco/scene_piper.xml").as_posix(),
-        urdf_path=(_HERE / "urdf/piper_description_left.xml").as_posix(),
+        can_port="can_right",
+        mjcf_path=(_HERE.parent / "cone-e-description" / "robot-welded-base-and-lift.mjcf").as_posix(),
+        urdf_path=(_HERE / "urdf/piper_no_gripper_description.xml").as_posix(),
         solver_dt=0.01,
+        is_left_arm=False,
     )
 
     X_EE = arm_node.get_ee_pose()
