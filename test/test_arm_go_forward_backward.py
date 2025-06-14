@@ -7,11 +7,14 @@ if __name__ == "__main__":
     _HERE = Path(__file__).parent
     arm_node = ArmNode(
         can_port="can_right",
-        mjcf_path=(_HERE.parent / "cone-e-description" / "robot-welded-base-and-lift.mjcf").as_posix(),
-        urdf_path=(_HERE / "urdf/piper_no_gripper_description.xml").as_posix(),
+        mjcf_path=(_HERE.parent / "robot" / "cone-e-description" / "robot-welded-base-and-lift.mjcf").as_posix(),
+        urdf_path=(_HERE.parent / "robot" / "arm" / "urdf/piper_no_gripper_description.xml").as_posix(),
         solver_dt=0.01,
         is_left_arm=False,
     )
+    input("Press Enter to init...")
+    arm_node.init()
+    input("Do the test..")
 
     X_EE = arm_node.get_ee_pose()
     print("Current pose:", X_EE)
