@@ -37,8 +37,7 @@ class ConeE:
             # )
             self.right_arm = ArmNode(
                 can_port="can_right",
-                mjcf_path=(_HERE / "cone-e-description/arm-upright.mjcf").as_posix(),
-                urdf_path=(_HERE / "arm/urdf/piper_no_gripper_description.xml").as_posix(),
+                mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix(),
                 is_left_arm=False,
             )
 

@@ -17,8 +17,8 @@ def apply_deadzone(arr, deadzone_size=0.05):
 
 
 # VR Constants
-# VR_TCP_HOST = "192.168.1.111" # on netgear local router
-VR_TCP_HOST = "10.19.165.216"
+VR_TCP_HOST = "192.168.1.111" # on netgear local router
+# VR_TCP_HOST = "10.19.165.216"
 # VR_TCP_HOST = "10.19.189.139"
 VR_TCP_PORT = 5555
 VR_CONTROLLER_TOPIC = b"oculus_controller"
@@ -56,6 +56,7 @@ class OculusReader:
         while not self.stop_event.is_set():
             _, message = stick_socket.recv_multipart()
             controller_state = parse_controller_state(message.decode())
+            print(f"Received controller state: {controller_state}")
             with self.controller_state_lock:
                 self.latest_controller_state = controller_state
             if last_command_timestamp is not None:
@@ -75,7 +76,7 @@ class OculusReader:
         # stick_socket.subscribe(VR_CONTROLLER_TOPIC)
 
         # last_command_timestamp = None
-        rate_limiter = RateLimiter(60)  # Limit to 100 Hz
+        rate_limiter = RateLimiter(30)  # Limit to 100 Hz
 
         while not self.stop_event.is_set():
             # _, message = stick_socket.recv_multipart()
@@ -121,7 +122,7 @@ class OculusReader:
                 # publish the target pose
                 gripper = GRIPPER_ANGLE_MAX if controller_state.right_index_trigger < 0.5 else 0.0
                 ee_distance = np.linalg.norm(p_REt - ee_pose.translation())
-                preview_time = max(0.016, ee_distance / 0.4)  # 0.05 m/s speed
+                preview_time = max(0.016, ee_distance / 0.5)  # 0.05 m/s speed
                 print(f"Setting target pose with preview time: {preview_time:.4f}")
                 self.cone_e.set_right_ee_target(
                     ee_target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])),

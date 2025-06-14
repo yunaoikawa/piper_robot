@@ -72,8 +72,8 @@ class ArmNode:
                 "right_arm_joint6",
             ]
             ee_frame = "right_arm_ee"
-            # self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, -0.78])
-            self.home_q = np.array([0.0, 1.54, -0.875, 0, -0.5, 0])
+            self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, -0.78])
+            # self.home_q = np.array([0.0, 1.54, -0.875, 0, -0.5, 0])
 
         self.ik_solver = SingleArmIK(
             mjcf_path,
