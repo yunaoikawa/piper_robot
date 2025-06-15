@@ -42,7 +42,7 @@ class ArmNode:
         self.robot_config = RobotConfigFactory.get_instance().get_config("piper")
         self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
         self.robot_config.urdf_path = self.urdf_path
-        self.controller_config.controller_dt = 0.01
+        self.controller_config.controller_dt = 0.005
         self.controller_config.default_kp = np.array([2.5, 2.5, 2.5, 1.0, 1.0, 1.0])
         self.controller_config.default_kd = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
         self.controller_config.gravity_compensation = True
