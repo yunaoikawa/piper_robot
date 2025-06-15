@@ -134,7 +134,7 @@ class OculusReader:
                 R_REt = self.X_ee_init_left.rotation() @ X_Rdelta.rotation()
 
                 # publish the target pose
-                gripper = GRIPPER_ANGLE_MAX if controller_state.left_index_trigger < 0.5 else 0.0
+                gripper = 1.0 if controller_state.left_index_trigger < 0.5 else 0.0
                 ee_distance = np.linalg.norm(p_REt - ee_pose_left.translation())
                 preview_time = ee_distance / 0.5  # 0.05 m/s speed
                 print(f"Setting target pose with preview time: {preview_time:.4f}")
@@ -159,7 +159,7 @@ class OculusReader:
                 R_REt = self.X_ee_init_right.rotation() @ X_Rdelta.rotation()
 
                 # publish the target pose
-                gripper = GRIPPER_ANGLE_MAX if controller_state.right_index_trigger < 0.5 else 0.0
+                gripper = 1.0 if controller_state.right_index_trigger < 0.5 else 0.0
                 ee_distance = np.linalg.norm(p_REt - ee_pose_right.translation())
                 preview_time = ee_distance / 0.5  # 0.05 m/s speed
                 print(f"Setting target pose with preview time: {preview_time:.4f}")
@@ -181,9 +181,9 @@ class OculusReader:
             if sum(np.abs(last_target_velocity)) > 1e-2:
                 self.cone_e.set_base_velocity(last_target_velocity)
             if controller_state.left_hand_trigger > 0.5:
-                self.cone_e.set_lift_position(0.0)
+                self.cone_e.set_lift_position(np.array([0.0]))
             elif controller_state.right_hand_trigger > 0.5:
-                self.cone_e.set_lift_position(0.39)
+                self.cone_e.set_lift_position(np.array([0.39]))
 
             rate_limiter.sleep()
 
