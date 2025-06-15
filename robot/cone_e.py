@@ -27,14 +27,14 @@ class ConeE:
     ):
         self._initialized = False
 
-        # self.base = Base(max_vel=base_max_vel, max_accel=base_max_accel)
+        self.base = Base(max_vel=base_max_vel, max_accel=base_max_accel)
         self.no_arms = no_arms
         if not self.no_arms:
             _HERE = Path(__file__).parent
-            # self.left_arm = ArmNode(
-            #     can_port="can_left",
-            #     mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix()
-            # )
+            self.left_arm = ArmNode(
+                can_port="can_left",
+                mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix()
+            )
             self.right_arm = ArmNode(
                 can_port="can_right",
                 mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix(),
@@ -46,13 +46,13 @@ class ConeE:
             print("Warning: ConeE already initialized")
             return
 
-        # self.base.start_control()
-        # time.sleep(0.5)
-        # self.base.home_lift()
-        # time.sleep(0.5)
+        self.base.start_control()
+        time.sleep(0.5)
+        self.base.home_lift()
+        time.sleep(0.5)
         # TODO: call gripper homing inside arm_init
         if not self.no_arms:
-            # self.left_arm.init()
+            self.left_arm.init()
             self.right_arm.init()
 
         self._initialized = True
