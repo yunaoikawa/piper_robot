@@ -7,6 +7,7 @@ from pathlib import Path
 
 from robot.base import Base
 from robot.arm.arm import ArmNode
+from robot.arm.arm_piper_control import ArmNode as ArmNodePiperControl
 from robot.rpc import RPCServer
 
 
@@ -31,11 +32,20 @@ class ConeE:
         self.no_arms = no_arms
         if not self.no_arms:
             _HERE = Path(__file__).parent
-            self.left_arm = ArmNode(
+            # self.left_arm = ArmNode(
+            #     can_port="can_left",
+            #     mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix()
+            # )
+            # self.right_arm = ArmNode(
+            #     can_port="can_right",
+            #     mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix(),
+            #     is_left_arm=False,
+            # )
+            self.left_arm = ArmNodePiperControl(
                 can_port="can_left",
                 mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix()
             )
-            self.right_arm = ArmNode(
+            self.right_arm = ArmNodePiperControl(
                 can_port="can_right",
                 mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix(),
                 is_left_arm=False,
@@ -51,9 +61,9 @@ class ConeE:
         self.base.home_lift()
         time.sleep(0.5)
         # TODO: call gripper homing inside arm_init
-        if not self.no_arms:
-            self.left_arm.init()
-            self.right_arm.init()
+        # if not self.no_arms:
+        #     self.left_arm.init()
+        #     self.right_arm.init()
 
         self._initialized = True
 

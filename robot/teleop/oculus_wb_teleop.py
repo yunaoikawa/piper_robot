@@ -12,13 +12,15 @@ from robot.teleop.oculus_msgs import parse_controller_state
 from robot.rpc import RPCClient
 
 
-def apply_deadzone(arr, deadzone_size=0.05):
+def apply_deadzone(arr, deadzone_size=0.01):
     return np.where(np.abs(arr) <= deadzone_size, 0, np.sign(arr) * (np.abs(arr) - deadzone_size) / (1 - deadzone_size))
 
 
 # VR Constants
 # VR_TCP_HOST = "192.168.1.111" # on netgear local router
-VR_TCP_HOST = "10.19.165.216"
+# VR_TCP_HOST = "10.19.165.216"
+# VR_TCP_HOST = "192.168.0.61"
+VR_TCP_HOST = "10.0.0.173"
 VR_TCP_PORT = 5555
 VR_CONTROLLER_TOPIC = b"oculus_controller"
 GRIPPER_ANGLE_MAX = -22.0
@@ -59,7 +61,7 @@ class OculusReader:
         while not self.stop_event.is_set():
             _, message = stick_socket.recv_multipart()
             controller_state = parse_controller_state(message.decode())
-            print(f"Received controller state: {controller_state}")
+            # print(f"Received controller state: {controller_state}")
             with self.controller_state_lock:
                 self.latest_controller_state = controller_state
             # if last_command_timestamp is not None:
@@ -79,8 +81,8 @@ class OculusReader:
         # stick_socket.subscribe(VR_CONTROLLER_TOPIC)
 
         # last_command_timestamp = None
-        rate_limiter = RateLimiter(30)  # Limit to 100 Hz
-        last_target_velocity =np.zeros(3)
+        rate_limiter = RateLimiter(50)  # Limit to 100 Hz
+        # last_target_velocity =np.zeros(3)
 
         while not self.stop_event.is_set():
             # _, message = stick_socket.recv_multipart()
@@ -171,14 +173,14 @@ class OculusReader:
             vy = -controller_state.right_thumbstick_axes[0]
             vx = controller_state.right_thumbstick_axes[1]
             w = -controller_state.left_thumbstick_axes[0]
-            max_vel = np.array([0.5, 0.5, 1.57])
+            max_vel = np.array([0.25, 0.25, 0.78])
             target_velocity = np.array([vx, vy, w])
-            target_velocity = apply_deadzone(target_velocity)
+            # target_velocity = apply_deadzone(target_velocity)
             target_velocity = max_vel * target_velocity
-            last_target_velocity = 0.9 * last_target_velocity + 0.1 * target_velocity
+            # last_target_velocity = 0.5 * last_target_velocity + 0.5 * target_velocity
 
-            if sum(np.abs(last_target_velocity)) > 1e-2:
-                self.cone_e.set_base_velocity(last_target_velocity)
+            if sum(np.abs(target_velocity)) > 0:
+                self.cone_e.set_base_velocity(target_velocity)
             if controller_state.left_hand_trigger > 0.5:
                 self.cone_e.set_lift_position(np.array([0.0]))
             elif controller_state.right_hand_trigger > 0.5:

@@ -294,7 +294,7 @@ class Base:
                 self.lift.set_neutral()
             else:
                 phoenix6.unmanaged.feed_enable(0.01)
-                self.lift.set_velocity_control(np.sign(lift_err) * 0.05)
+                self.lift.set_velocity_control(np.sign(lift_err) * 0.025)
 
             rate_limiter.sleep()
 

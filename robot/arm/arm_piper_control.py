@@ -3,7 +3,8 @@ import numpy as np
 from typing import Optional
 from pathlib import Path
 
-from piperlib import PiperJointController, RobotConfigFactory, ControllerConfigFactory, JointState, Gain
+# from piperlib import PiperJointController, RobotConfigFactory, ControllerConfigFactory, JointState, Gain
+from piper_control import piper_interface, piper_init
 import mink
 
 from robot.arm.ik_solver import SingleArmIK
@@ -39,15 +40,21 @@ class ArmNode:
         self.solver_dt = solver_dt
 
         # initialize arm
-        self.robot_config = RobotConfigFactory.get_instance().get_config("piper")
-        self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
-        self.robot_config.urdf_path = self.urdf_path
-        self.controller_config.controller_dt = 0.005
-        self.controller_config.default_kp = np.array([7.0, 7.0, 7.0, 5.0, 5.0, 5.0]) # np.array([2.5, 2.5, 2.5, 1.0, 1.0, 1.0])
-        self.controller_config.default_kd = np.array([0.4, 0.4, 0.4, 0.3, 0.3, 0.3]) # np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
-        self.controller_config.gravity_compensation = True
-        self.controller_config.interpolation_method = "cubic"
-        self.piper = PiperJointController(self.robot_config, self.controller_config, self.can_port)
+        # self.robot_config = RobotConfigFactory.get_instance().get_config("piper")
+        # self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
+        # self.robot_config.urdf_path = self.urdf_path
+        # self.controller_config.controller_dt = 0.005
+        # self.controller_config.default_kp = np.array([7.0, 7.0, 7.0, 5.0, 5.0, 5.0]) # np.array([2.5, 2.5, 2.5, 1.0, 1.0, 1.0])
+        # self.controller_config.default_kd = np.array([0.4, 0.4, 0.4, 0.3, 0.3, 0.3]) # np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+        # self.controller_config.gravity_compensation = True
+        # self.controller_config.interpolation_method = "cubic"
+        # self.piper = PiperJointController(self.robot_config, self.controller_config, self.can_port)
+        self.piper = piper_interface.PiperInterface(self.can_port)
+        piper_init.reset_arm(
+            self.piper,
+            arm_controller=piper_interface.ArmController.POSITION_VELOCITY,
+            move_mode=piper_interface.MoveMode.JOINT,
+        )
         self.target: Optional[mink.SE3] = None
         self.gripper_target: Optional[float] = None
         self.target_timestamp: Optional[int] = None
@@ -87,7 +94,7 @@ class ArmNode:
         #     self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, -0.78])
 
     def init(self):
-        self.piper.reset_to_home()
+        # self.piper.reset_to_home()
         time.sleep(1.0)
 
         # home
@@ -100,7 +107,8 @@ class ArmNode:
         # self.piper.set_joint_cmd(cmd)
         # time.sleep(2.0)
 
-        q = self.piper.get_joint_state().pos
+        # q = self.piper.get_joint_state().pos
+        q = np.array(self.piper.get_joint_positions())
         print(f"q_reached: {np.round(q, 4)}")
         self.ik_solver.init(q)
         self.target = self.ik_solver.forward_kinematics()
@@ -115,47 +123,52 @@ class ArmNode:
 
     def home(self, gripper_target: float = 1.0):
         q = self.home_q.copy()
-        cmd = JointState(self.robot_config.joint_dof)
-        cmd.timestamp = self.piper.get_timestamp() + 1.0
-        cmd.pos = q
-        cmd.gripper_pos = gripper_target * GRIPPER_OPEN
-        self.piper.set_joint_cmd(cmd)
+        # cmd = JointState(self.robot_config.joint_dof)
+        # cmd.timestamp = self.piper.get_timestamp() + 1.0
+        # cmd.pos = q
+        # cmd.gripper_pos = gripper_target * GRIPPER_OPEN
+        print("commanding home")
+        self.piper.command_joint_positions(q)
         time.sleep(2.0)
+        print(f"q_reached: {np.round(q, 4)}")
+        self.ik_solver.init(q)
         self.update_joint_positions()
 
     def set_joint_target(
         self, joint_target: np.ndarray, gripper_target: float | None = None, preview_time: float = 0.1
     ):
-        cmd = JointState(self.robot_config.joint_dof)
-        cmd.pos = joint_target
-        cmd.timestamp = self.piper.get_timestamp() + preview_time
-        if gripper_target is not None:
-            cmd.gripper_pos = gripper_target * GRIPPER_OPEN
-        self.piper.set_joint_cmd(cmd)
+        # cmd = JointState(self.robot_config.joint_dof)
+        # cmd.pos = joint_target
+        # cmd.timestamp = self.piper.get_timestamp() + preview_time
+        # if gripper_target is not None:
+        #     # cmd.gripper_pos = gripper_target * GRIPPER_OPEN
+        #     self.piper.command_gripper(position=gripper_target * GRIPPER_OPEN)
+        self.piper.command_joint_positions(joint_target)
 
     def set_ee_target(self, ee_target: mink.SE3, gripper_target: Optional[float] = None, preview_time: float = 0.1):
         self.target = ee_target
         qd, _ = self.ik_solver.solve_ik(self.target)
-        cmd = JointState(self.robot_config.joint_dof)
-        cmd.pos = qd
-        if gripper_target is not None:
-            cmd.gripper_pos = gripper_target * GRIPPER_OPEN
-        cmd.timestamp = self.piper.get_timestamp() + preview_time
-        self.piper.set_joint_cmd(cmd)
+        # cmd = JointState(self.robot_config.joint_dof)
+        # cmd.pos = qd
+        # if gripper_target is not None:
+        #     cmd.gripper_pos = gripper_target * GRIPPER_OPEN
+        # cmd.timestamp = self.piper.get_timestamp() + preview_time
+        # self.piper.set_joint_cmd(cmd)
+        self.piper.command_joint_positions(qd)
 
-    def set_gain(self, kp: np.ndarray, kd: np.ndarray):
-        gain = Gain(kp, kd)
-        self.piper.set_gain(gain)
+    # def set_gain(self, kp: np.ndarray, kd: np.ndarray):
+    #     gain = Gain(kp, kd)
+    #     self.piper.set_gain(gain)
 
     def get_joint_positions(self) -> np.ndarray:
-        return self.piper.get_joint_state().pos
+        return np.array(self.piper.get_joint_positions())
 
     def get_ee_pose(self) -> mink.SE3:
         self.update_joint_positions()
         return self.ik_solver.forward_kinematics()
 
     def update_joint_positions(self):
-        q = self.piper.get_joint_state().pos
+        q = np.array(self.piper.get_joint_positions())
         self.ik_solver.update_configuration(q)
 
     def stop(self):
