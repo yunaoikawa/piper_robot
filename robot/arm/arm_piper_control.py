@@ -130,8 +130,6 @@ class ArmNode:
         print("commanding home")
         self.piper.command_joint_positions(q)
         time.sleep(2.0)
-        print(f"q_reached: {np.round(q, 4)}")
-        self.ik_solver.init(q)
         self.update_joint_positions()
 
     def set_joint_target(
