@@ -43,7 +43,7 @@ class ArmNode:
         self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
         self.robot_config.urdf_path = self.urdf_path
         self.robot_config.joint_vel_max = np.array([5.0, 5.0, 5.0, 5.0, 5.0, 5.0])
-        self.controller_config.controller_dt = 0.002
+        self.controller_config.controller_dt = 0.003
         self.controller_config.default_kp = np.array([2.5, 2.5, 2.5, 2.5, 2.5, 2.5]) # np.array([2.5, 2.5, 2.5, 1.0, 1.0, 1.0])
         self.controller_config.default_kd = np.array([0.2, 0.2, 0.2, 0.2, 0.2, 0.2]) # np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
         self.controller_config.gravity_compensation = True
@@ -131,7 +131,7 @@ class ArmNode:
         self.set_joint_target(q, gripper_target=0.0)
         time.sleep(0.5)
 
-    def set_ee_target(self, ee_target: mink.SE3, gripper_target: Optional[float] = None, preview_time: float = 0.1):
+    def set_ee_target(self, ee_target: mink.SE3, gripper_target: Optional[float] = None, preview_time: float = 0.01):
         self.target = ee_target
         qd, _ = self.ik_solver.solve_ik(self.target)
         cmd = JointState(self.robot_config.joint_dof)

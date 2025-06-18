@@ -80,9 +80,7 @@ class OculusReader:
         # stick_socket.connect("tcp://{}:{}".format(VR_TCP_HOST, VR_TCP_PORT))
         # stick_socket.subscribe(VR_CONTROLLER_TOPIC)
 
-        # last_command_timestamp = None
-        rate_limiter = RateLimiter(100)  # Limit to 100 Hz
-        # last_target_velocity =np.zeros(3)
+        rate_limiter = RateLimiter(30)  # Limit to 100 Hz
 
         while not self.stop_event.is_set():
             # _, message = stick_socket.recv_multipart()
@@ -103,6 +101,7 @@ class OculusReader:
 
             ee_pose_left = self.cone_e.get_left_ee_pose()
             ee_pose_right = self.cone_e.get_right_ee_pose()
+
             if controller_state.left_x:
                 print("start teleop left")
                 self.X_Cinit_left = controller_state.left_SE3
@@ -142,7 +141,6 @@ class OculusReader:
                 self.cone_e.set_left_ee_target(
                     ee_target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])),
                     gripper_target=gripper,
-                    preview_time=0.0,
                 )
 
             if self.start_teleop_right:
@@ -166,7 +164,6 @@ class OculusReader:
                 self.cone_e.set_right_ee_target(
                     ee_target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])),
                     gripper_target=gripper,
-                    preview_time=0.0,
                 )
 
             vy = -controller_state.right_thumbstick_axes[0]
