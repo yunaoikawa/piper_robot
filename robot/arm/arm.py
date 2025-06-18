@@ -42,11 +42,12 @@ class ArmNode:
         self.robot_config = RobotConfigFactory.get_instance().get_config("piper")
         self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
         self.robot_config.urdf_path = self.urdf_path
-        self.controller_config.controller_dt = 0.005
-        self.controller_config.default_kp = np.array([7.0, 7.0, 7.0, 5.0, 5.0, 5.0]) # np.array([2.5, 2.5, 2.5, 1.0, 1.0, 1.0])
-        self.controller_config.default_kd = np.array([0.4, 0.4, 0.4, 0.3, 0.3, 0.3]) # np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+        self.robot_config.joint_vel_max = np.array([5.0, 5.0, 5.0, 5.0, 5.0, 5.0])
+        self.controller_config.controller_dt = 0.002
+        self.controller_config.default_kp = np.array([2.5, 2.5, 2.5, 2.5, 2.5, 2.5]) # np.array([2.5, 2.5, 2.5, 1.0, 1.0, 1.0])
+        self.controller_config.default_kd = np.array([0.2, 0.2, 0.2, 0.2, 0.2, 0.2]) # np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
         self.controller_config.gravity_compensation = True
-        self.controller_config.interpolation_method = "cubic"
+        self.controller_config.interpolation_method = "linear"
         self.piper = PiperJointController(self.robot_config, self.controller_config, self.can_port)
         self.target: Optional[mink.SE3] = None
         self.gripper_target: Optional[float] = None

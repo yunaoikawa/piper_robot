@@ -18,8 +18,8 @@ def apply_deadzone(arr, deadzone_size=0.01):
 
 # VR Constants
 # VR_TCP_HOST = "192.168.1.111" # on netgear local router
-# VR_TCP_HOST = "10.19.165.216"
-VR_TCP_HOST = "192.168.0.169"
+VR_TCP_HOST = "10.19.165.216"
+# VR_TCP_HOST = "192.168.0.169"
 # VR_TCP_HOST = "10.0.0.173"
 VR_TCP_PORT = 5555
 VR_CONTROLLER_TOPIC = b"oculus_controller"
@@ -81,7 +81,7 @@ class OculusReader:
         # stick_socket.subscribe(VR_CONTROLLER_TOPIC)
 
         # last_command_timestamp = None
-        rate_limiter = RateLimiter(20)  # Limit to 100 Hz
+        rate_limiter = RateLimiter(100)  # Limit to 100 Hz
         # last_target_velocity =np.zeros(3)
 
         while not self.stop_event.is_set():
@@ -137,12 +137,12 @@ class OculusReader:
                 # publish the target pose
                 gripper = 1.0 if controller_state.left_index_trigger < 0.5 else 0.0
                 ee_distance = np.linalg.norm(p_REt - ee_pose_left.translation())
-                preview_time = ee_distance / 0.5  # 0.05 m/s speed
-                print(f"Setting target pose with preview time: {preview_time:.4f}")
+                # preview_time = ee_distance / 1.0  # 0.05 m/s speed
+                # print(f"Setting target pose with preview time: {preview_time:.4f}")
                 self.cone_e.set_left_ee_target(
                     ee_target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])),
                     gripper_target=gripper,
-                    preview_time=preview_time,
+                    preview_time=0.0,
                 )
 
             if self.start_teleop_right:
@@ -161,12 +161,12 @@ class OculusReader:
                 # publish the target pose
                 gripper = 1.0 if controller_state.right_index_trigger < 0.5 else 0.0
                 ee_distance = np.linalg.norm(p_REt - ee_pose_right.translation())
-                preview_time = ee_distance / 0.5  # 0.05 m/s speed
-                print(f"Setting target pose with preview time: {preview_time:.4f}")
+                # preview_time = ee_distance / 1.0  # 0.05 m/s speed
+                # print(f"Setting target pose with preview time: {preview_time:.4f}")
                 self.cone_e.set_right_ee_target(
                     ee_target=mink.SE3(np.concatenate([R_REt.wxyz, p_REt])),
                     gripper_target=gripper,
-                    preview_time=preview_time,
+                    preview_time=0.0,
                 )
 
             vy = -controller_state.right_thumbstick_axes[0]

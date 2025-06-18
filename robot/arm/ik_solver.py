@@ -40,16 +40,16 @@ class SingleArmIK:
             frame_name=ee_frame,
             frame_type="site",
             position_cost=1.0,
-            orientation_cost=1.0,
+            orientation_cost=0.1,
             lm_damping=1.0,
         )
         # lift_cost = [1e-1] * 2
-        # arm_cost = [1e-3] * 6
+        arm_cost = [1e-3] * 6
         # posture_cost = lift_cost + arm_cost + arm_cost
-        # self.posture_task = mink.PostureTask(
-        #     self.model, cost=np.array(posture_cost)
-        # )
-        self.tasks = [self.end_effector_task]
+        self.posture_task = mink.PostureTask(
+            self.model, cost=np.array(arm_cost + arm_cost)
+        )
+        self.tasks = [self.end_effector_task, self.posture_task]
         # if use_lift:
         #     self.lift_equality_task = mink.EqualityConstraintTask(
         #         self.model,
@@ -65,7 +65,7 @@ class SingleArmIK:
         current_q = self.configuration.q.copy()
         current_q[self.dof_ids] = q
         self.configuration.update(current_q)
-        # self.posture_task.set_target_from_configuration(self.configuration)
+        self.posture_task.set_target_from_configuration(self.configuration)
         self.initalized_ = True
 
     def get_home_q(self) -> np.ndarray:
