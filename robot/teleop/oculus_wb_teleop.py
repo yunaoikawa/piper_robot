@@ -19,8 +19,8 @@ def apply_deadzone(arr, deadzone_size=0.01):
 # VR Constants
 # VR_TCP_HOST = "192.168.1.111" # on netgear local router
 # VR_TCP_HOST = "10.19.165.216"
-# VR_TCP_HOST = "192.168.0.61"
-VR_TCP_HOST = "10.0.0.173"
+VR_TCP_HOST = "192.168.0.169"
+# VR_TCP_HOST = "10.0.0.173"
 VR_TCP_PORT = 5555
 VR_CONTROLLER_TOPIC = b"oculus_controller"
 GRIPPER_ANGLE_MAX = -22.0
@@ -81,7 +81,7 @@ class OculusReader:
         # stick_socket.subscribe(VR_CONTROLLER_TOPIC)
 
         # last_command_timestamp = None
-        rate_limiter = RateLimiter(50)  # Limit to 100 Hz
+        rate_limiter = RateLimiter(20)  # Limit to 100 Hz
         # last_target_velocity =np.zeros(3)
 
         while not self.stop_event.is_set():
@@ -145,7 +145,6 @@ class OculusReader:
                     preview_time=preview_time,
                 )
 
-
             if self.start_teleop_right:
                 if self.X_Cinit_right is None or self.X_ee_init_right is None:
                     print("WARN: no initial pose yet")
@@ -173,7 +172,7 @@ class OculusReader:
             vy = -controller_state.right_thumbstick_axes[0]
             vx = controller_state.right_thumbstick_axes[1]
             w = -controller_state.left_thumbstick_axes[0]
-            max_vel = np.array([0.25, 0.25, 0.78])
+            max_vel = np.array([0.5, 0.5, 0.78])
             target_velocity = np.array([vx, vy, w])
             # target_velocity = apply_deadzone(target_velocity)
             target_velocity = max_vel * target_velocity

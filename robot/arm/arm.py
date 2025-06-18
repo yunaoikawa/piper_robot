@@ -87,31 +87,15 @@ class ArmNode:
         #     self.home_q = np.array([0.0, 1.58065, -0.578175, 0.0, -0.912, -0.78])
 
     def init(self):
-        self.piper.reset_to_home()
-        time.sleep(1.0)
-
-        # home
-        # q = self.home_q.copy()
-        # print(f"q_home: {np.round(q, 4)}")
-        # cmd = JointState(self.robot_config.joint_dof)
-        # cmd.timestamp = self.piper.get_timestamp() + 1.0
-        # cmd.pos = q
-        # cmd.gripper_pos = 1.0 * GRIPPER_OPEN
-        # self.piper.set_joint_cmd(cmd)
-        # time.sleep(2.0)
-
+        self.reset()
         q = self.piper.get_joint_state().pos
         print(f"q_reached: {np.round(q, 4)}")
         self.ik_solver.init(q)
         self.target = self.ik_solver.forward_kinematics()
 
-    # def check_timestamp(self, timestamp: int, max_delay: float = 0.1) -> bool:
-    #     current_time = time.perf_counter_ns()
-    #     delay = (current_time - timestamp) / 1e9
-    #     if delay > max_delay or delay < 0:
-    #         print(f"Skipping message because of delay: {delay}s")
-    #         return False
-    #     return True
+    def reset(self):
+        self.piper.reset_to_home()
+        time.sleep(1.0)
 
     def home(self, gripper_target: float = 1.0):
         q = self.home_q.copy()
@@ -123,6 +107,9 @@ class ArmNode:
         time.sleep(2.0)
         self.update_joint_positions()
 
+    def tuck_arms(self):
+        self.set_joint_target(np.zeros(6), gripper_target=0.0, preview_time=2.0)
+
     def set_joint_target(
         self, joint_target: np.ndarray, gripper_target: float | None = None, preview_time: float = 0.1
     ):
@@ -132,6 +119,16 @@ class ArmNode:
         if gripper_target is not None:
             cmd.gripper_pos = gripper_target * GRIPPER_OPEN
         self.piper.set_joint_cmd(cmd)
+
+    def open_gripper(self):
+        q = self.get_joint_positions()
+        self.set_joint_target(q, gripper_target=1.0)
+        time.sleep(0.5)
+
+    def close_gripper(self):
+        q = self.get_joint_positions()
+        self.set_joint_target(q, gripper_target=0.0)
+        time.sleep(0.5)
 
     def set_ee_target(self, ee_target: mink.SE3, gripper_target: Optional[float] = None, preview_time: float = 0.1):
         self.target = ee_target

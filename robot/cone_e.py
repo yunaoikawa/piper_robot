@@ -101,6 +101,30 @@ class ConeE:
         self.left_arm.set_gain(kp, kd)
 
     @require_initialization
+    def tuck_left_arm(self):
+        self.left_arm.tuck_arms()
+
+    @require_initialization
+    def tuck_right_arm(self):
+        self.right_arm.tuck_arms()
+
+    @require_initialization
+    def open_left_gripper(self):
+        self.left_arm.open_gripper()
+
+    @require_initialization
+    def open_right_gripper(self):
+        self.right_arm.open_gripper()
+
+    @require_initialization
+    def close_left_gripper(self):
+        self.left_arm.close_gripper()
+
+    @require_initialization
+    def close_right_gripper(self):
+        self.right_arm.close_gripper()
+
+    @require_initialization
     def home_left_arm(self, gripper_target: float = 1.0):
         self.left_arm.home(gripper_target)
 
