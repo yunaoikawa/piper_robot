@@ -118,9 +118,9 @@ class DriveMotor:
     def __init__(self, num: int):
         self.num = num
         assert num % 2 == 0, "Drive motors must have even numbers"
-        if num == 8:
-            self.status_signals = []
-            return
+        # if num == 8:
+        #     self.status_signals = []
+        #     return
         self.fx = hardware.TalonFX(self.num, canbus="Drivetrain")
         assert self.fx.get_is_pro_licensed()  # Must be Phoenix Pro licensed for FOC
 
@@ -137,8 +137,8 @@ class DriveMotor:
         self.fx_cfg.slot0.k_d = 0.1
         self.fx_cfg.motion_magic.motion_magic_acceleration = 100
         self.fx_cfg.motion_magic.motion_magic_jerk = 1000
-        self.fx_cfg.torque_current.peak_forward_torque_current = 40  # Amperes
-        self.fx_cfg.torque_current.peak_reverse_torque_current = -40
+        self.fx_cfg.torque_current.peak_forward_torque_current = 30  # Amperes
+        self.fx_cfg.torque_current.peak_reverse_torque_current = -30
         self.fx_cfg.audio.beep_on_boot = False
 
         for _ in range(3):
@@ -151,19 +151,19 @@ class DriveMotor:
         self.fx.set_position(0)
 
     def get_velocity(self) -> float:
-        if self.num == 8:
-            return 0
+        # if self.num == 8:
+        #     return 0
         return (TWO_PI * TIRE_RADIUS) * self.velocity_signal.value / DRIVE_GEAR_RATIO
 
     def set_velocity(self, velocity: float) -> None:  # m/s
-        if self.num == 8:
-            return
+        # if self.num == 8:
+        #     return
         velocity = DRIVE_GEAR_RATIO * (velocity / (TWO_PI * TIRE_RADIUS))
         self.fx.set_control(self.velocity_request.with_velocity(velocity))
 
     def set_neutral(self):
-        if self.num == 8:
-            return
+        # if self.num == 8:
+        #     return
         self.fx.set_control(self.neutral_request)
 
 
@@ -304,7 +304,7 @@ class Base:
             self.steer_pos[i] = self.steer_motors[i].get_position()
             self.drive_vel[i] = self.drive_motors[i].get_velocity()
 
-        self.drive_vel[3] = self.drive_vel[2]  # TODO: Remove this once we got the fuse fixed
+        # self.drive_vel[3] = self.drive_vel[2]  # TODO: Remove this once we got the fuse fixed
 
         dt = self.status_signals[0].timestamp.time - self.status_timestamp.time
         self.status_timestamp = self.status_signals[0].timestamp
