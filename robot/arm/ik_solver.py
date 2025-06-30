@@ -71,7 +71,7 @@ class SingleArmIK:
     def get_home_q(self) -> np.ndarray:
         return self.model.key("home").qpos[self.dof_ids]
 
-    def solve_ik(self, T_wt: mink.SE3, max_iter: int = 20, pos_eps: float = 1e-3, rot_eps: float = 1e-3):
+    def solve_ik(self, T_wt: mink.SE3, max_iter: int = 10, pos_eps: float = 1e-3, rot_eps: float = 1e-3):
         if not self.initalized_:
             raise ValueError("IK solver not initialized")
         self.end_effector_task.set_target(T_wt)

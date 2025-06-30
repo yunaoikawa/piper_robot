@@ -18,8 +18,8 @@ def apply_deadzone(arr, deadzone_size=0.01):
 
 # VR Constants
 # VR_TCP_HOST = "192.168.1.111" # on netgear local router
-VR_TCP_HOST = "10.19.165.216"
-# VR_TCP_HOST = "192.168.0.169"
+# VR_TCP_HOST = "10.19.165.216"
+VR_TCP_HOST = "192.168.8.243"
 # VR_TCP_HOST = "10.0.0.173"
 VR_TCP_PORT = 5555
 VR_CONTROLLER_TOPIC = b"oculus_controller"
@@ -169,7 +169,7 @@ class OculusReader:
             vy = -controller_state.right_thumbstick_axes[0]
             vx = controller_state.right_thumbstick_axes[1]
             w = -controller_state.left_thumbstick_axes[0]
-            max_vel = np.array([0.5, 0.5, 0.78])
+            max_vel = np.array([0.3, 0.3, 0.78])
             target_velocity = np.array([vx, vy, w])
             # target_velocity = apply_deadzone(target_velocity)
             target_velocity = max_vel * target_velocity

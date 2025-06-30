@@ -58,7 +58,7 @@ class ConeE:
 
         self.base.start_control()
         time.sleep(0.5)
-        # self.base.home_lift()
+        self.base.home_lift()
         time.sleep(0.5)
         # TODO: call gripper homing inside arm_init
         if not self.no_arms:
