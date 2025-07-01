@@ -27,7 +27,8 @@ WIDTH = 0.152  # m
 TIRE_RADIUS = 0.0508  # m
 
 # Encoder magnet offsets
-ENCODER_MAGNET_OFFSETS = [-2896.0 / 4096, -3762.0 / 4096, -4794.0 / 4096, 417.0 / 4096]
+# ENCODER_MAGNET_OFFSETS = [-2896.0 / 4096, -3762.0 / 4096, -4794.0 / 4096, 417.0 / 4096]
+ENCODER_MAGNET_OFFSETS = [-2680.0 / 4096, -5789.0 / 4096, 5445.0 / 4096, 157.0 / 4096]
 
 # Swerve
 TWO_PI = 2 * math.pi
@@ -342,15 +343,16 @@ class Base:
 
 if __name__ == "__main__":
     base = Base()
-    base.start_control()
-    time.sleep(2)
+    base.get_encoder_offsets()
+    # base.start_control()
+    # time.sleep(2)
 
-    input("Press enter to home lift..")
-    base.home_lift()
+    # input("Press enter to home lift..")
+    # base.home_lift()
 
-    input("Press enter to rotate..")
+    # input("Press enter to rotate..")
 
-    rate = RateLimiter(50)
-    while True:
-        base.set_target_base_velocity(np.array([0.0, 0.0, 0.78]))
-        rate.sleep()
+    # rate = RateLimiter(50)
+    # while True:
+    #     base.set_target_base_velocity(np.array([0.0, 0.0, 0.78]))
+    #     rate.sleep()

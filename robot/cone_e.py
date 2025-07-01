@@ -169,7 +169,7 @@ class ConeE:
 
 
 def main():
-    cone_e = ConeE(no_arms=False)
+    cone_e = ConeE(no_arms=True)
     server = RPCServer(cone_e, "localhost", 8081, threaded=False)
     atexit.register(server.stop)
     server.start()
