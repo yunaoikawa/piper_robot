@@ -1,6 +1,10 @@
 # Piper Bimanual Robot — Teleop, Training & Inference Pipeline
 
-End-to-end pipeline for bimanual robot manipulation using Piper arms, VR teleoperation, and Pi0.5 policy learning.
+End-to-end pipeline for bimanual robot manipulation using Piper arms, VR teleoperation, and Pi0.5 policy learning. IN PROGRESS!!!
+
+## System diagram
+
+![System diagram](schema.png)
 
 ## Overview
 
