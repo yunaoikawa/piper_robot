@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+outputs/
+data/
+teleop_demonstrations/
+logs/
+*.hdf5
+*.mp4
+your_save_dir_here/
+.venv/
+bin/
+*.safetensors
