@@ -1,0 +1,125 @@
+# Configuration for fine-tuning Pi0.5 on LIBERO-90
+#
+# LIBERO-90 consists of 90 short-horizon manipulation tasks from LIBERO-100
+# for pretraining vision-language-action policies.
+#
+# Reference: https://huggingface.co/lerobot/pi05_libero_base
+
+# Policy configuration
+policy:
+  type: pi05  # Pi0.5 model type
+  pretrained_model_name_or_path: lerobot/pi05_base  # Pretrained checkpoint
+  compile_model: true  # Enable PyTorch 2.0 compilation for faster training
+  compile_mode: default  # PyTorch compile mode
+  gradient_checkpointing: true  # Save memory during training
+
+  image_features: ["observation.image.head", "observation.image.left_wrist", "observation.image.right_wrist"]
+
+  chunk_size: 50
+
+  n_action_steps: 20  # number of steps executed at inference time before replanning
+
+  # Model architecture parameters (optional overrides)
+  # vision_encoder: siglip-so400m-patch14-384
+  # language_model: meta-llama/Llama-3.2-1B
+  # action_head: diffusion  # Diffusion-based action prediction
+
+# Dataset configuration
+dataset:
+  repo_id: your_task_name  # HuggingFace dataset repository, or any name you prefer
+  # Alternatively, you can use: physical-intelligence/libero
+  root: training_set_root # Local dataset path
+  val_repo_id: val_your_task_name  # Validation dataset repo ID
+  val_root: validation_set_root # Local dataset path
+  local_files_only: true  # Use local files only (no HF download)
+  # Data preprocessing
+  image_size: 384  # Input image resolution (matches SigLIP encoder)
+  num_workers: 8  # DataLoader workers for parallel data loading
+  prefetch_factor: 2  # Prefetch batches per worker
+
+  # Data augmentation (optional)
+  # augment_images: true
+  # augment_brightness: 0.1
+  # augment_contrast: 0.1
+  # augment_saturation: 0.1
+  # augment_hue: 0.05
+
+# Environment configuration
+# env:
+#   type: libero  # LIBERO simulation environment
+#   task: libero_90  # LIBERO-90 task suite (90 pretraining tasks)
+#   # Other options: libero_10, libero_spatial, libero_object, libero_goal
+
+#   # Rendering settings
+#   render_mode: rgb_array  # For headless rendering
+#   # Make sure to set: export MUJOCO_GL=egl
+
+# Training configuration
+training:
+  # Training schedule
+  steps: 6000  # Total training steps
+  batch_size: 32  # Batch size per GPU
+  gradient_accumulation_steps: 1  # Accumulate gradients for larger effective batch
+
+  # Optimizer settings
+  learning_rate: 1.0e-4  # Peak learning rate
+  weight_decay: 0.01  # L2 regularization
+  warmup_steps: 1000  # Learning rate warmup
+  lr_scheduler: cosine  # Learning rate schedule
+
+  # Gradient clipping
+  max_grad_norm: 1.0  # Clip gradients to prevent instability
+
+  # Checkpointing
+  save_every_n_epochs: 10  # Save checkpoint frequency
+  keep_last_n_checkpoints: 5  # Number of checkpoints to keep
+  save_optimizer_state: true  # Save optimizer for resuming
+
+  # Validation
+  eval_every_n_epochs: 5  # Evaluation frequency
+  eval_episodes: 10  # Number of evaluation episodes
+
+  # Mixed precision training
+  use_amp: true  # Automatic Mixed Precision (FP16)
+
+  # Logging
+  log_every_n_steps: 10  # Log training metrics frequency
+  log_gradients: false  # Log gradient norms (can be verbose)
+
+  val_freq: 500  # Validation frequency in steps
+
+# Output configuration
+output_dir: your_output_dir  # Training output directory
+resume_from_checkpoint: null  # Path to checkpoint to resume from
+
+# Logging configuration
+wandb:
+  enable: true  # Enable Weights & Biases logging
+  project: your_wandb_project_name  # W&B project name
+  entity: your_wandb_entity_name  # W&B team/organization (null = personal)
+  name: your_run_name  # Run name (null = auto-generated)
+  tags:
+    - your_tag_1
+    - your_tag_2
+    - your_tag_3
+  notes: "your notes"
+
+job_name: your_job_name # Job name for logging
+
+# Tensorboard logging (alternative to W&B)
+tensorboard:
+  enable: false  # Enable TensorBoard logging
+  log_dir: ./logs  # TensorBoard log directory
+
+# Hardware configuration
+device: cuda  # Training device: cuda, cpu, or mps (for Mac M1/M2)
+num_gpus: 2  # Number of GPUs to use
+distributed: false  # Enable distributed training (multi-GPU)
+
+# Reproducibility
+seed: 42  # Random seed for reproducibility
+deterministic: false  # Use deterministic algorithms (slower but reproducible)
+
+# Advanced options
+# use_xformers: true  # Use xFormers for memory-efficient attention
+# flash_attention: true  # Use Flash Attention 2 if available
