@@ -17,7 +17,7 @@ def apply_deadzone(arr, deadzone_size=0.05):
 
 
 # VR Constants
-VR_TCP_HOST = "192.168.1.111" # on netgear local router
+VR_TCP_HOST = "192.168.1.89" # on netgear local router
 # VR_TCP_HOST = "10.19.165.216"
 # VR_TCP_HOST = "10.19.189.139"
 VR_TCP_PORT = 5555
@@ -54,25 +54,30 @@ class OculusReader:
         zmq_context = zmq.Context()
         stick_socket = zmq_context.socket(zmq.SUB)
         stick_socket.connect("tcp://{}:{}".format(VR_TCP_HOST, VR_TCP_PORT))
-        stick_socket.subscribe(VR_CONTROLLER_TOPIC)
-        # last_command_timestamp = None
-
+        
+        # Try subscribing to ALL topics to debug
+        stick_socket.subscribe(b"")  # Subscribe to everything temporarily
+        
+        stick_socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second timeout
+        
+        time.sleep(0.5)
+        
         while not self.stop_event.is_set():
-            _, message = stick_socket.recv_multipart()
-            controller_state = parse_controller_state(message.decode())
-            print(f"Received controller state: {controller_state}")
-            with self.controller_state_lock:
-                self.latest_controller_state = controller_state
-            # if last_command_timestamp is not None:
-            #     interval = time.time() - last_command_timestamp
-            #     self.interval_history.append(interval)
-            # else:
-            #     interval = 0.01
-            # last_command_timestamp = time.time()
-
-        stick_socket.close()
-        zmq_context.destroy()
-
+            print("Waiting for controller state...")
+            try:
+                topic, message = stick_socket.recv_multipart()
+                print(f"Received topic: {topic}, message length: {len(message)}")
+                controller_state = parse_controller_state(message.decode())
+                print(f"Received controller state: {controller_state}")
+                with self.controller_state_lock:
+                    self.latest_controller_state = controller_state
+            except zmq.Again:
+                print("Timeout - no message received in 5 seconds")
+                continue
+            except Exception as e:
+                print(f"Error: {e}")
+                continue
+            
     def control_loop(self):
         # context = zmq.Context()
         # stick_socket = context.socket(zmq.SUB)

@@ -7,7 +7,7 @@
   <joint name="base_to_dummy" type="fixed">
     <parent link="dummy_link"/>
     <child link="base_link"/>
-    <origin xyz="0 0 0" rpy="0.7854 0 0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
   <link

@@ -144,14 +144,19 @@ class RPCException(Exception):
 
 
 class RPCClient:
-    def __init__(self, host: str, port: int = 5000):
+    def __init__(self, host: str, port: int = 5000, timeout_ms: int | None = None):
         """
         host: host to connect to
         port: port to connect to
+        timeout_ms: optional send/receive timeout for RPC calls
         """
         self.__dict__["context"] = zmq.Context()
         self.__dict__["socket"] = self.context.socket(zmq.REQ)
         self.socket.connect(f"tcp://{host}:{port}")
+        self.__dict__["timeout_ms"] = timeout_ms
+        if timeout_ms is not None:
+            self.socket.setsockopt(zmq.RCVTIMEO, timeout_ms)
+            self.socket.setsockopt(zmq.SNDTIMEO, timeout_ms)
         self.__dict__["_is_callable_cache"] = {}
 
     def __setattr__(self, attr: str, value):
@@ -168,7 +173,10 @@ class RPCClient:
         Send a get request over the socket.
         """
         req = {"req": "get", "attr": attr, "args": args, "kwargs": kwargs}
-        self.socket.send(pickle.dumps(req))
+        try:
+            self.socket.send(pickle.dumps(req))
+        except zmq.error.Again as exc:
+            raise TimeoutError(f"RPC send timed out after {self.timeout_ms} ms") from exc
         return self._recv_result()
 
     def _send_set(self, attr: str, value):
@@ -176,7 +184,10 @@ class RPCClient:
         Send a set request over the socket.
         """
         req = {"req": "set", "attr": attr, "value": value}
-        self.socket.send(pickle.dumps(req))
+        try:
+            self.socket.send(pickle.dumps(req))
+        except zmq.error.Again as exc:
+            raise TimeoutError(f"RPC send timed out after {self.timeout_ms} ms") from exc
         return self._recv_result()
 
     def _recv_result(self):
@@ -192,7 +203,10 @@ class RPCClient:
         }; re-raise the exception on the client side
         if type == "result", content is the result
         """
-        result = self.socket.recv()
+        try:
+            result = self.socket.recv()
+        except zmq.error.Again as exc:
+            raise TimeoutError(f"RPC receive timed out after {self.timeout_ms} ms") from exc
         result = pickle.loads(result)
         if result["type"] == "exception":
             raise RPCException(

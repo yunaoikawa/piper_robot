@@ -14,7 +14,7 @@ from robot.msgs.bimanual_pose import BimanualPose, BimanualArmCommand
 from robot.msgs.base_command import BaseCommand, CommandType
 
 # VR Constants
-VR_TCP_HOST = "10.19.165.216"
+VR_TCP_HOST = 127.0.0.1
 # VR_TCP_HOST = "10.19.189.139"
 VR_TCP_PORT = 5555
 VR_CONTROLLER_TOPIC = b"oculus_controller"

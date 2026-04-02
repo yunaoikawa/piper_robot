@@ -19,4 +19,10 @@ __pycache__/
 *.npy
 *.png
 *.r3d
-*.rrd
+*.rrdanysense-streaming/
+bin/
+inference_outcome/
+teleop_demonstrations/
+your_save_dir_here/
+*.zip
+test/
