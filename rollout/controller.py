@@ -424,8 +424,6 @@ class PolicyController:
 
             action = self.request_action()
 
-            action = self.request_action()
-
             if action is not None:
                 self.apply_action(action)
 
