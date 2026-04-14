@@ -6,18 +6,15 @@ import mink
 import atexit
 from pathlib import Path
 
-# from robot.base import Base   # --- base disabled ---
 from robot.arm.arm import ArmNode
-# from robot.arm.arm_piper_control import ArmNode as ArmNodePiperControl
 from robot.rpc import RPCServer
 
 
 # =============================================================================
 # Workspace boundaries (metres)
-# Adjust these values to match your physical setup.
 # =============================================================================
-WORKSPACE_MIN = np.array([0.080, -0.498, 0.617])   # [x_min, y_min, z_min]
-WORKSPACE_MAX = np.array([0.563, 0.428, 1.095])   # [x_max, y_max, z_max]
+WORKSPACE_MIN = np.array([0.080, -0.498, 0.617])
+WORKSPACE_MAX = np.array([0.563, 0.428, 1.095])
 
 
 def clamp_ee_target(ee_target: mink.SE3) -> mink.SE3:
@@ -37,7 +34,6 @@ def require_initialization(func):
             print(f"Warning: {func.__name__} called before ConeE was initialized")
             return None
         return func(self, *args, **kwargs)
-
     return wrapper
 
 
@@ -46,17 +42,14 @@ class ConeE:
         self, base_max_vel=np.array((1.0, 1.0, 1.57)), base_max_accel=np.array((1.0, 1.0, 1.57)), no_arms=False
     ):
         self._initialized = False
-
-        # --- Base disabled ---
-        # self.base = Base(max_vel=base_max_vel, max_accel=base_max_accel)
-
         self.no_arms = no_arms
+
         if not self.no_arms:
             _HERE = Path(__file__).parent
             self.left_arm = ArmNode(
                 can_port="can_left",
                 mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix(),
-                use_gripper=False,
+                use_gripper=True,
             )
             self.right_arm = ArmNode(
                 can_port="can_right",
@@ -70,12 +63,6 @@ class ConeE:
             print("Warning: ConeE already initialized")
             return
 
-        # --- Base disabled ---
-        # self.base.start_control()
-        # time.sleep(0.5)
-        # self.base.home_lift()
-        # time.sleep(0.5)
-
         if not self.no_arms:
             self.left_arm.init()
             self.right_arm.init()
@@ -87,22 +74,18 @@ class ConeE:
     # ----------------------------------------------------------------------
     @require_initialization
     def set_base_velocity(self, velocity: np.ndarray):
-        # self.base.set_target_base_velocity(velocity)
         print("Warning: set_base_velocity() called but base is disabled")
 
     @require_initialization
     def set_base_position(self, position: np.ndarray):
-        # self.base.set_target_base_position(position)
         print("Warning: set_base_position() called but base is disabled")
 
     @require_initialization
     def set_lift_position(self, position: np.ndarray):
-        # self.base.set_target_lift(position)
         print("Warning: set_lift_position() called but base is disabled")
 
     @require_initialization
     def get_lift_position(self) -> float:
-        # return self.base.get_lift_position()
         print("Warning: get_lift_position() called but base is disabled")
         return 0.0
 
@@ -162,7 +145,9 @@ class ConeE:
 
     @require_initialization
     def get_left_gripper_exact(self) -> float:
-        """Get left gripper state. Returns 0.0 (no gripper on left arm)."""
+        """Get left gripper position as open ratio (0.0=closed, 1.0=open)."""
+        if self.left_arm.gripper is not None:
+            return self.left_arm.gripper.get_open_ratio()
         return 0.0
 
     # ----------------------------------------------------------------------
@@ -199,15 +184,7 @@ class ConeE:
     def get_right_gripper_exact(self) -> float:
         """Get right gripper position as open ratio (0.0=closed, 1.0=open)."""
         if self.right_arm.gripper is not None:
-            try:
-                from robot.arm.arm import DXL_POS_OPEN, DXL_POS_CLOSE, DXL_ID
-                ADDR_PRESENT_POSITION = 132
-                pos, _, _ = self.right_arm.gripper.packet.read4ByteTxRx(
-                    self.right_arm.gripper.port, DXL_ID, ADDR_PRESENT_POSITION)
-                ratio = (pos - DXL_POS_CLOSE) / (DXL_POS_OPEN - DXL_POS_CLOSE)
-                return float(max(0.0, min(1.0, ratio)))
-            except Exception:
-                return 0.0
+            return self.right_arm.gripper.get_open_ratio()
         return 0.0
 
     # ----------------------------------------------------------------------

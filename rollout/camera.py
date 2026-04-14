@@ -24,8 +24,9 @@ class CameraFeedManager:
         self.is_recording = False
         self.autonomous_mode = False
 
-        # Optional wrist camera reference (set externally)
+        # Optional wrist camera references (set externally by controller)
         self.wrist_camera = None
+        self.left_wrist_camera = None
 
     def _on_new_frame(self):
         self.frame_event.set()
@@ -82,15 +83,34 @@ class CameraFeedManager:
                 print(f"Error getting RGB frame: {e}")
             self.frame_event.clear()
 
-    def _display_loop(self):
-        """Single display thread that shows head camera and optional wrist camera."""
-        head_window = "Head Camera"
-        wrist_window = "Right Wrist Camera"
+    def _display_wrist(self, camera, window_name, windows):
+        """Helper to display a wrist camera feed."""
+        if camera is None:
+            return
 
+        if window_name not in windows:
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(window_name, 640, 480)
+            windows[window_name] = True
+
+        frame, _, _ = camera.get_latest_frame()
+        if frame is not None:
+            display = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            display = cv2.cvtColor(display, cv2.COLOR_RGB2BGR)
+            cv2.imshow(window_name, display)
+        else:
+            black = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(black, f"Waiting for {window_name}...", (80, 240),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            cv2.imshow(window_name, black)
+
+    def _display_loop(self):
+        """Single display thread that shows head camera and wrist cameras."""
+        head_window = "Head Camera"
         cv2.namedWindow(head_window, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(head_window, 640, 480)
 
-        wrist_window_created = False
+        windows = {}
 
         print("Camera feed display started")
 
@@ -113,23 +133,11 @@ class CameraFeedManager:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
                     cv2.imshow(head_window, black_frame)
 
-            # --- Wrist camera ---
-            if self.wrist_camera is not None:
-                if not wrist_window_created:
-                    cv2.namedWindow(wrist_window, cv2.WINDOW_NORMAL)
-                    cv2.resizeWindow(wrist_window, 640, 480)
-                    wrist_window_created = True
+            # --- Right wrist camera ---
+            self._display_wrist(self.wrist_camera, "Right Wrist Camera", windows)
 
-                wrist_frame, _, _ = self.wrist_camera.get_latest_frame()
-                if wrist_frame is not None:
-                    wrist_display = cv2.rotate(wrist_frame, cv2.ROTATE_90_CLOCKWISE)
-                    wrist_display = cv2.cvtColor(wrist_display, cv2.COLOR_RGB2BGR)
-                    cv2.imshow(wrist_window, wrist_display)
-                else:
-                    black = np.zeros((480, 640, 3), dtype=np.uint8)
-                    cv2.putText(black, "Waiting for wrist camera...", (100, 240),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                    cv2.imshow(wrist_window, black)
+            # --- Left wrist camera ---
+            self._display_wrist(self.left_wrist_camera, "Left Wrist Camera", windows)
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
@@ -139,8 +147,8 @@ class CameraFeedManager:
             time.sleep(0.033)
 
         cv2.destroyWindow(head_window)
-        if wrist_window_created:
-            cv2.destroyWindow(wrist_window)
+        for w in windows:
+            cv2.destroyWindow(w)
         print("Camera feed display stopped")
 
     def _build_status_text(self):

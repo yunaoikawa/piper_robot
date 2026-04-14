@@ -89,17 +89,21 @@ class PolicyController:
         self.camera.autonomous_mode = autonomous_mode
         self.camera.start()
 
-        # Left wrist camera - disabled (no physical camera on left arm)
-        self.left_wrist_camera = None
-
         # Right wrist camera (device 1)
         self.right_wrist_camera = USBWristCameraFeedManager(
             self.stop_event, device_index=1, label="right wrist"
         )
         self.right_wrist_camera.start()
 
+        # Left wrist camera (device 2)
+        self.left_wrist_camera = USBWristCameraFeedManager(
+            self.stop_event, device_index=2, label="left wrist"
+        )
+        self.left_wrist_camera.start()
+
         # Link wrist camera to head camera display (single display thread)
         self.camera.wrist_camera = self.right_wrist_camera
+        self.camera.left_wrist_camera = self.left_wrist_camera
 
         # Data recorder (optional)
         self.recorder = DataRecorder(save_path, self.stop_event) if enable_recording else None
@@ -176,8 +180,13 @@ class PolicyController:
         if depth_frame is not None:
             depth_frame = np.rot90(depth_frame, k=3)
 
-        # Left wrist camera (disabled)
-        left_wrist_frame = None
+        # Left wrist camera
+        if self.left_wrist_camera is not None:
+            left_wrist_frame, _, _ = self.left_wrist_camera.get_latest_frame()
+            if left_wrist_frame is not None:
+                left_wrist_frame = np.rot90(left_wrist_frame, k=3)
+        else:
+            left_wrist_frame = None
 
         # Right wrist camera
         if self.right_wrist_camera is not None:
@@ -230,8 +239,8 @@ class PolicyController:
                 rgb_timestamp=rgb_timestamp,
                 left_joint_positions=left_joint_positions,
                 right_joint_positions=right_joint_positions,
-                left_wrist_rgb_frame=None,
-                right_wrist_rgb_frame=right_wrist_frame,
+                left_wrist_rgb_frame=self.left_wrist_camera.latest_rgb.copy() if (self.left_wrist_camera and self.left_wrist_camera.latest_rgb is not None) else None,
+                right_wrist_rgb_frame=self.right_wrist_camera.latest_rgb.copy() if (self.right_wrist_camera and self.right_wrist_camera.latest_rgb is not None) else None,
             )
             self.recorder.record_sample(sample)
 
@@ -507,6 +516,8 @@ class PolicyController:
 
         self.obs_thread.join(timeout=2.0)
         self.camera.stop()
+        if self.left_wrist_camera:
+            self.left_wrist_camera.stop()
         if self.right_wrist_camera:
             self.right_wrist_camera.stop()
         if self.recorder:

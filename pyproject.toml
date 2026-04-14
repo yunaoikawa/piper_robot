@@ -26,6 +26,8 @@ dependencies = [
     "mink",
     "tqdm",
     "loop-rate-limiters>=1.1.0",
+    "pyarrow",
+    "dora-rs",
 ]
 
 [project.urls]

@@ -7,6 +7,7 @@ Key design decisions:
 - 3 separate videos per episode: _head.mp4, _left.mp4, _right.mp4
 - RGB frames NOT stored in HDF5 (only depth + poses)
 - HDF5 fields match what convert_to_lerobot.py expects
+- Live camera feeds displayed in separate OpenCV windows
 
 Controller mapping (NORMAL — no swap):
   Left controller (X/Y)  → Left arm
@@ -201,9 +202,11 @@ class MinimalTeleopCollector:
         self.oculus_thread = threading.Thread(target=self._oculus_thread, daemon=True)
         self.robot_state_thread = threading.Thread(target=self._robot_state_thread, daemon=True)
         self.recording_thread = threading.Thread(target=self._recording_worker, daemon=True)
+        self.display_thread = threading.Thread(target=self._display_loop, daemon=True)
         self.oculus_thread.start()
         self.robot_state_thread.start()
         self.recording_thread.start()
+        self.display_thread.start()
 
     def _episode_subdir(self, episode_number: int) -> Path:
         """Return type_even or type_odd subdir based on episode number parity."""
@@ -412,6 +415,43 @@ class MinimalTeleopCollector:
         print()
         self.episode_count += 1
 
+    def _display_loop(self):
+        """Show live camera feeds in separate OpenCV windows."""
+        windows = {}
+        while not self.stop_event.is_set():
+            for label in CAMERA_LABELS:
+                if label in self.cameras:
+                    rgb, _, _ = self.cameras[label].get_latest()
+                    if rgb is not None and rgb.size > 0:
+                        frame = cv2.rotate(rgb, cv2.ROTATE_90_CLOCKWISE)
+                        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                        if label not in windows:
+                            cv2.namedWindow(label, cv2.WINDOW_NORMAL)
+                            cv2.resizeWindow(label, 640, 480)
+                            windows[label] = True
+                        # Add recording indicator
+                        if self.is_recording:
+                            cv2.putText(frame, "REC", (10, 30),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+                            elapsed = time.time() - self._recording_start_time if hasattr(self, '_recording_start_time') else 0
+                        cv2.imshow(label, frame)
+                else:
+                    if label not in windows:
+                        cv2.namedWindow(label, cv2.WINDOW_NORMAL)
+                        cv2.resizeWindow(label, 640, 480)
+                        windows[label] = True
+                    black = np.zeros((480, 640, 3), dtype=np.uint8)
+                    cv2.putText(black, f"Waiting for {label}...", (100, 240),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                    cv2.imshow(label, black)
+
+            key = cv2.waitKey(33) & 0xFF
+            if key == ord('q'):
+                self.stop_event.set()
+                break
+
+        cv2.destroyAllWindows()
+
     # === Control loop (NORMAL: left ctrl→left arm, right ctrl→right arm) ===
     def control_loop(self):
         rate = RateLimiter(CONTROL_FREQ)
@@ -521,7 +561,7 @@ class MinimalTeleopCollector:
         if self.is_recording:
             self._end_episode_and_save()
         self.stop_event.set()
-        for t in [self.oculus_thread, self.robot_state_thread, self.recording_thread] + self.camera_threads:
+        for t in [self.oculus_thread, self.robot_state_thread, self.recording_thread, self.display_thread] + self.camera_threads:
             try:
                 t.join(timeout=1.0)
             except Exception:
