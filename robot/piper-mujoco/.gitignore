@@ -1,0 +1,5 @@
+mujoco-env/
+*.npz
+.env
+.envrc
+mujoco_menagerie/

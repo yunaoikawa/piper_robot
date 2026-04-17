@@ -1,0 +1,169 @@
+<mujoco model="lab_scene">
+  <!--
+    Dual-arm lab scene:
+    - Table: 110cm width (Y) x 140cm depth (X)
+    - Right piper (piper.xml): at origin, 42cm from right white wall
+    - Left piper (piper_left.xml): 25cm to the left of right piper
+    - Both pipers at back edge of table
+    - Incubator: 70cm in front of right piper
+    - Black wall on left, white walls on front and right
+  -->
+
+  <include file="piper.xml"/>
+  <include file="piper_left.xml"/>
+
+  <statistic center="0.5 0.13 0.25" extent="0.8" meansize="0.04"/>
+
+  <visual>
+    <headlight diffuse="0.5 0.5 0.5" ambient="0.25 0.25 0.25" specular="0.15 0.15 0.15"/>
+    <rgba haze="0.1 0.1 0.12 1"/>
+    <global azimuth="150" elevation="-25"/>
+    <quality shadowsize="4096"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.08 0.08 0.1" rgb2="0.02 0.02 0.04"
+             width="512" height="3072"/>
+    <material name="black_table_mat" rgba="0.04 0.04 0.04 1" reflectance="0.03"/>
+    <material name="table_frame_mat" rgba="0.1 0.1 0.1 1" reflectance="0.15"/>
+    <material name="black_wall_mat" rgba="0.04 0.04 0.04 1" reflectance="0.01"/>
+    <material name="white_wall_mat" rgba="0.93 0.93 0.91 1" reflectance="0.12"/>
+    <material name="floor_mat" rgba="0.2 0.2 0.2 1" reflectance="0.08"/>
+    <material name="fridge_body_mat" rgba="0.94 0.94 0.94 1" reflectance="0.25"/>
+    <material name="fridge_interior_mat" rgba="0.6 0.75 0.9 1" reflectance="0.05"/>
+    <material name="fridge_handle_mat" rgba="0.65 0.65 0.65 1" reflectance="0.4"/>
+    <material name="flask_glass_mat" rgba="0.9 0.92 0.95 0.85" reflectance="0.4"/>
+    <material name="flask_liquid_mat" rgba="0.15 0.6 0.3 0.8" reflectance="0.1"/>
+  </asset>
+
+  <worldbody>
+    <!-- Lighting -->
+    <light pos="0.5 0.13 1.5" dir="0 0 -1" directional="false"
+           diffuse="0.6 0.58 0.56" specular="0.2 0.2 0.2"
+           cutoff="65" attenuation="1 0.05 0.01"/>
+    <light pos="-0.3 0.6 1.2" dir="0.3 -0.4 -0.6" directional="false"
+           diffuse="0.2 0.2 0.22" specular="0.08 0.08 0.08"
+           cutoff="70" attenuation="1 0.1 0.02"/>
+
+    <!-- Floor -->
+    <geom name="real_floor" type="plane" size="3 3 0.05"
+          pos="0 0 -0.75" material="floor_mat" contype="0" conaffinity="0"/>
+
+    <!-- Table: 110cm width (Y) x 140cm depth (X) -->
+    <!-- Center at (0.68, 0.13) so right edge y=-0.42, back edge x=-0.02 -->
+    <body name="table" pos="0.68 0.13 0">
+      <geom name="table_top" type="box" size="0.70 0.55 0.012"
+            pos="0 0 -0.012" material="black_table_mat"
+            contype="1" conaffinity="1" friction="1 0.01 0.01" mass="25"/>
+      <geom name="table_cloth" type="box" size="0.68 0.53 0.0005"
+            pos="0 0 0.0005" material="black_table_mat"
+            contype="1" conaffinity="1" friction="1.5 0.01 0.01" mass="0.5"/>
+      <geom name="leg_fl" type="box" size="0.02 0.02 0.363"
+            pos="-0.66 0.51 -0.387" material="table_frame_mat" mass="1.5"/>
+      <geom name="leg_fr" type="box" size="0.02 0.02 0.363"
+            pos="0.66 0.51 -0.387" material="table_frame_mat" mass="1.5"/>
+      <geom name="leg_bl" type="box" size="0.02 0.02 0.363"
+            pos="-0.66 -0.51 -0.387" material="table_frame_mat" mass="1.5"/>
+      <geom name="leg_br" type="box" size="0.02 0.02 0.363"
+            pos="0.66 -0.51 -0.387" material="table_frame_mat" mass="1.5"/>
+      <geom name="brace_f" type="box" size="0.64 0.012 0.012"
+            pos="0 0.51 -0.55" material="table_frame_mat" mass="0.5"/>
+      <geom name="brace_b" type="box" size="0.64 0.012 0.012"
+            pos="0 -0.51 -0.55" material="table_frame_mat" mass="0.5"/>
+    </body>
+
+    <!-- Walls (touching table edges) -->
+    <!-- BLACK wall: piper's left, y=0.68 -->
+    <geom name="black_wall" type="box" size="1.0 0.005 0.9"
+          pos="0.68 0.68 0.15" material="black_wall_mat"
+          contype="0" conaffinity="0" mass="0"/>
+    <!-- WHITE wall: front, x=1.38 -->
+    <geom name="front_wall" type="box" size="0.005 1.0 0.9"
+          pos="1.38 0.13 0.15" material="white_wall_mat"
+          contype="0" conaffinity="0" mass="0"/>
+    <!-- WHITE wall: right, y=-0.42 -->
+    <geom name="right_wall" type="box" size="1.0 0.005 0.9"
+          pos="0.68 -0.42 0.15" material="white_wall_mat"
+          contype="0" conaffinity="0" mass="0"/>
+
+    <!-- Incubator: 20cm W x 30cm D x 35cm H, 70cm in front of right piper -->
+    <body name="fridge" pos="0.70 0.0 0.175" euler="0 0 1.5708">
+      <geom name="fridge_back" type="box" size="0.10 0.004 0.175"
+            pos="0 -0.146 0" material="fridge_body_mat" contype="1" conaffinity="1" mass="1.5"/>
+      <geom name="fridge_left" type="box" size="0.004 0.15 0.175"
+            pos="-0.096 0 0" material="fridge_body_mat" contype="1" conaffinity="1" mass="0.8"/>
+      <geom name="fridge_right" type="box" size="0.004 0.15 0.175"
+            pos="0.096 0 0" material="fridge_body_mat" contype="1" conaffinity="1" mass="0.8"/>
+      <geom name="fridge_top" type="box" size="0.10 0.15 0.004"
+            pos="0 0 0.171" material="fridge_body_mat" contype="1" conaffinity="1" mass="0.5"/>
+      <geom name="fridge_bottom" type="box" size="0.10 0.15 0.004"
+            pos="0 0 -0.171" material="fridge_body_mat" contype="1" conaffinity="1" mass="0.5"/>
+      <geom name="fridge_int_back" type="box" size="0.09 0.002 0.165"
+            pos="0 -0.138 0" material="fridge_interior_mat" contype="0" conaffinity="0" mass="0"/>
+      <geom name="fridge_int_bottom" type="box" size="0.09 0.14 0.002"
+            pos="0 0 -0.163" material="fridge_interior_mat" contype="1" conaffinity="1" mass="0"/>
+      <geom name="fridge_int_left" type="box" size="0.002 0.14 0.165"
+            pos="-0.09 0 0" material="fridge_interior_mat" contype="0" conaffinity="0" mass="0"/>
+      <geom name="fridge_int_right" type="box" size="0.002 0.14 0.165"
+            pos="0.09 0 0" material="fridge_interior_mat" contype="0" conaffinity="0" mass="0"/>
+      <geom name="fridge_shelf" type="box" size="0.085 0.12 0.002"
+            pos="0 0.01 0.02" material="fridge_interior_mat" contype="1" conaffinity="1" mass="0.1"/>
+      <!-- Door: hinged left, swung open to the right -->
+      <body name="fridge_door" pos="-0.096 0.146 0" euler="0 0 2.356">
+        <geom name="fridge_door_panel" type="box" size="0.096 0.004 0.17"
+              pos="0.096 0.004 0" material="fridge_body_mat" contype="1" conaffinity="1" mass="0.6"/>
+        <geom name="fridge_handle" type="capsule" size="0.006 0.04"
+              pos="0.17 0.018 0.05" material="fridge_handle_mat" mass="0.02"/>
+      </body>
+      <light name="fridge_light" pos="0 0 0.12" dir="0 0.7 -0.3"
+             diffuse="0.06 0.12 0.3" specular="0 0 0" cutoff="50" attenuation="1 4 10"/>
+    </body>
+
+    <!-- Flask: between pipers and incubator -->
+    <body name="flask" pos="0.30 -0.05 0.0">
+      <freejoint name="flask_joint"/>
+      <inertial pos="0 0 0.035" mass="0.12" diaginertia="0.00005 0.00005 0.00002"/>
+      <geom name="flask_c01" type="cylinder" size="0.038 0.005" pos="0 0 0.005"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_c02" type="cylinder" size="0.036 0.005" pos="0 0 0.015"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_c03" type="cylinder" size="0.033 0.005" pos="0 0 0.025"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_c04" type="cylinder" size="0.030 0.005" pos="0 0 0.035"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_c05" type="cylinder" size="0.027 0.005" pos="0 0 0.045"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_c06" type="cylinder" size="0.024 0.005" pos="0 0 0.055"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_c07" type="cylinder" size="0.021 0.005" pos="0 0 0.065"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_c08" type="cylinder" size="0.018 0.005" pos="0 0 0.075"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_c09" type="cylinder" size="0.015 0.005" pos="0 0 0.085"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_neck" type="cylinder" size="0.013 0.015" pos="0 0 0.105"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_rim" type="cylinder" size="0.015 0.002" pos="0 0 0.122"
+            material="flask_glass_mat" contype="1" conaffinity="1" friction="0.8 0.01 0.01"/>
+      <geom name="flask_liquid" type="cylinder" size="0.032 0.018"
+            pos="0 0 0.02" material="flask_liquid_mat" contype="0" conaffinity="0" mass="0.05"/>
+    </body>
+
+    <!-- Cameras -->
+    <camera name="lab_overview" pos="-0.5 -0.5 1.2"
+            xyaxes="0.85 -0.5 0 0.2 0.4 0.9" fovy="60" mode="fixed"/>
+    <camera name="topdown" pos="0.68 0.13 1.8"
+            xyaxes="1 0 0 0 1 0" fovy="65" mode="fixed"/>
+    <camera name="front" pos="0.68 1.2 0.4"
+            xyaxes="1 0 0 0 0.3 0.95" fovy="55" mode="fixed"/>
+  </worldbody>
+
+  <!-- Both arms extended, flask on table -->
+  <keyframe>
+    <key name="lab_home" qpos="0 0.85 -0.35 0 -0.9
+                                0 0.85 -0.35 0 -0.9
+                                0.30 -0.05 0.0 1 0 0 0"
+                         ctrl="0 0.85 -0.35 0 -0.9
+                               0 0.85 -0.35 0 -0.9"/>
+  </keyframe>
+</mujoco>
