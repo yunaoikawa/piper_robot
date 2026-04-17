@@ -158,7 +158,7 @@ class ConeEMujoco:
 
 if __name__ == "__main__":
     _HERE = Path(__file__).parent
-    cone_e_mujoco = ConeEMujoco(mjcf_path=(_HERE / "cone-e-description" / "scene.mjcf").as_posix())
+    cone_e_mujoco = ConeEMujoco(mjcf_path=(_HERE / "cone-e-description" / "lab-scene.mjcf").as_posix())
     rpc_server = RPCServer(cone_e_mujoco, "localhost", 8081, threaded=False)
     atexit.register(rpc_server.stop)
     rpc_server.start()
