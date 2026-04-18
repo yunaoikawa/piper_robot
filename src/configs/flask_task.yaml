@@ -1,0 +1,45 @@
+# Pi0.5 fine-tuning config for Piper bimanual flask task
+#
+# Usage:
+#   cd ~/src/robot
+#   python tmp/pi05_training_clean-main/pi05_scripts/train_pi05.py \
+#       --config src/configs/flask_task.yaml
+
+policy:
+  type: pi05
+  pretrained_model_name_or_path: lerobot/pi05_base
+  compile_model: false
+  compile_mode: default
+  gradient_checkpointing: true
+  image_features:
+    - "observation.images.cam_high"
+    - "observation.images.cam_left_wrist"
+    - "observation.images.cam_right_wrist"
+  chunk_size: 50
+  n_action_steps: 50
+
+dataset:
+  repo_id: yoikawa/flask_tasks
+  root: /home/yoikawa/src/robot/data/train/new
+  val_repo_id: yoikawa/flask_tasks_val
+  val_root: /home/yoikawa/src/robot/data/val/new
+
+training:
+  steps: 50000
+  batch_size: 8
+  learning_rate: 2.5e-5
+  val_freq: 500
+
+output_dir: /home/yoikawa/src/robot/outputs/main
+
+wandb:
+  enable: false
+  project: piper-flask
+  entity: null
+  name: flask_pi05
+
+job_name: pi05_flask
+
+device: cuda
+distributed: false
+seed: 42

@@ -1,41 +1,27 @@
 """
 Convert HDF5+MP4 episode data → LeRobot v3.0 dataset format for Pi0.5 finetuning.
 
-Supports multiple task directories merged into a single dataset.
-
-Data layout expected (from teleop.py):
-    data_dir_1/          # task 0: "put the flask in"
-        episode_0000_*_head.mp4
-        episode_0000_*_left.mp4
-        episode_0000_*_right.mp4
-        episode_0000_*.hdf5
-        ...
-    data_dir_2/          # task 1: "take the flask out"
-        episode_0000_*.hdf5
-        ...
-
-MP4 → camera mapping:
-    _head.mp4  → cam_high
-    _left.mp4  → cam_left_wrist
-    _right.mp4 → cam_right_wrist
-
-State/Action format (20D, Pi0.5 native r6):
-    [left_pos(3), left_r6(6), left_gripper(1), right_pos(3), right_r6(6), right_gripper(1)]
+Supports multiple task directories merged into a single dataset,
+with optional train/validation split.
 
 Usage:
-    # Single task (backward compatible)
-    python convert_to_lerobot.py \
-        --data_dirs /path/to/data \
-        --task_names "robot manipulation" \
-        --output_dir /path/to/output \
-        --repo_id user/dataset
-
-    # Multiple tasks
+    # Without validation split
     python convert_to_lerobot.py \
         --data_dirs data/flask/put_in data/flask/take_out \
         --task_names "put the flask in" "take the flask out" \
         --output_dir data/train \
         --repo_id yoikawa/flask_tasks \
+        --fps 30
+
+    # With 10% validation split
+    python convert_to_lerobot.py \
+        --data_dirs data/flask/put_in data/flask/take_out \
+        --task_names "put the flask in" "take the flask out" \
+        --output_dir data/train \
+        --val_output_dir data/val \
+        --repo_id yoikawa/flask_tasks \
+        --val_repo_id yoikawa/flask_tasks_val \
+        --val_split 0.1 \
         --fps 30
 """
 
@@ -130,7 +116,6 @@ def find_episode_pairs(data_dir: str, camera_keys: list) -> list:
                 candidates = sorted(Path(data_dir).glob(f"{prefix}*{suffix}.mp4"))
                 mp4s[cam_key] = str(candidates[0]) if candidates else None
 
-        # Fallback for single-MP4 format
         if not any(mp4s.values()):
             single_mp4 = Path(h5).with_suffix(".mp4")
             if single_mp4.exists():
@@ -188,26 +173,24 @@ def reencode_video(src_path: str, dest_path: str):
 
 
 # ---------------------------------------------------------------------------
-# Dataset writer
+# Single dataset writer
 # ---------------------------------------------------------------------------
 
-def write_lerobot_dataset(
-    data_dirs: list,
+def _write_single_dataset(
+    episodes: list,
     task_names: list,
     output_dir: str,
     repo_id: str,
-    fps: int = 30,
-    camera_keys: list = None,
+    fps: int,
+    camera_keys: list,
+    label: str = "train",
 ):
-    if camera_keys is None:
-        camera_keys = ["cam_high", "cam_left_wrist", "cam_right_wrist"]
-
-    assert len(data_dirs) == len(task_names), \
-        f"Mismatch: {len(data_dirs)} data_dirs but {len(task_names)} task_names"
+    """Write a single LeRobot v3.0 dataset from a list of episodes."""
+    if not episodes:
+        print(f"  [{label}] No episodes, skipping")
+        return
 
     root = Path(output_dir)
-
-    # v3 directory structure
     data_out    = root / "data" / "chunk-000"
     meta_dir    = root / "meta"
     ep_meta_dir = root / "meta" / "episodes" / "chunk-000"
@@ -219,29 +202,13 @@ def write_lerobot_dataset(
     for ck in camera_keys:
         (root / "videos" / f"observation.images.{ck}" / "chunk-000").mkdir(parents=True, exist_ok=True)
 
-    # Collect all episodes across all task directories
-    all_episodes = []  # List of (h5_path, mp4s, task_index)
-    for task_idx, (data_dir, task_name) in enumerate(zip(data_dirs, task_names)):
-        pairs = find_episode_pairs(data_dir, camera_keys)
-        if not pairs:
-            print(f"WARNING: No episodes found in {data_dir} for task '{task_name}'")
-            continue
-        print(f"Task {task_idx} '{task_name}': {len(pairs)} episodes in {data_dir}")
-        for h5_path, mp4s in pairs:
-            all_episodes.append((h5_path, mp4s, task_idx))
-
-    if not all_episodes:
-        raise FileNotFoundError("No episodes found in any data directory")
-
-    print(f"\nTotal: {len(all_episodes)} episodes across {len(task_names)} tasks\n")
-
     all_rows = []
     episode_rows = []
     global_frame_idx = 0
     episode_lengths = []
 
-    for ep_idx, (h5_path, mp4s, task_idx) in enumerate(all_episodes):
-        print(f"  Episode {ep_idx:04d} (task {task_idx}): {Path(h5_path).name}")
+    for ep_idx, (h5_path, mp4s, task_idx) in enumerate(episodes):
+        print(f"  [{label}] Episode {ep_idx:04d} (task {task_idx}): {Path(h5_path).name}")
 
         ep = load_episode(h5_path)
         T = len(ep["state"])
@@ -264,7 +231,6 @@ def write_lerobot_dataset(
 
         global_frame_idx += T
 
-        # Re-encode each camera's video
         for ck in camera_keys:
             src_mp4 = mp4s.get(ck)
             dest = root / "videos" / f"observation.images.{ck}" / "chunk-000" / f"file-{ep_idx:06d}.mp4"
@@ -277,7 +243,6 @@ def write_lerobot_dataset(
             else:
                 print(f"    WARNING: No MP4 for {ck}")
 
-        # Episode metadata
         ep_row = {
             "episode_index":      ep_idx,
             "tasks":              [task_idx],
@@ -298,12 +263,11 @@ def write_lerobot_dataset(
             ep_row[f"videos/{vid_key}/to_timestamp"]   = ep_end_ts
         episode_rows.append(ep_row)
 
-    # ── Write data parquet ──
+    # ── Write parquet ──
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     df = pd.DataFrame(all_rows)
-
     schema = pa.schema([
         pa.field("episode_index",     pa.int64()),
         pa.field("frame_index",       pa.int64()),
@@ -315,36 +279,24 @@ def write_lerobot_dataset(
         pa.field("action",            pa.list_(pa.float32())),
     ])
     table = pa.Table.from_pydict(
-        {
-            "episode_index":     pa.array(df["episode_index"].tolist(), type=pa.int64()),
-            "frame_index":       pa.array(df["frame_index"].tolist(),   type=pa.int64()),
-            "index":             pa.array(df["index"].tolist(),          type=pa.int64()),
-            "timestamp":         pa.array(df["timestamp"].tolist(),      type=pa.float32()),
-            "task_index":        pa.array(df["task_index"].tolist(),     type=pa.int64()),
-            "next.done":         pa.array(df["next.done"].tolist(),      type=pa.bool_()),
-            "observation.state": pa.array(df["observation.state"].tolist(), type=pa.list_(pa.float32())),
-            "action":            pa.array(df["action"].tolist(),            type=pa.list_(pa.float32())),
-        },
+        {col: pa.array(df[col].tolist(), type=schema.field(col).type) for col in df.columns},
         schema=schema,
     )
     pq.write_table(table, data_out / "file-000.parquet")
-    print(f"\nWrote {len(df)} frames to {data_out / 'file-000.parquet'}")
 
-    # ── Write episode metadata ──
     ep_df = pd.DataFrame(episode_rows)
     ep_df.to_parquet(ep_meta_dir / "file-000.parquet", index=False)
-    print(f"Wrote {ep_meta_dir / 'file-000.parquet'}")
 
-    # ── Write tasks.parquet ──
+    # ── tasks.parquet ──
+    unique_task_indices = sorted(set(ti for _, _, ti in episodes))
     tasks_df = pd.DataFrame({
-        "task_index": list(range(len(task_names))),
-        "task": task_names,
+        "task_index": unique_task_indices,
+        "task": [task_names[i] for i in unique_task_indices],
     })
     tasks_df = tasks_df.set_index("task")
     tasks_df.to_parquet(meta_dir / "tasks.parquet", index=True)
-    print(f"Wrote {meta_dir / 'tasks.parquet'} ({len(task_names)} tasks)")
 
-    # ── Write info.json ──
+    # ── info.json ──
     state_dim  = 20
     action_dim = 20
     _names = state_names()
@@ -356,16 +308,8 @@ def write_lerobot_dataset(
         "timestamp":     {"dtype": "float32", "shape": [1], "names": None},
         "task_index":    {"dtype": "int64",   "shape": [1], "names": None},
         "next.done":     {"dtype": "bool",    "shape": [1], "names": None},
-        "observation.state": {
-            "dtype": "float32",
-            "shape": [state_dim],
-            "names": _names,
-        },
-        "action": {
-            "dtype": "float32",
-            "shape": [action_dim],
-            "names": _names,
-        },
+        "observation.state": {"dtype": "float32", "shape": [state_dim], "names": _names},
+        "action":            {"dtype": "float32", "shape": [action_dim], "names": _names},
     }
     for ck in camera_keys:
         key = f"observation.images.{ck}"
@@ -374,33 +318,27 @@ def write_lerobot_dataset(
             "shape": [3, 480, 640],
             "names": ["channel", "height", "width"],
             "path": f"videos/{key}/chunk-{{chunk_index:03d}}/file-{{file_index:06d}}.mp4",
-            "video_info": {
-                "fps": fps,
-                "encoding": {"vcodec": "libsvtav1"},
-            },
+            "video_info": {"fps": fps, "encoding": {"vcodec": "libsvtav1"}},
         }
 
     info = {
         "codebase_version": "v3.0",
         "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:06d}.mp4",
         "robot_type": "bimanual",
-        "total_episodes": len(all_episodes),
+        "total_episodes": len(episodes),
         "total_frames": global_frame_idx,
         "total_tasks": len(task_names),
         "total_chunks": 1,
         "chunks_size": 1000,
         "fps": fps,
-        "splits": {"train": f"0:{len(all_episodes)}"},
+        "splits": {"train": f"0:{len(episodes)}"},
         "repo_id": repo_id,
         "shapes": {
             "observation.state": [state_dim],
             "action": [action_dim],
             **{f"observation.images.{ck}": [3, 480, 640] for ck in camera_keys},
         },
-        "names": {
-            "observation.state": _names,
-            "action": _names,
-        },
+        "names": {"observation.state": _names, "action": _names},
         "features": features,
         "camera_keys": [f"observation.images.{ck}" for ck in camera_keys],
         "video_keys":  [f"observation.images.{ck}" for ck in camera_keys],
@@ -409,29 +347,26 @@ def write_lerobot_dataset(
             "to":   [int(x) for x in np.cumsum(episode_lengths)],
         },
     }
-
     with open(meta_dir / "info.json", "w") as f:
         json.dump(info, f, indent=2)
-    print(f"Wrote {meta_dir / 'info.json'}")
 
-    # ── Write stats.json ──
+    # ── stats.json ──
     state_arr  = np.array([row["observation.state"] for row in all_rows], dtype=np.float32)
     action_arr = np.array([row["action"]            for row in all_rows], dtype=np.float32)
     ts_arr     = np.array([row["timestamp"]         for row in all_rows], dtype=np.float32)
 
     def _stats(arr):
         return {
-            "mean":  arr.mean(axis=0).tolist(),
-            "std":   arr.std(axis=0).clip(1e-6).tolist(),
-            "min":   arr.min(axis=0).tolist(),
-            "max":   arr.max(axis=0).tolist(),
+            "mean": arr.mean(axis=0).tolist(),
+            "std":  arr.std(axis=0).clip(1e-6).tolist(),
+            "min":  arr.min(axis=0).tolist(),
+            "max":  arr.max(axis=0).tolist(),
             "count": [int(len(arr))],
         }
 
-    img_mean = [[[0.5]], [[0.5]], [[0.5]]]
-    img_std  = [[[0.5]], [[0.5]], [[0.5]]]
-    img_min  = [[[0.0]], [[0.0]], [[0.0]]]
-    img_max  = [[[1.0]], [[1.0]], [[1.0]]]
+    img_placeholder = {"mean": [[[0.5]],[[0.5]],[[0.5]]], "std": [[[0.5]],[[0.5]],[[0.5]]],
+                        "min": [[[0.0]],[[0.0]],[[0.0]]], "max": [[[1.0]],[[1.0]],[[1.0]]],
+                        "count": [int(len(all_rows))]}
 
     stats = {
         "observation.state": _stats(state_arr),
@@ -439,45 +374,126 @@ def write_lerobot_dataset(
         "timestamp":         _stats(ts_arr.reshape(-1, 1)),
     }
     for ck in camera_keys:
-        key = f"observation.images.{ck}"
-        stats[key] = {
-            "mean":  img_mean,
-            "std":   img_std,
-            "min":   img_min,
-            "max":   img_max,
-            "count": [int(len(all_rows))],
-        }
+        stats[f"observation.images.{ck}"] = img_placeholder
 
     with open(meta_dir / "stats.json", "w") as f:
         json.dump(stats, f, indent=2)
-    print(f"Wrote {meta_dir / 'stats.json'}")
+
+    print(f"\n  [{label}] Dataset ready at: {output_dir}")
+    print(f"    Episodes: {len(episodes)}, Frames: {global_frame_idx}")
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def write_lerobot_dataset(
+    data_dirs: list,
+    task_names: list,
+    output_dir: str,
+    repo_id: str,
+    fps: int = 30,
+    camera_keys: list = None,
+    val_split: float = 0.0,
+    val_output_dir: str = None,
+    val_repo_id: str = None,
+    seed: int = 42,
+):
+    if camera_keys is None:
+        camera_keys = ["cam_high", "cam_left_wrist", "cam_right_wrist"]
+
+    assert len(data_dirs) == len(task_names), \
+        f"Mismatch: {len(data_dirs)} data_dirs but {len(task_names)} task_names"
+
+    # Collect all episodes
+    all_episodes = []
+    for task_idx, (data_dir, task_name) in enumerate(zip(data_dirs, task_names)):
+        pairs = find_episode_pairs(data_dir, camera_keys)
+        if not pairs:
+            print(f"WARNING: No episodes found in {data_dir} for task '{task_name}'")
+            continue
+        print(f"Task {task_idx} '{task_name}': {len(pairs)} episodes in {data_dir}")
+        for h5_path, mp4s in pairs:
+            all_episodes.append((h5_path, mp4s, task_idx))
+
+    if not all_episodes:
+        raise FileNotFoundError("No episodes found in any data directory")
+
+    print(f"\nTotal: {len(all_episodes)} episodes across {len(task_names)} tasks")
+
+    # Split into train/val
+    if val_split > 0.0:
+        if val_output_dir is None:
+            val_output_dir = str(Path(output_dir).parent / "val")
+        if val_repo_id is None:
+            val_repo_id = repo_id + "_val"
+
+        rng = np.random.default_rng(seed)
+
+        # Stratified split: maintain task distribution
+        train_episodes = []
+        val_episodes = []
+
+        for task_idx in range(len(task_names)):
+            task_eps = [(h5, mp4s, ti) for h5, mp4s, ti in all_episodes if ti == task_idx]
+            n_val = max(1, int(len(task_eps) * val_split))
+            indices = np.arange(len(task_eps))
+            rng.shuffle(indices)
+            val_indices = set(indices[:n_val])
+
+            for i, ep in enumerate(task_eps):
+                if i in val_indices:
+                    val_episodes.append(ep)
+                else:
+                    train_episodes.append(ep)
+
+        print(f"\nSplit: {len(train_episodes)} train, {len(val_episodes)} val "
+              f"({val_split*100:.0f}% val, stratified by task, seed={seed})")
+
+        for task_idx, task_name in enumerate(task_names):
+            n_train = sum(1 for _, _, ti in train_episodes if ti == task_idx)
+            n_val = sum(1 for _, _, ti in val_episodes if ti == task_idx)
+            print(f"  [{task_idx}] '{task_name}': {n_train} train, {n_val} val")
+
+        print(f"\n--- Writing train dataset ---")
+        _write_single_dataset(train_episodes, task_names, output_dir, repo_id, fps, camera_keys, "train")
+
+        print(f"\n--- Writing val dataset ---")
+        _write_single_dataset(val_episodes, task_names, val_output_dir, val_repo_id, fps, camera_keys, "val")
+
+    else:
+        print(f"\n--- Writing dataset (no val split) ---")
+        _write_single_dataset(all_episodes, task_names, output_dir, repo_id, fps, camera_keys, "all")
 
     # ── Summary ──
-    print(f"\nDataset ready at: {output_dir}")
-    print(f"  Episodes : {len(all_episodes)}")
-    print(f"  Frames   : {global_frame_idx}")
-    print(f"  Tasks    : {len(task_names)}")
-    for i, tn in enumerate(task_names):
-        count = sum(1 for _, _, ti in all_episodes if ti == i)
-        print(f"    [{i}] '{tn}' — {count} episodes")
-    print(f"  Format   : LeRobot v3.0")
+    print(f"\n{'='*60}")
+    print(f"Conversion complete!")
+    print(f"  Train: {output_dir}")
+    if val_split > 0.0:
+        print(f"  Val:   {val_output_dir}")
+    print(f"{'='*60}")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dirs",    nargs="+", required=True,
-                        help="One or more directories containing episode data")
-    parser.add_argument("--task_names",   nargs="+", required=True,
-                        help="Task name for each data_dir (same order)")
-    parser.add_argument("--output_dir",   required=True)
-    parser.add_argument("--repo_id",      required=True)
-    parser.add_argument("--fps",          type=int, default=30)
-    parser.add_argument("--camera_keys",  nargs="+",
+    parser.add_argument("--data_dirs",      nargs="+", required=True)
+    parser.add_argument("--task_names",     nargs="+", required=True)
+    parser.add_argument("--output_dir",     required=True)
+    parser.add_argument("--repo_id",        required=True)
+    parser.add_argument("--fps",            type=int, default=30)
+    parser.add_argument("--camera_keys",    nargs="+",
                         default=["cam_high", "cam_left_wrist", "cam_right_wrist"])
+    parser.add_argument("--val_split",      type=float, default=0.0,
+                        help="Fraction of episodes for validation (0 = no split)")
+    parser.add_argument("--val_output_dir", default=None,
+                        help="Output dir for val dataset (default: sibling of output_dir)")
+    parser.add_argument("--val_repo_id",    default=None,
+                        help="Repo ID for val dataset (default: repo_id + '_val')")
+    parser.add_argument("--seed",           type=int, default=42,
+                        help="Random seed for train/val split")
     args = parser.parse_args()
 
-    assert len(args.data_dirs) == len(args.task_names), \
-        f"Number of --data_dirs ({len(args.data_dirs)}) must match --task_names ({len(args.task_names)})"
+    assert len(args.data_dirs) == len(args.task_names)
 
     write_lerobot_dataset(
         data_dirs=args.data_dirs,
@@ -486,6 +502,10 @@ def main():
         repo_id=args.repo_id,
         fps=args.fps,
         camera_keys=args.camera_keys,
+        val_split=args.val_split,
+        val_output_dir=args.val_output_dir,
+        val_repo_id=args.val_repo_id,
+        seed=args.seed,
     )
 
 

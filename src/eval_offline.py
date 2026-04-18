@@ -3,12 +3,10 @@
 Offline evaluation: feed demo data into trained policy, compare predicted vs actual actions.
 
 Usage:
-    python eval_offline.py \
-        --checkpoint outputs/pi05_finetune_XXXXXXXX/checkpoints/003000/pretrained_model \
+    python src/eval_offline.py \
+        --checkpoint outputs/main/checkpoints/last/pretrained_model \
         --data_dirs data/raw/flask/put_in data/raw/flask/take_out \
         --task_names "put the flask in the incubator" "take the flask out of the incubator" \
-        --dataset_root data/train \
-        --repo_id yoikawa/flask_tasks \
         --num_episodes 5
 """
 
@@ -106,40 +104,72 @@ def find_episodes(data_dir):
 
 
 # ---------------------------------------------------------------------------
-# Policy + preprocessor loading
+# Policy + preprocessor loading (local checkpoint support)
 # ---------------------------------------------------------------------------
 
 def load_policy_and_processors(checkpoint_path, dataset_root, repo_id, device="cuda"):
-    """Load PI05 policy and its pre/post-processor pipelines."""
+    """Load PI05 policy and its pre/post-processor pipelines from a local checkpoint."""
     from lerobot.policies.pi05.modeling_pi05 import PI05Policy
-    from lerobot.policies.factory import make_pre_post_processors, make_policy_config
-    from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+    from lerobot.policies.pi05.configuration_pi05 import PI05Config
+    from lerobot.configs.types import FeatureType, PolicyFeature
+    from lerobot.processor.pipeline import PolicyProcessorPipeline
+    from safetensors.torch import load_file
 
     checkpoint_path = str(Path(checkpoint_path).resolve())
 
-    # Load policy
     print(f"  Loading policy from: {checkpoint_path}")
-    policy = PI05Policy.from_pretrained(checkpoint_path)
+
+    # Load config from local file
+    config_file = Path(checkpoint_path) / "config.json"
+    with open(config_file) as f:
+        config_dict = json.load(f)
+    config_dict.pop("type", None)
+
+    # Ensure compile_model is false for inference
+    config_dict["compile_model"] = False
+
+    # Convert input/output features from plain dicts to PolicyFeature objects
+    for feat_key in ["input_features", "output_features"]:
+        if feat_key in config_dict and isinstance(config_dict[feat_key], dict):
+            config_dict[feat_key] = {
+                k: PolicyFeature(type=FeatureType[v["type"]], shape=v["shape"])
+                for k, v in config_dict[feat_key].items()
+            }
+
+    config = PI05Config(**config_dict)
+
+    # Create model
+    policy = PI05Policy(config)
+
+    # Load weights
+    weights_file = Path(checkpoint_path) / "model.safetensors"
+    state_dict = load_file(str(weights_file))
+    print(f"  Loaded state dict from {weights_file.name}")
+
+    # Fix keys and add "model." prefix
+    fixed = policy._fix_pytorch_state_dict_keys(state_dict, config)
+    remapped = {}
+    for k, v in fixed.items():
+        new_key = f"model.{k}" if not k.startswith("model.") else k
+        remapped[new_key] = v
+
+    missing, unexpected = policy.load_state_dict(remapped, strict=False)
+    if missing:
+        print(f"  Warning: {len(missing)} missing keys")
+    if unexpected:
+        print(f"  Warning: {len(unexpected)} unexpected keys")
+    if not missing and not unexpected:
+        print("  All keys loaded successfully!")
+
     policy.to(device)
     policy.eval()
 
-    # Load config for preprocessor
-    config_path = Path(checkpoint_path) / "config.json"
-    with open(config_path) as f:
-        config_dict = json.load(f)
-    policy_type = config_dict.pop("type")
-    config = make_policy_config(policy_type, **config_dict)
-
-    # Load dataset stats for normalization
-    ds_meta = LeRobotDatasetMetadata(repo_id=repo_id, root=Path(dataset_root).resolve())
-    dataset_stats = {key: {k: torch.tensor(v) for k, v in val.items() if k != "count"}
-                     for key, val in ds_meta.stats.items()}
-
     # Load preprocessor and postprocessor from checkpoint
-    preprocessor, postprocessor = make_pre_post_processors(
-        config,
-        pretrained_path=checkpoint_path,
-        dataset_stats=dataset_stats,
+    preprocessor = PolicyProcessorPipeline.from_pretrained(
+        checkpoint_path, config_filename="policy_preprocessor.json"
+    )
+    postprocessor = PolicyProcessorPipeline.from_pretrained(
+        checkpoint_path, config_filename="policy_postprocessor.json"
     )
 
     return policy, preprocessor, postprocessor
@@ -193,6 +223,9 @@ def evaluate_episode(policy, preprocessor, postprocessor, episode_info, task_nam
         if left_frames and t < len(left_frames):
             img = left_frames[t].astype(np.float32) / 255.0
             raw_obs["observation.images.cam_left_wrist"] = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0)
+        else:
+            # Black image for missing left wrist camera (matches training)
+            raw_obs["observation.images.cam_left_wrist"] = torch.zeros(1, 3, 480, 640)
 
         if right_frames and t < len(right_frames):
             img = right_frames[t].astype(np.float32) / 255.0
@@ -210,7 +243,7 @@ def evaluate_episode(policy, preprocessor, postprocessor, episode_info, task_nam
                 pred_raw = policy.select_action(processed_obs)
 
                 # Postprocess (denormalize action back to original scale)
-                pred_denorm = postprocessor(pred_raw)
+                pred_denorm = postprocessor({"action": pred_raw})
                 if isinstance(pred_denorm, dict):
                     pred_action = pred_denorm["action"]
                 else:
@@ -224,7 +257,8 @@ def evaluate_episode(policy, preprocessor, postprocessor, episode_info, task_nam
             except Exception as e:
                 n_errors += 1
                 if n_errors <= 3:
-                    print(f"    Error at t={t}: {e}")
+                    import traceback
+                    traceback.print_exc()
                 continue
 
         gt = gt_action[t]
@@ -268,7 +302,7 @@ def main():
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--data_dirs", nargs="+", required=True)
     parser.add_argument("--task_names", nargs="+", required=True)
-    parser.add_argument("--dataset_root", default="data/train")
+    parser.add_argument("--dataset_root", default="data/train/new")
     parser.add_argument("--repo_id", default="yoikawa/flask_tasks")
     parser.add_argument("--num_episodes", type=int, default=5)
     parser.add_argument("--subsample", type=int, default=5)
@@ -285,6 +319,9 @@ def main():
         device=args.device,
     )
     print("  Ready\n")
+
+    all_task_errors = {k: [] for k in ["left_pos", "left_rot", "left_gripper",
+                                        "right_pos", "right_rot", "right_gripper", "total"]}
 
     for dir_idx, data_dir in enumerate(args.data_dirs):
         task_name = args.task_names[dir_idx]
@@ -309,8 +346,12 @@ def main():
             )
             for k in task_errors:
                 task_errors[k].extend(ep_errors.get(k, []))
+                all_task_errors[k].extend(ep_errors.get(k, []))
 
         print_summary(task_errors, label=f"[{task_name}]")
+
+    if len(args.data_dirs) > 1:
+        print_summary(all_task_errors, label="[ALL TASKS]")
 
     print("Done.")
 

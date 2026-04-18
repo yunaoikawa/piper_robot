@@ -857,9 +857,13 @@ class Pi05InferencePolicy:
                     if isinstance(action_chunk, torch.Tensor):
                         action_chunk = action_chunk.cpu().numpy()
 
-        # Transform to quaternion format if requested and we have current state
         if transform_to_quat:
             action_chunk = self._transform_rel_transform_to_quat_format(action_chunk)
+
+
+
+
+
 
         return action_chunk
 
