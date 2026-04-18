@@ -16,3 +16,4 @@ inference_outcome/
 *.zip
 test/
 *.swp
+tmp/
