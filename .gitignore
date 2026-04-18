@@ -17,3 +17,5 @@ inference_outcome/
 test/
 *.swp
 tmp/
+tmp/
+archive/
