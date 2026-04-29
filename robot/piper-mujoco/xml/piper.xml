@@ -111,8 +111,10 @@
     <mesh name="link3" file="link3.stl"/>
     <mesh name="link4" file="link4.stl"/>
     <mesh name="link5" file="link5.stl"/>
-    <!-- gripper and phone meshes (paths relative to meshdir) -->
     <mesh name="gripper_body" file="../../../mjcf/meshes/piper/gripper_body.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="gripper_housing" file="../../../mjcf/meshes/piper/gripper_housing.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="gripper_upper" file="../../../mjcf/meshes/piper/gripper_upper.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="gripper_lower" file="../../../mjcf/meshes/piper/gripper_lower.stl" scale="0.001 0.001 0.001"/>
     <mesh name="iphone" file="../../../mjcf/meshes/piper/iphone.stl" scale="0.001 0.001 0.001"/>
   </asset>
 
@@ -223,25 +225,38 @@
                 <geom mesh="link5" class="collision"/>
 
                 <body name="link6_mount" pos="0 0.091 0.0014165" quat="0 0 -0.707105 -0.707108" gravcomp="1">
-
-                  <!-- 必要ならここに inertial を追加 -->
                   <body name="gripper_base" gravcomp="1">
-
-                    <!-- gripper の向き調整 -->
                     <body name="gripper" euler="0 0 0" gravcomp="1">
                       <body name="gripper_align" pos="0 0 0" euler="0 1.5708 0" gravcomp="1">
                         <inertial pos="-0.000183807 8.05033e-05 0.0321437"
                           quat="0.999976 9.08444e-05 0.00689649 0.000788512"
                           mass="0.45"
                           diaginertia="0.000929442 0.000714469 0.000394318"/>
+                        <!-- Fixed housing -->
+                        <geom mesh="gripper_housing" class="visual" material="light_blue" euler="3.14159265359 0 0"/>
+                        <geom mesh="gripper_housing" class="collision_gripper" euler="3.14159265359 0 0"/>
 
-                        <geom mesh="gripper_body" class="visual" material="white" euler="3.14159265359 0 0"/>
-                        <geom mesh="gripper_body" class="collision_gripper" euler="3.14159265359 0 0"/>
+                        <!-- Upper blade (opens in +rot) -->
+                        <body name="upper_jaw" pos="-0.0308 -0.0051 -0.0302" gravcomp="1">
+                          <joint name="upper_jaw_joint" type="hinge" axis="0 0 1" range="0 0.99" ref="0.66" damping="2" stiffness="50" springref="0" frictionloss="0.5" armature="0.01"/>
+                          <geom mesh="gripper_upper" class="visual" material="light_blue"
+                                euler="3.14159265359 0 0" pos="0.0308 0.0051 0.0302"/>
+                          <geom mesh="gripper_upper" class="collision_gripper"
+                                euler="3.14159265359 0 0" pos="0.0308 0.0051 0.0302"/>
+                        </body>
+
+                        <!-- Lower blade (opens in -rot, coupled to upper) -->
+                        <body name="lower_jaw" pos="-0.0314 -0.0321 -0.0275" gravcomp="1">
+                          <joint name="lower_jaw_joint" type="hinge" axis="0 0 1" range="-0.99 0" ref="-0.66" damping="2" stiffness="50" springref="0" frictionloss="0.5" armature="0.01"/>
+                          <geom mesh="gripper_lower" class="visual" material="light_blue"
+                                euler="3.14159265359 0 0" pos="0.0314 0.0321 0.0275"/>
+                          <geom mesh="gripper_lower" class="collision_gripper"
+                                euler="3.14159265359 0 0" pos="0.0314 0.0321 0.0275"/>
+                        </body>
 
                         <body name="iphone_body" pos="-0.0075 -0.015 -0.017" euler="3.14159265359 0 1.5708" gravcomp="1">
                           <geom mesh="iphone" class="visual" material="gray"/>
                           <geom mesh="iphone" class="collision"/>
-
                           <body name="camera_body" pos="0.0 -0.036 0.1"
                             euler="-0.2617993878 3.14159265359 0.0" gravcomp="1">
                             <site name="ee" pos="0.0 0.0 0.0"/>
@@ -265,15 +280,20 @@
     <exclude body1="base_link" body2="link1"/>
   </contact>
 
+  <equality>
+    <joint joint1="upper_jaw_joint" joint2="lower_jaw_joint" polycoef="0 -1 0 0 0"/>
+  </equality>
+
   <actuator>
     <position name="joint1" joint="joint1" class="piper" kp="80" kv="5"/>
     <position name="joint2" joint="joint2" class="piper" kp="80" kv="5"/>
     <position name="joint3" joint="joint3" class="piper" kp="80" kv="5"/>
     <position name="joint4" joint="joint4" class="piper" kp="40" kv="5"/>
     <position name="joint5" joint="joint5" class="piper" kp="10" kv="1.5"/>
+    <position name="gripper" joint="upper_jaw_joint" class="piper" kp="100" kv="10"/>
   </actuator>
 
   <keyframe>
-    <key name="home" qpos="0 1.57 -1.3485 0 0" ctrl="0 1.57 -1.3485 0 0"/>
+    <key name="home" qpos="0 1.57 -1.3485 0 0 0 0" ctrl="0 1.57 -1.3485 0 0 0"/>
   </keyframe>
 </mujoco>
