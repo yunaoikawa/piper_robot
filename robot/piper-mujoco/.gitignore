@@ -3,3 +3,4 @@ mujoco-env/
 .env
 .envrc
 mujoco_menagerie/
+.DS_Store
