@@ -1,6 +1,7 @@
 env:
-  n_substeps: 5          # MuJoCo substeps per RL step
-  max_episode_steps: 500 # steps before truncation
+  n_substeps: 5          # MuJoCo substeps per RL step (physical time = n_substeps × 0.002 s)
+  max_episode_steps: 500 # steps before truncation (episode length = max_episode_steps × n_substeps × 0.002 s)
+  action_scale: [0.05, 0.05, 0.05, 0.05, 0.05, 0.02]  # max Δctrl per step [rad] for [j1,j2,j3,j4,j5,gripper]
 
 agent:
   lr: 3.0e-4

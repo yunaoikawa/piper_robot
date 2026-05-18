@@ -86,11 +86,17 @@ class PiperLabEnv:
         self,
         max_episode_steps: int = 500,
         n_substeps: int = 5,
+        action_scale: np.ndarray | None = None,
     ) -> None:
         self.model = mujoco.MjModel.from_xml_path(str(XML_PATH))
         self.data = mujoco.MjData(self.model)
         self.max_episode_steps = max_episode_steps
         self.n_substeps = n_substeps
+        self.action_scale = (
+            np.array(action_scale, dtype=np.float32)
+            if action_scale is not None
+            else ACTION_SCALE.copy()
+        )
         self._step_count: int = 0
 
         # Cache IDs for fast lookup
@@ -130,7 +136,7 @@ class PiperLabEnv:
         self, action: np.ndarray
     ) -> tuple[np.ndarray, float, bool, bool, dict]:
         # Δctrl: scale and clip to joint limits
-        delta = np.clip(action, -1.0, 1.0).astype(np.float32) * ACTION_SCALE
+        delta = np.clip(action, -1.0, 1.0).astype(np.float32) * self.action_scale
         self.data.ctrl[:] = np.clip(
             self.data.ctrl[:] + delta,
             CTRL_LIMITS[:, 0],

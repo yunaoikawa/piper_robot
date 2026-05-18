@@ -48,6 +48,7 @@ def main() -> None:
     env = PiperLabEnv(
         max_episode_steps=env_cfg["max_episode_steps"],
         n_substeps=env_cfg["n_substeps"],
+        action_scale=env_cfg.get("action_scale"),
     )
     agent = A2C(env.obs_dim, env.act_dim, agent_cfg)
 
