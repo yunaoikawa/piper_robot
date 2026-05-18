@@ -293,7 +293,4 @@
     <position name="gripper" joint="upper_jaw_joint" class="piper" kp="100" kv="10"/>
   </actuator>
 
-  <keyframe>
-    <key name="home" qpos="0 1.57 -1.3485 0 0 0.99 -0.99" ctrl="0 1.57 -1.3485 0 0 0.99"/>
-  </keyframe>
 </mujoco>
