@@ -8,7 +8,7 @@ class EpisodeManager:
     """Manages episode state and autonomous control logic."""
 
     def __init__(self, recorder=None, robot_rpc=None, control_socket=None,
-                 autonomous_mode=False, episode_timeout=60.0,
+                 autonomous_mode=False, episode_timeout=500.0,
                  manipulability_threshold=0.05, auto_start_delay=10.0):
         """
         Initialize episode manager.

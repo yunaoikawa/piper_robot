@@ -41,7 +41,7 @@ class PolicyController:
 
     def __init__(self, hpc_host="192.168.1.50", obs_port=5555, action_port=5556,
                  enable_recording=False, save_dir=None, autonomous_mode=False,
-                 episode_timeout=60.0, manipulability_threshold=0.05,
+                 episode_timeout=600.0, manipulability_threshold=0.05,
                  task=DEFAULT_TASK):
         self.stop_event = threading.Event()
         self.policy_active = False
@@ -101,7 +101,7 @@ class PolicyController:
         )
         self.left_wrist_camera.start()
 
-        # Link wrist camera to head camera display (single display thread)
+        # Link wrist cameras to head camera display (single display thread)
         self.camera.wrist_camera = self.right_wrist_camera
         self.camera.left_wrist_camera = self.left_wrist_camera
 
@@ -218,7 +218,7 @@ class PolicyController:
                 "cam_left_wrist": left_wrist_frame if left_wrist_frame is not None else np.zeros((480, 640, 3), dtype=np.uint8),
                 "cam_right_wrist": right_wrist_frame if right_wrist_frame is not None else np.zeros((480, 640, 3), dtype=np.uint8),
             },
-            "depth": depth_frame if depth_frame is not None else np.zeros((480, 640), dtype=np.float32),
+            "depth": None,
             "timestamp": timestamp,
             "rgb_timestamp": rgb_timestamp,
             "task": self.task,
@@ -235,7 +235,7 @@ class PolicyController:
                 left_gripper=left_gripper_binary,
                 right_gripper=right_gripper_binary,
                 rgb_frame=self.camera.latest_rgb_frame.copy() if self.camera.latest_rgb_frame is not None else None,
-                depth_frame=self.camera.latest_depth_frame.copy() if self.camera.latest_depth_frame is not None else None,
+                depth_frame=None,
                 rgb_timestamp=rgb_timestamp,
                 left_joint_positions=left_joint_positions,
                 right_joint_positions=right_joint_positions,
@@ -377,7 +377,7 @@ class PolicyController:
         R_target = X_Rdelta.rotation() @ starting_pose.rotation()
 
         ee_distance = np.linalg.norm(X_Rdelta.translation())
-        preview_time = np.clip(ee_distance / 0.5, 0.01, 0.5)
+        preview_time = 0.5
 
         target_pose = mink.SE3(np.concatenate([R_target.wxyz, p_target]))
 
@@ -397,7 +397,7 @@ class PolicyController:
         R_target = X_Rtarget.rotation()
 
         ee_distance = np.linalg.norm(p_target - starting_pose.translation())
-        preview_time = np.clip(ee_distance / 0.5, 0.01, 0.5)
+        preview_time = 0.5
 
         set_target_fn(
             ee_target=mink.SE3(np.concatenate([R_target.wxyz, p_target])),

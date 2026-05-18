@@ -23,6 +23,11 @@
           friction="1 0.01 0.01" />
         <equality solimp="0.99 0.999 1e-05" solref="0.005 1" />
       </default>
+      <default class="robot_collision">
+        <geom type="capsule" condim="3" contype="1" conaffinity="3" priority="1" group="3" solref="0.005 1"
+          friction="1 0.01 0.01" />
+        <equality solimp="0.99 0.999 1e-05" solref="0.005 1" />
+      </default>
       <default class="wheel">
         <!-- 4 is friction that opposes rotation around the contact normal -->
         <geom type="mesh" condim="4" contype="0" conaffinity="1" priority="1" group="3" solref="0.005 1"
@@ -40,7 +45,7 @@
       <joint frictionloss="0.3" armature="0.005" />
       <position inheritrange="1" forcerange="-100 100" />
       <default class="collision_gripper">
-        <geom type="mesh" group="3" friction="2 0.005 0.0001" density="100" />
+        <geom type="mesh" contype="1" conaffinity="3" group="3" friction="2 0.005 0.0001" density="100" />
       </default>
     </default>
   </default>
@@ -90,6 +95,45 @@
   </asset>
 
   <worldbody>
+    <geom name="virtual_z_min_boundary" 
+      type="plane" 
+      pos="0 0 0.64" 
+      size="5 5 0.1" 
+      rgba="0 0 0 0"
+      contype="2" 
+      conaffinity="1" />
+    <geom name="virtual_x_max_boundary"
+      type="plane"
+      pos="0.85 0 0"           
+      zaxis="-1 0 0"          
+      size="5 5 0.1"          
+      rgba="0 0 0 0"          
+      contype="2"             
+      conaffinity="1" />
+    <geom name="virtual_x_min_boundary"
+      type="plane"
+      pos="-0.5 0 0"           
+      zaxis="1 0 0"          
+      size="5 5 0.1"          
+      rgba="0 0 0 0"          
+      contype="2"             
+      conaffinity="1" />
+    <geom name="virtual_y_max_boundary"
+      type="plane"
+      pos="0 0.49 0"           
+      zaxis="0 -1 0"          
+      size="5 5 0.1"          
+      rgba="0 0 0 0"          
+      contype="2"             
+      conaffinity="1" />
+    <geom name="virtual_y_min_boundary"
+      type="plane"
+      pos="0 -0.93 0"           
+      zaxis="0 1 0"          
+      size="5 5 0.1"          
+      rgba="0 0 0 0"          
+      contype="2"             
+      conaffinity="1" />
     <body name="base" pos="0.00000000 0.00000000 0.10477502" euler="0 1.57 0" childclass="robot">
       <!-- <freejoint name="floating_base" /> -->
       <geom name="base_visual" pos="0 0 0" quat="1.0 0.0 0.0 0.0" material="base_material"
@@ -209,28 +253,28 @@
                   quat="0.70428 0.034288 0.0339756 0.708279" mass="1.02"
                   diaginertia="0.00282612 0.00269117 0.000879394" />
                 <geom class="visual" mesh="link0" material="light_medium_gray_mat" />
-                <geom class="collision" mesh="link0" />
+                <geom name="left_arm_link0_collision" class="robot_collision" mesh="link0" />
                 <body name="left_arm_link1" pos="0 0 0.123" gravcomp="1">
                   <inertial pos="0.000121505 0.000104632 -0.00438597"
                     quat="0.682111 0.730899 0.0143111 -0.0175062" mass="0.71"
                     diaginertia="0.000489262 0.000439887 0.000404551" />
                   <joint name="left_arm_joint1" pos="0 0 0" axis="0 0 1" range="-2.61 2.61" />
                   <geom class="visual" mesh="link1" material="gray_mat" />
-                  <geom class="collision" mesh="link1" />
+                  <geom name="left_arm_link1_collision" class="robot_collision" mesh="link1" />
                   <body name="left_arm_link2" quat="0.0480084 -0.0480134 -0.705476 -0.705474" gravcomp="1">
                     <inertial pos="0.198666 -0.0109269 0.00142122"
                       quat="0.510131 0.475585 0.525075 0.48773" mass="1.17"
                       diaginertia="0.0679032 0.067745 0.00111966" />
                     <joint name="left_arm_joint2" axis="0 0 1" range="0 3.13" />
                     <geom class="visual" mesh="link2" material="light_medium_gray_mat" />
-                    <geom class="collision" mesh="link2" />
+                    <geom name="left_arm_link2_collision" class="robot_collision" mesh="link2" />
                     <body name="left_arm_link3" pos="0.28503 0 0" quat="0.623996 0 0 -0.781427" gravcomp="1">
                       <inertial pos="-0.0202738 -0.133915 -0.000458683"
                         quat="0.706282 0.705111 0.0532202 0.0339395" mass="0.5"
                         diaginertia="0.0138227 0.0138032 0.000244685" />
                       <joint name="left_arm_joint3" axis="0 0 1" range="-2.965 0" />
                       <geom class="visual" mesh="link3" material="gray_mat" />
-                      <geom class="collision" mesh="link3" />
+                      <geom name="left_arm_link3_collision" class="robot_collision" mesh="link3" />
                       <body name="left_arm_link4" pos="-0.021984 -0.25075 0" quat="0.707105 0.707108 0 0"
                         gravcomp="1">
                         <inertial pos="-9.66636e-05 0.000876064 -0.00496881"
@@ -239,14 +283,14 @@
                         <joint name="left_arm_joint4" axis="0 0 1" range="-1.74 1.74" />
                         <geom class="visual" mesh="link4"
                           material="light_medium_gray_mat" />
-                        <geom class="collision" mesh="link4" />
+                        <geom name="left_arm_link4_collision" class="robot_collision" mesh="link4" />
                         <body name="left_arm_link5" quat="0.707105 -0.707108 0 0" gravcomp="1">
                           <inertial pos="-4.10554e-05 -0.0566487 -0.00372058"
                             quat="0.709589 0.704614 0.00134613 -0.00132656" mass="0.383"
                             diaginertia="0.00166169 0.00164328 0.000185028" />
                           <joint name="left_arm_joint5" axis="0 0 1" range="-1.2 1.2" />
                           <geom class="visual" mesh="link5" material="gray_mat" />
-                          <geom class="collision" mesh="link5" />
+                          <geom name="left_arm_link5_collision" class="robot_collision" mesh="link5" />
                           <body name="left_arm_link6" pos="8.8259e-05 -0.091 0"
                             quat="0.707105 0.707108 0 0" gravcomp="1">
                             <inertial pos="-8.82591e-05 9.05984e-06 -0.002"
@@ -255,7 +299,7 @@
                             <joint name="left_arm_joint6" axis="0 0 1" range="-3 3" />
                             <geom class="visual" mesh="link6"
                               material="light_medium_gray_mat" />
-                            <geom class="collision" mesh="link6" />
+                            <geom name="left_arm_link6_collision" class="robot_collision" mesh="link6" />
                             <site name="left_arm_ee" pos="0.0 0.0 0.0" euler="0 -1.57 0" />
                             <!-- 7.8mm -->
                             <body name="left_arm_gripper_base" pos="0.0275 0.01875 0.0798"
@@ -265,7 +309,7 @@
                                 mass="0.45"
                                 diaginertia="0.000929442 0.000714469 0.000394318" />
                               <geom mesh="gripper_body" class="visual" material="white" />
-                              <geom mesh="gripper_body" class="collision_gripper" />
+                              <geom name="left_gripper_collision" mesh="gripper_body" class="collision_gripper" />
 
                               <body name="left_arm_iphone_body" pos="-0.0075 0.015 0.017" euler="0 0 1.57"
                                 gravcomp="1">
@@ -293,28 +337,28 @@
                 quat="0.70428 0.034288 0.0339756 0.708279" mass="1.02"
                 diaginertia="0.00282612 0.00269117 0.000879394" />
               <geom class="visual" mesh="link0" material="light_medium_gray_mat" />
-              <geom class="collision" mesh="link0" />
+              <geom name="right_arm_link0_collision" class="robot_collision" mesh="link0" />
               <body name="right_arm_link1" pos="0 0 0.123" gravcomp="1">
                 <inertial pos="0.000121505 0.000104632 -0.00438597"
                   quat="0.682111 0.730899 0.0143111 -0.0175062" mass="0.71"
                   diaginertia="0.000489262 0.000439887 0.000404551" />
                 <joint name="right_arm_joint1" pos="0 0 0" axis="0 0 1" range="-2.61 2.61" />
                 <geom class="visual" mesh="link1" material="gray_mat" />
-                <geom class="collision" mesh="link1" />
+                <geom name="right_arm_link1_collision" class="robot_collision" mesh="link1" />
                 <body name="right_arm_link2" quat="0.0480084 -0.0480134 -0.705476 -0.705474" gravcomp="1">
                   <inertial pos="0.198666 -0.0109269 0.00142122"
                     quat="0.510131 0.475585 0.525075 0.48773" mass="1.17"
                     diaginertia="0.0679032 0.067745 0.00111966" />
                   <joint name="right_arm_joint2" axis="0 0 1" range="0 3.13" />
                   <geom class="visual" mesh="link2" material="light_medium_gray_mat" />
-                  <geom class="collision" mesh="link2" />
+                  <geom name="right_arm_link2_collision" class="robot_collision" mesh="link2" />
                   <body name="right_arm_link3" pos="0.28503 0 0" quat="0.623996 0 0 -0.781427" gravcomp="1">
                     <inertial pos="-0.0202738 -0.133915 -0.000458683"
                       quat="0.706282 0.705111 0.0532202 0.0339395" mass="0.5"
                       diaginertia="0.0138227 0.0138032 0.000244685" />
                     <joint name="right_arm_joint3" axis="0 0 1" range="-2.965 0" />
                     <geom class="visual" mesh="link3" material="gray_mat" />
-                    <geom class="collision" mesh="link3" />
+                    <geom name="right_arm_link3_collision" class="robot_collision" mesh="link3" />
                     <body name="right_arm_link4" pos="-0.021984 -0.25075 0" quat="0.707105 0.707108 0 0"
                       gravcomp="1">
                       <inertial pos="-9.66636e-05 0.000876064 -0.00496881"
@@ -323,14 +367,14 @@
                       <joint name="right_arm_joint4" axis="0 0 1" range="-1.74 1.74" />
                       <geom class="visual" mesh="link4"
                         material="light_medium_gray_mat" />
-                      <geom class="collision" mesh="link4" />
+                      <geom name="right_arm_link4_collision" class="robot_collision" mesh="link4" />
                       <body name="right_arm_link5" quat="0.707105 -0.707108 0 0" gravcomp="1">
                         <inertial pos="-4.10554e-05 -0.0566487 -0.00372058"
                           quat="0.709589 0.704614 0.00134613 -0.00132656" mass="0.383"
                           diaginertia="0.00166169 0.00164328 0.000185028" />
                         <joint name="right_arm_joint5" axis="0 0 1" range="-1.2 1.2" />
                         <geom class="visual" mesh="link5" material="gray_mat" />
-                        <geom class="collision" mesh="link5" />
+                        <geom name="right_arm_link5_collision" class="robot_collision" mesh="link5" />
                         <body name="right_arm_link6" pos="8.8259e-05 -0.091 0"
                           quat="0.707105 0.707108 0 0" gravcomp="1">
                           <inertial pos="-8.82591e-05 9.05984e-06 -0.002"
@@ -339,7 +383,7 @@
                           <joint name="right_arm_joint6" axis="0 0 1" range="-3 3" />
                           <geom class="visual" mesh="link6"
                             material="light_medium_gray_mat" />
-                          <geom class="collision" mesh="link6" />
+                          <geom name="right_arm_link6_collision" class="robot_collision" mesh="link6" />
                           <site name="right_arm_ee" pos="0.0 0.0 0.0" euler="0 -1.57 0" />
                           <!-- 7.8mm -->
                           <body name="right_arm_gripper_base" pos="0.0275 0.01875 0.0798"
@@ -349,7 +393,7 @@
                               mass="0.45"
                               diaginertia="0.000929442 0.000714469 0.000394318" />
                             <geom mesh="gripper_body" class="visual" material="white" />
-                            <geom mesh="gripper_body" class="collision_gripper" />
+                            <geom name="right_gripper_collision" mesh="gripper_body" class="collision_gripper" />
 
                             <body name="right_arm_iphone_body" pos="-0.0075 0.015 0.017" euler="0 0 1.57"
                               gravcomp="1">

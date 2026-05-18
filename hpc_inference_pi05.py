@@ -208,11 +208,11 @@ class InferenceServer:
                 while self.obs_socket.poll(timeout=0):
                     # print("polling for obs succeeded...", flush=True)
                     observation = self.obs_socket.recv_pyobj(flags=zmq.NOBLOCK)
-                    if observation is not None and self.action_buffer.is_empty:
+                    if observation is not None:
                         with self.stats_lock:
                             self.stats['observations_received'] += 1
                             print(f"Received observation #{self.stats['observations_received']}", flush=True)
-                if observation is not None and self.action_buffer.is_empty:
+                if observation is not None and self.action_buffer.is_empty: # TODO remove is_empty check if temporal ensembling
                     # Run inference
                     print("--calling inference--", flush=True)
                     start_time = time.time()
@@ -428,7 +428,7 @@ class InferenceServer:
                     'chunk_index': t
                 }
 
-                if observation is not None and self.action_buffer.is_empty:
+                if observation is not None:
                     action['obs_timestamp'] = observation.get('timestamp', None)
 
                 action_chunk.append(action)
@@ -445,7 +445,7 @@ class InferenceServer:
                     'chunk_index': t
                 }
 
-                if observation is not None and self.action_buffer.is_empty:
+                if observation is not None:
                     action['obs_timestamp'] = observation.get('timestamp', None)
 
                 action_chunk.append(action)
@@ -578,7 +578,6 @@ def load_policy_model(checkpoint_path, chunk_size, args, device='cuda'):
     """
     # Load policy with async RTC parameters
     policy = Pi05InferencePolicy(
-        is_delta_action=False,
         checkpoint_path=checkpoint_path,
         device="cuda",
         primary_camera='cam_high',

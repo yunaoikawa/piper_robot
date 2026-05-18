@@ -32,11 +32,13 @@ ADDR_PRESENT_POSITION = 132
 
 TORQUE_ENABLE = 1
 TORQUE_DISABLE = 0
-OPERATING_MODE_POSITION = 3
+OPERATING_MODE_POSITION = 4
 
 # ⚠️ CHANGE THESE FOR YOUR GRIPPER
-DXL_POS_OPEN = 2800
-DXL_POS_CLOSE = 0
+DXL_POS_RIGHT_OPEN = 2800
+DXL_POS_RIGHT_CLOSE = 6300
+DXL_POS_LEFT_CLOSE = 3000
+DXL_POS_LEFT_OPEN = 7000
 
 # Servo IDs
 DXL_ID_RIGHT = 1
@@ -69,62 +71,55 @@ class _SharedDynamixelPort:
 # =========================
 class DynamixelGripper:
     def __init__(self, dxl_id: int = DXL_ID_RIGHT, inverted: bool = False):
-        """
-        Args:
-            dxl_id: Dynamixel servo ID
-            inverted: If True, motor direction is reversed (left gripper)
-                      ratio 1.0 (open) sends DXL_POS_CLOSE, ratio 0.0 (closed) sends DXL_POS_OPEN
-        """
+        import struct as _struct
+        import time as _time
+
         self.dxl_id = dxl_id
         self.inverted = inverted
+
+        # 1. Get shared port
         self.port, self.packet = _SharedDynamixelPort.get()
 
-        # Disable torque before changing settings
-        self.packet.write1ByteTxRx(
-            self.port, self.dxl_id, ADDR_TORQUE_ENABLE, TORQUE_DISABLE
-        )
+        # 2. Reboot right servo only (left uses fixed values, no reboot needed)
+        if self.dxl_id != DXL_ID_LEFT:
+            self.packet.reboot(self.port, self.dxl_id)
+            _time.sleep(1.5)
 
-        # Explicitly set Position Control Mode (mode 3)
-        dxl_comm_result, dxl_error = self.packet.write1ByteTxRx(
-            self.port, self.dxl_id, ADDR_OPERATING_MODE, OPERATING_MODE_POSITION
-        )
-        if dxl_comm_result != COMM_SUCCESS:
-            raise RuntimeError(f"Failed to set Position Control Mode for ID={self.dxl_id}")
+        # 3. Disable torque, set mode, enable torque
+        self.packet.write1ByteTxRx(self.port, self.dxl_id, ADDR_TORQUE_ENABLE, TORQUE_DISABLE)
+        self.packet.write1ByteTxRx(self.port, self.dxl_id, ADDR_OPERATING_MODE, OPERATING_MODE_POSITION)
+        self.packet.write1ByteTxRx(self.port, self.dxl_id, ADDR_TORQUE_ENABLE, TORQUE_ENABLE)
+        self.packet.write2ByteTxRx(self.port, self.dxl_id, 38, 300)
 
-        # Enable torque
-        dxl_comm_result, dxl_error = self.packet.write1ByteTxRx(
-            self.port, self.dxl_id, ADDR_TORQUE_ENABLE, TORQUE_ENABLE
-        )
-        if dxl_comm_result != COMM_SUCCESS:
-            raise RuntimeError(f"Failed to enable Dynamixel torque for ID={self.dxl_id}")
+        # 4. Set open/close positions
+        if self.dxl_id == DXL_ID_LEFT:
+            self.pos_open = DXL_POS_LEFT_OPEN
+            self.pos_close = DXL_POS_LEFT_CLOSE
+        else:
+            self.pos_open = DXL_POS_RIGHT_OPEN
+            self.pos_close = DXL_POS_RIGHT_CLOSE
 
-        # Set Profile Velocity to 0 (maximum speed)
-        self.packet.write4ByteTxRx(
-            self.port, self.dxl_id, ADDR_PROFILE_VELOCITY, 0
-        )
-
-        inv_str = " (inverted)" if self.inverted else ""
-        print(f"[Gripper] Dynamixel ID={self.dxl_id} initialized (Position Control Mode, max speed){inv_str}")
+        print(f"[Gripper] Dynamixel ID={self.dxl_id} initialized")
 
     def set_open_ratio(self, ratio: float):
         """ratio: 0.0 = fully closed, 1.0 = fully open"""
         ratio = float(np.clip(ratio, 0.0, 1.0))
-        if self.inverted:
-            ratio = 1.0 - ratio
-        pos = int(DXL_POS_CLOSE + ratio * (DXL_POS_OPEN - DXL_POS_CLOSE))
+        pos = int(self.pos_close + ratio * (self.pos_open - self.pos_close))
+        import struct
+        unsigned = struct.unpack('I', struct.pack('i', pos))[0]
         self.packet.write4ByteTxRx(
-            self.port, self.dxl_id, ADDR_GOAL_POSITION, pos
+            self.port, self.dxl_id, ADDR_GOAL_POSITION, unsigned
         )
 
     def get_open_ratio(self) -> float:
         """Read current position as open ratio (0.0=closed, 1.0=open)."""
-        pos, _, _ = self.packet.read4ByteTxRx(
+        raw, _, _ = self.packet.read4ByteTxRx(
             self.port, self.dxl_id, ADDR_PRESENT_POSITION
         )
-        ratio = (pos - DXL_POS_CLOSE) / (DXL_POS_OPEN - DXL_POS_CLOSE)
+        import struct
+        pos = struct.unpack("i", struct.pack("I", raw))[0]
+        ratio = (pos - self.pos_close) / (self.pos_open - self.pos_close)
         ratio = float(max(0.0, min(1.0, ratio)))
-        if self.inverted:
-            ratio = 1.0 - ratio
         return ratio
 
     def close(self):
@@ -188,7 +183,7 @@ class ArmNode:
         # ----- Dynamixel gripper (optional) -----
         if use_gripper:
             if is_left_arm:
-                self.gripper = DynamixelGripper(dxl_id=DXL_ID_LEFT, inverted=True)
+                self.gripper = DynamixelGripper(dxl_id=DXL_ID_LEFT, inverted=False)
             else:
                 self.gripper = DynamixelGripper(dxl_id=DXL_ID_RIGHT, inverted=False)
         else:
