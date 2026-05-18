@@ -1,16 +1,13 @@
 <mujoco model="lab_scene">
   <!--
-    Dual-arm lab scene:
+    Single-arm lab scene:
     - Table: 110cm width (Y) x 140cm depth (X)
     - Right piper (piper.xml): at origin, 42cm from right white wall
-    - Left piper (piper_left.xml): 25cm to the left of right piper
-    - Both pipers at back edge of table
     - Incubator: 70cm in front of right piper
     - Black wall on left, white walls on front and right
   -->
 
   <include file="piper.xml"/>
-  <include file="piper_left.xml"/>
 
   <statistic center="0.5 0.13 0.25" extent="0.8" meansize="0.04"/>
 
@@ -158,12 +155,10 @@
             xyaxes="1 0 0 0 0.3 0.95" fovy="55" mode="fixed"/>
   </worldbody>
 
-  <!-- Both arms extended, flask on table -->
+  <!-- Arm extended, flask on table -->
   <keyframe>
     <key name="lab_home" qpos="0 0.85 -0.35 0 -0.9 0.99 -0.99
-                                0 0.85 -0.35 0 -0.9 0.99 -0.99
                                 0.30 -0.05 0.0 1 0 0 0"
-                         ctrl="0 0.85 -0.35 0 -0.9 0.99
-                               0 0.85 -0.35 0 -0.9 0.99"/>
+                         ctrl="0 0.85 -0.35 0 -0.9 0.99"/>
   </keyframe>
 </mujoco>
