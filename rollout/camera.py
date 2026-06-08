@@ -59,7 +59,7 @@ class CameraFeedManager:
             print("WARNING: No iPhone devices found. RGB recording disabled.")
             return
 
-        dev = devs[0]
+        dev = devs[1]
         self.session = Record3DStream()
         self.session.on_new_frame = self._on_new_frame
         self.session.on_stream_stopped = lambda: print('iPhone stream stopped')

@@ -91,7 +91,7 @@ class PolicyController:
 
         # Right wrist camera (device 1)
         self.right_wrist_camera = USBWristCameraFeedManager(
-            self.stop_event, device_index=1, label="right wrist"
+            self.stop_event, device_index=0, label="right wrist"
         )
         self.right_wrist_camera.start()
 

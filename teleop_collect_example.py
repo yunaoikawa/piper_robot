@@ -51,7 +51,7 @@ VR_CONTROLLER_TOPIC = b"oculus_controller"
 CONTROL_FREQ = 30
 DATA_DIR = Path("./teleop_demonstrations")
 
-CAMERA_LABELS = ["head", "right", "left"]
+CAMERA_LABELS = ["right", "head", "left"]
 
 RecordingSample = namedtuple("RecordingSample", [
     "timestamp",

@@ -1,4 +1,6 @@
 import time
+import struct
+import json
 import numpy as np
 from typing import Optional
 from pathlib import Path
@@ -34,22 +36,16 @@ TORQUE_ENABLE = 1
 TORQUE_DISABLE = 0
 OPERATING_MODE_POSITION = 4
 
-# ⚠️ CHANGE THESE FOR YOUR GRIPPER
 DXL_POS_RIGHT_OPEN = 2800
 DXL_POS_RIGHT_CLOSE = 6300
-DXL_POS_LEFT_CLOSE = 3000
-DXL_POS_LEFT_OPEN = 7000
 
-# Servo IDs
 DXL_ID_RIGHT = 1
 DXL_ID_LEFT = 2
 
+LEFT_CAL_FILE = Path(__file__).parent / "left_gripper_cal.json"
 
-# =========================
-# Shared Dynamixel port (singleton)
-# =========================
+
 class _SharedDynamixelPort:
-    """Singleton to share a single U2D2 port between two grippers."""
     _instance = None
 
     @classmethod
@@ -66,61 +62,61 @@ class _SharedDynamixelPort:
         return cls._instance
 
 
-# =========================
-# Dynamixel gripper class
-# =========================
+def _read_pos(packet, port, dxl_id):
+    raw, _, _ = packet.read4ByteTxRx(port, dxl_id, ADDR_PRESENT_POSITION)
+    return struct.unpack("i", struct.pack("I", raw))[0]
+
+
+def _write_pos(packet, port, dxl_id, pos):
+    unsigned = struct.unpack("I", struct.pack("i", pos))[0]
+    packet.write4ByteTxRx(port, dxl_id, ADDR_GOAL_POSITION, unsigned)
+
+
 class DynamixelGripper:
     def __init__(self, dxl_id: int = DXL_ID_RIGHT, inverted: bool = False):
-        import struct as _struct
-        import time as _time
-
         self.dxl_id = dxl_id
         self.inverted = inverted
-
-        # 1. Get shared port
         self.port, self.packet = _SharedDynamixelPort.get()
 
-        # 2. Reboot right servo only (left uses fixed values, no reboot needed)
+        # Reboot right servo only
         if self.dxl_id != DXL_ID_LEFT:
             self.packet.reboot(self.port, self.dxl_id)
-            _time.sleep(1.5)
+            time.sleep(1.5)
 
-        # 3. Disable torque, set mode, enable torque
+        # Setup mode
         self.packet.write1ByteTxRx(self.port, self.dxl_id, ADDR_TORQUE_ENABLE, TORQUE_DISABLE)
         self.packet.write1ByteTxRx(self.port, self.dxl_id, ADDR_OPERATING_MODE, OPERATING_MODE_POSITION)
         self.packet.write1ByteTxRx(self.port, self.dxl_id, ADDR_TORQUE_ENABLE, TORQUE_ENABLE)
         self.packet.write2ByteTxRx(self.port, self.dxl_id, 38, 300)
 
-        # 4. Set open/close positions
         if self.dxl_id == DXL_ID_LEFT:
-            self.pos_open = DXL_POS_LEFT_OPEN
-            self.pos_close = DXL_POS_LEFT_CLOSE
+            if LEFT_CAL_FILE.exists():
+                cal = json.loads(LEFT_CAL_FILE.read_text())
+                self.pos_open = cal["open"]
+                self.pos_close = cal["close"]
+                print(f"[Gripper] ID={self.dxl_id} loaded cal: open={self.pos_open}, close={self.pos_close}")
+            else:
+                self.pos_open = 5000
+                self.pos_close = 12000
+                print(f"[Gripper] ID={self.dxl_id} NO CAL FILE! Using defaults. Run: python robot/arm/calibrate_left.py")
         else:
             self.pos_open = DXL_POS_RIGHT_OPEN
             self.pos_close = DXL_POS_RIGHT_CLOSE
 
-        print(f"[Gripper] Dynamixel ID={self.dxl_id} initialized")
+        print(f"[Gripper] ID={self.dxl_id} initialized: open={self.pos_open}, close={self.pos_close}")
 
     def set_open_ratio(self, ratio: float):
-        """ratio: 0.0 = fully closed, 1.0 = fully open"""
         ratio = float(np.clip(ratio, 0.0, 1.0))
         pos = int(self.pos_close + ratio * (self.pos_open - self.pos_close))
-        import struct
-        unsigned = struct.unpack('I', struct.pack('i', pos))[0]
-        self.packet.write4ByteTxRx(
-            self.port, self.dxl_id, ADDR_GOAL_POSITION, unsigned
-        )
+        _write_pos(self.packet, self.port, self.dxl_id, pos)
 
     def get_open_ratio(self) -> float:
-        """Read current position as open ratio (0.0=closed, 1.0=open)."""
-        raw, _, _ = self.packet.read4ByteTxRx(
-            self.port, self.dxl_id, ADDR_PRESENT_POSITION
-        )
-        import struct
-        pos = struct.unpack("i", struct.pack("I", raw))[0]
-        ratio = (pos - self.pos_close) / (self.pos_open - self.pos_close)
-        ratio = float(max(0.0, min(1.0, ratio)))
-        return ratio
+        pos = _read_pos(self.packet, self.port, self.dxl_id)
+        denom = self.pos_open - self.pos_close
+        if denom == 0:
+            return 0.0
+        ratio = (pos - self.pos_close) / denom
+        return float(max(0.0, min(1.0, ratio)))
 
     def close(self):
         self.set_open_ratio(0.0)
@@ -133,14 +129,6 @@ class DynamixelGripper:
             self.port, self.dxl_id, ADDR_TORQUE_ENABLE, TORQUE_DISABLE
         )
 
-
-# =========================
-# ArmNode (Piper arm + optional Dynamixel gripper)
-#
-# NOTE: Physical arms are swapped — the arm on the left side was originally
-# built as "right" and vice versa. URDF, joint_names, ee_frame, and home_q
-# are swapped here to compensate.
-# =========================
 
 class ArmNode:
     def __init__(
@@ -156,7 +144,6 @@ class ArmNode:
         self.can_port = can_port
         self.is_left_arm = is_left_arm
 
-        # URDF swapped: left position uses right arm URDF, right position uses left arm URDF
         if urdf_path is None:
             if is_left_arm:
                 self.urdf_path = (_HERE / "urdf/piper_description_right.xml").as_posix()
@@ -165,7 +152,6 @@ class ArmNode:
         else:
             self.urdf_path = urdf_path
 
-        # ----- Piper arm -----
         self.robot_config = RobotConfigFactory.get_instance().get_config("piper")
         self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
         self.robot_config.urdf_path = self.urdf_path
@@ -180,7 +166,6 @@ class ArmNode:
             self.robot_config, self.controller_config, self.can_port
         )
 
-        # ----- Dynamixel gripper (optional) -----
         if use_gripper:
             if is_left_arm:
                 self.gripper = DynamixelGripper(dxl_id=DXL_ID_LEFT, inverted=False)
@@ -189,7 +174,6 @@ class ArmNode:
         else:
             self.gripper = None
 
-        # ----- IK (swapped: left position uses right arm config, vice versa) -----
         if is_left_arm:
             joint_names = [f"right_arm_joint{i}" for i in range(1, 7)]
             ee_frame = "right_arm_ee"
@@ -206,9 +190,6 @@ class ArmNode:
             ee_frame=ee_frame,
         )
 
-    # =========================
-    # Lifecycle
-    # =========================
     def init(self):
         self.reset()
         q = self.piper.get_joint_state().pos
@@ -229,15 +210,7 @@ class ArmNode:
             self.gripper.set_open_ratio(gripper_target)
         time.sleep(2.0)
 
-    # =========================
-    # Control
-    # =========================
-    def set_joint_target(
-        self,
-        joint_target: np.ndarray,
-        gripper_target: Optional[float] = None,
-        preview_time: float = 0.1,
-    ):
+    def set_joint_target(self, joint_target, gripper_target=None, preview_time=0.1):
         cmd = JointState(self.robot_config.joint_dof)
         cmd.pos = joint_target
         cmd.timestamp = self.piper.get_timestamp() + preview_time
@@ -245,12 +218,7 @@ class ArmNode:
         if gripper_target is not None and self.gripper is not None:
             self.gripper.set_open_ratio(gripper_target)
 
-    def set_ee_target(
-        self,
-        ee_target: mink.SE3,
-        gripper_target: Optional[float] = None,
-        preview_time: float = 0.01,
-    ):
+    def set_ee_target(self, ee_target, gripper_target=None, preview_time=0.01):
         qd, _ = self.ik_solver.solve_ik(ee_target)
         cmd = JointState(self.robot_config.joint_dof)
         cmd.pos = qd
@@ -259,9 +227,6 @@ class ArmNode:
         if gripper_target is not None and self.gripper is not None:
             self.gripper.set_open_ratio(gripper_target)
 
-    # =========================
-    # Helpers
-    # =========================
     def open_gripper(self):
         if self.gripper is not None:
             self.gripper.open()
@@ -270,13 +235,13 @@ class ArmNode:
         if self.gripper is not None:
             self.gripper.close()
 
-    def set_gain(self, kp: np.ndarray, kd: np.ndarray):
+    def set_gain(self, kp, kd):
         self.piper.set_gain(Gain(kp, kd))
 
-    def get_joint_positions(self) -> np.ndarray:
+    def get_joint_positions(self):
         return self.piper.get_joint_state().pos
 
-    def get_ee_pose(self) -> mink.SE3:
+    def get_ee_pose(self):
         q = self.get_joint_positions()
         self.ik_solver.update_configuration(q)
         return self.ik_solver.forward_kinematics()

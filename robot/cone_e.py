@@ -100,7 +100,7 @@ class ConeE:
 
     @require_initialization
     def set_left_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
-        ee_target = clamp_ee_target(ee_target)
+        # ee_target = clamp_ee_target(ee_target)  # boundary clamping disabled
         self.left_arm.set_ee_target(ee_target, gripper_target, preview_time)
 
     @require_initialization
@@ -161,7 +161,7 @@ class ConeE:
 
     @require_initialization
     def set_right_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
-        ee_target = clamp_ee_target(ee_target)
+        # ee_target = clamp_ee_target(ee_target)  # boundary clamping disabled
         self.right_arm.set_ee_target(ee_target, gripper_target, preview_time)
 
     @require_initialization
