@@ -9,8 +9,10 @@ Usage (from robot/piper-mujoco/):
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -60,31 +62,43 @@ def main() -> None:
     ckpt_dir.mkdir(exist_ok=True)
 
     n_steps = agent_cfg["n_steps"]
-    total_steps = train_cfg["total_steps"]
+    total_episodes = train_cfg["total_episodes"]
     log_interval = train_cfg["log_interval"]
     save_interval = train_cfg["save_interval"]
 
     gamma = agent_cfg["gamma"]
     gae_lambda = agent_cfg["gae_lambda"]
 
-    print(f"Training for {total_steps:,} steps | obs_dim={env.obs_dim} | act_dim={env.act_dim}")
+    print(f"Training for {total_episodes:,} episodes | obs_dim={env.obs_dim} | act_dim={env.act_dim}")
     print(f"Device: {agent.device}")
     print("-" * 70)
 
     # ------------------------------------------------------------------
-    # Training loop
+    # Ctrl+C 時に中断チェックポイントを保存
     # ------------------------------------------------------------------
     global_step = 0
     update_count = 0
+    total_ep_count = 0
+
+    def _save_and_exit(sig, frame):
+        path = ckpt_dir / f"interrupted_ep{total_ep_count:06d}.pt"
+        agent.save(path)
+        print(f"\nInterrupted. Saved checkpoint: {path}")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _save_and_exit)
+    signal.signal(signal.SIGTERM, _save_and_exit)
     all_ep_rewards: list[float] = []
     t_start = time.time()
 
-    while global_step < total_steps:
+    while total_ep_count < total_episodes:
         rollout = agent.collect_rollout(env, n_steps)
         global_step += n_steps
         update_count += 1
 
-        all_ep_rewards.extend(rollout["ep_rewards"])
+        completed = rollout["ep_rewards"]
+        total_ep_count += len(completed)
+        all_ep_rewards.extend(completed)
 
         advantages, returns = agent.compute_gae(
             rollout["rewards"],
@@ -96,23 +110,25 @@ def main() -> None:
         )
         losses = agent.update(rollout["obs"], rollout["actions"], advantages, returns)
 
-        if update_count % log_interval == 0:
+        if completed and (total_ep_count // log_interval) > ((total_ep_count - len(completed)) // log_interval):
             elapsed = time.time() - t_start
-            sps = global_step / elapsed  # steps per second
-            recent_rewards = all_ep_rewards[-20:] if all_ep_rewards else [float("nan")]
+            eps = total_ep_count / elapsed  # episodes per second
+            recent_rewards = all_ep_rewards[-20:]
             mean_ep_rew = sum(recent_rewards) / len(recent_rewards)
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(
-                f"step={global_step:8d} | "
-                f"updates={update_count:5d} | "
+                f"[{ts}] "
+                f"ep={total_ep_count:6d}/{total_episodes} | "
+                f"step={global_step:9d} | "
                 f"mean_ep_rew={mean_ep_rew:7.2f} | "
                 f"actor={losses['actor_loss']:7.4f} | "
                 f"critic={losses['critic_loss']:7.4f} | "
                 f"entropy={losses['entropy']:.4f} | "
-                f"sps={sps:.0f}"
+                f"ep/s={eps:.2f}"
             )
 
-        if update_count % save_interval == 0:
-            ckpt_path = ckpt_dir / f"ckpt_{global_step:08d}.pt"
+        if completed and (total_ep_count // save_interval) > ((total_ep_count - len(completed)) // save_interval):
+            ckpt_path = ckpt_dir / f"ckpt_ep{total_ep_count:06d}.pt"
             agent.save(ckpt_path)
             print(f"  Saved checkpoint: {ckpt_path}")
 

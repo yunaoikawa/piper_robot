@@ -1,5 +1,5 @@
 """
-Piper single-arm lab environment for the flask-in-fridge RL task.
+Piper single-arm lab environment for the flask pick-and-lift RL task.
 
 Observation (25-dim):
   qpos[0:6]   arm joint angles (joint1-5 + upper_jaw)
@@ -12,6 +12,13 @@ Observation (25-dim):
 Action (6-dim, continuous [-1, 1]):
   Delta control targets for [joint1, joint2, joint3, joint4, joint5, gripper],
   scaled by ACTION_SCALE before being added to current ctrl.
+
+Reward shaping (3-phase heuristic):
+  Phase 1 – Reach:  -ee_to_flask_dist  (always active)
+  Phase 2 – Grasp:  gripper closure × proximity bonus (within 6 cm)
+  Phase 3 – Lift:   flask_z height above table × 20  (encourages carrying)
+  Success bonus +10 when flask_z > LIFT_HEIGHT
+  Failure penalty -5 when flask falls below the table
 """
 
 from __future__ import annotations
@@ -46,6 +53,10 @@ FRIDGE_BOUNDS = {
 }
 # Target: fridge shelf centre (local lz=0.02 → world_z=0.195)
 FRIDGE_TARGET = np.array([0.70, 0.0, 0.195], dtype=np.float32)
+
+# Pick-and-lift task constants
+GRASP_DIST = 0.06   # [m] EE–flask distance within which grasping is rewarded
+LIFT_HEIGHT = 0.10  # [m] flask z-height considered a successful lift
 
 # Actuator ctrl limits (from piper.xml joint ranges, inheritrange="1")
 CTRL_LIMITS = np.array(
@@ -151,7 +162,7 @@ class PiperLabEnv:
         reward, info = self._compute_reward()
 
         flask_z = self.data.xpos[self._flask_id, 2]
-        terminated = info["flask_in_fridge"] or flask_z < -0.1
+        terminated = info["lifted"] or flask_z < -0.1
         truncated = self._step_count >= self.max_episode_steps
 
         return obs, reward, terminated, truncated, info
@@ -182,29 +193,36 @@ class PiperLabEnv:
         flask_pos = self.data.xpos[self._flask_id]
         ee_pos = self.data.site_xpos[self._ee_site_id]
 
-        flask_to_target_dist = float(np.linalg.norm(flask_pos - FRIDGE_TARGET))
         ee_to_flask_dist = float(np.linalg.norm(ee_pos - flask_pos))
+        flask_z = float(flask_pos[2])
 
-        # Dense: minimise distance to target + approach flask
-        reward = -flask_to_target_dist - 0.3 * ee_to_flask_dist
+        # Phase 1 – Reach: always drive EE toward flask
+        r_reach = -ee_to_flask_dist
 
-        # Check containment
-        bx, by, bz = FRIDGE_BOUNDS["x"], FRIDGE_BOUNDS["y"], FRIDGE_BOUNDS["z"]
-        flask_in_fridge = (
-            bx[0] < flask_pos[0] < bx[1]
-            and by[0] < flask_pos[1] < by[1]
-            and bz[0] < flask_pos[2] < bz[1]
-        )
-        if flask_in_fridge:
+        # Phase 2 – Grasp: reward gripper closure proportional to proximity
+        # ctrl[5]: 0.99 = fully open, 0.0 = fully closed
+        gripper_open_ratio = float(self.data.ctrl[5]) / 0.99
+        proximity = max(0.0, 1.0 - ee_to_flask_dist / GRASP_DIST)
+        r_grasp = (1.0 - gripper_open_ratio) * proximity
+
+        # Phase 3 – Lift: reward flask height above table surface
+        r_lift = max(0.0, flask_z - 0.005) * 20.0
+
+        reward = r_reach + 2.0 * r_grasp + r_lift
+
+        # Success: flask lifted high enough
+        lifted = flask_z > LIFT_HEIGHT
+        if lifted:
             reward += 10.0
 
-        # Penalty: flask fell off table
-        if flask_pos[2] < -0.1:
+        # Failure: flask fell off table
+        if flask_z < -0.1:
             reward -= 5.0
 
         info = {
-            "flask_in_fridge": flask_in_fridge,
-            "flask_to_target": flask_to_target_dist,
+            "lifted": lifted,
+            "flask_z": flask_z,
             "ee_to_flask": ee_to_flask_dist,
+            "gripper_open_ratio": gripper_open_ratio,
         }
         return reward, info
