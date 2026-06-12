@@ -42,7 +42,9 @@ class A2C:
         logp_buf = np.zeros(n_steps, dtype=np.float32)
 
         ep_rewards: list[float] = []
+        ep_successes: list[bool] = []
         current_ep_reward: float = 0.0
+        current_ep_success: bool = False
 
         obs, _ = env.reset()
 
@@ -52,7 +54,7 @@ class A2C:
                 action, log_prob, _, value = self.net.get_action_and_value(obs_t)
 
             action_np = action.squeeze(0).cpu().numpy()
-            next_obs, reward, terminated, truncated, _ = env.step(action_np)
+            next_obs, reward, terminated, truncated, info = env.step(action_np)
             done = terminated or truncated
 
             obs_buf[t] = obs
@@ -63,9 +65,14 @@ class A2C:
             logp_buf[t] = log_prob.item()
 
             current_ep_reward += reward
+            if info.get("lifted"):
+                current_ep_success = True
+
             if done:
                 ep_rewards.append(current_ep_reward)
+                ep_successes.append(current_ep_success)
                 current_ep_reward = 0.0
+                current_ep_success = False
                 obs, _ = env.reset()
             else:
                 obs = next_obs
@@ -84,6 +91,7 @@ class A2C:
             "log_probs": logp_buf,
             "last_val": last_val,
             "ep_rewards": ep_rewards,
+            "ep_successes": ep_successes,
         }
 
     # ------------------------------------------------------------------

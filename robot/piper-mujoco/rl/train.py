@@ -89,6 +89,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, _save_and_exit)
     signal.signal(signal.SIGTERM, _save_and_exit)
     all_ep_rewards: list[float] = []
+    interval_successes: list[bool] = []
     t_start = time.time()
 
     while total_ep_count < total_episodes:
@@ -99,6 +100,7 @@ def main() -> None:
         completed = rollout["ep_rewards"]
         total_ep_count += len(completed)
         all_ep_rewards.extend(completed)
+        interval_successes.extend(rollout["ep_successes"])
 
         advantages, returns = agent.compute_gae(
             rollout["rewards"],
@@ -115,6 +117,7 @@ def main() -> None:
             eps = total_ep_count / elapsed  # episodes per second
             recent_rewards = all_ep_rewards[-20:]
             mean_ep_rew = sum(recent_rewards) / len(recent_rewards)
+            any_lifted = any(interval_successes)
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(
                 f"[{ts}] "
@@ -124,8 +127,10 @@ def main() -> None:
                 f"actor={losses['actor_loss']:7.4f} | "
                 f"critic={losses['critic_loss']:7.4f} | "
                 f"entropy={losses['entropy']:.4f} | "
-                f"ep/s={eps:.2f}"
+                f"ep/s={eps:.2f} | "
+                f"lifted={any_lifted}"
             )
+            interval_successes.clear()
 
         if completed and (total_ep_count // save_interval) > ((total_ep_count - len(completed)) // save_interval):
             ckpt_path = ckpt_dir / f"ckpt_ep{total_ep_count:06d}.pt"
