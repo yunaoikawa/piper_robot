@@ -1,0 +1,4 @@
+mujoco==3.2.3
+numpy>=1.26,<2.0
+PyYAML>=6.0
+torch>=2.2
