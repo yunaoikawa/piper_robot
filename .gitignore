@@ -19,3 +19,4 @@ test/
 tmp/
 tmp/
 archive/
+slurm-*.out

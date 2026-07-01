@@ -26,13 +26,13 @@ Usage:
 """
 
 import argparse
+import glob
 import json
 import os
-import glob
 from pathlib import Path
 
-import numpy as np
 import h5py
+import numpy as np
 import pandas as pd
 
 
@@ -81,7 +81,8 @@ def load_episode(hdf5_path: str) -> dict:
     state  = np.concatenate([left_state, right_state], axis=-1).astype(np.float32)
     action = np.concatenate([state[1:], state[-1:]], axis=0)
 
-    return {"state": state, "action": action, "timestamps": timestamps}
+    actual_fps = (len(timestamps) - 1) / max(timestamps[-1] - timestamps[0], 1e-6)
+    return {"state": state, "action": action, "timestamps": timestamps, "fps": float(actual_fps)}
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +142,7 @@ def state_names() -> list:
 # Video re-encoding
 # ---------------------------------------------------------------------------
 
-def reencode_video(src_path: str, dest_path: str):
+def reencode_video(src_path: str, dest_path: str, target_fps: int = None):
     import av as _av
     import fractions
 
@@ -149,7 +150,7 @@ def reencode_video(src_path: str, dest_path: str):
     with _av.open(str(src_path)) as inc:
         vs = inc.streams.video[0]
         w, h = vs.width, vs.height
-        fps_num = int(round(float(vs.average_rate)))
+        fps_num = target_fps if target_fps else int(round(float(vs.average_rate)))
         for frame in inc.decode(video=0):
             raw_frames.append(frame.to_ndarray(format="rgb24"))
 
@@ -204,20 +205,33 @@ def _write_single_dataset(
 
     all_rows = []
     episode_rows = []
+    used_task_indices = set()
     global_frame_idx = 0
     episode_lengths = []
+    skipped = []
 
-    for ep_idx, (h5_path, mp4s, task_idx) in enumerate(episodes):
+    ep_idx = 0  # only incremented after a successful load
+    for h5_path, mp4s, task_idx in episodes:
         print(f"  [{label}] Episode {ep_idx:04d} (task {task_idx}): {Path(h5_path).name}")
 
-        ep = load_episode(h5_path)
+        try:
+            ep = load_episode(h5_path)
+        except (OSError, KeyError) as e:
+            print(f"    SKIPPING corrupt HDF5 ({type(e).__name__}): {e}")
+            skipped.append(h5_path)
+            continue
+
         T = len(ep["state"])
+        ep_fps = int(round(ep["fps"]))
+        if abs(ep_fps - fps) > 3:
+            print(f"    WARNING: HDF5 actual fps={ep_fps}, dataset fps={fps}")
         episode_lengths.append(T)
+        used_task_indices.add(task_idx)
 
         rel_ts = (ep["timestamps"] - ep["timestamps"][0]).astype(np.float32)
 
         for t in range(T):
-            row = {
+            all_rows.append({
                 "episode_index":     ep_idx,
                 "frame_index":       t,
                 "index":             global_frame_idx + t,
@@ -226,8 +240,7 @@ def _write_single_dataset(
                 "next.done":         (t == T - 1),
                 "observation.state": ep["state"][t].tolist(),
                 "action":            ep["action"][t].tolist(),
-            }
-            all_rows.append(row)
+            })
 
         global_frame_idx += T
 
@@ -238,7 +251,7 @@ def _write_single_dataset(
                 print(f"    {ck}: already exists, skipping")
                 continue
             if src_mp4 and Path(src_mp4).exists():
-                n_frames = reencode_video(src_mp4, str(dest))
+                n_frames = reencode_video(src_mp4, str(dest), target_fps=ep_fps)
                 print(f"    {ck}: re-encoded {n_frames} frames")
             else:
                 print(f"    WARNING: No MP4 for {ck}")
@@ -262,6 +275,18 @@ def _write_single_dataset(
             ep_row[f"videos/{vid_key}/from_timestamp"] = ep_start_ts
             ep_row[f"videos/{vid_key}/to_timestamp"]   = ep_end_ts
         episode_rows.append(ep_row)
+
+        ep_idx += 1  # success → advance to next dense index
+
+    n_kept = ep_idx
+    if skipped:
+        print(f"\n  [{label}] Skipped {len(skipped)} corrupt episode(s):")
+        for s in skipped:
+            print(f"    - {s}")
+
+    if n_kept == 0:
+        print(f"  [{label}] No usable episodes after skips, aborting write")
+        return
 
     # ── Write parquet ──
     import pyarrow as pa
@@ -288,7 +313,7 @@ def _write_single_dataset(
     ep_df.to_parquet(ep_meta_dir / "file-000.parquet", index=False)
 
     # ── tasks.parquet ──
-    unique_task_indices = sorted(set(ti for _, _, ti in episodes))
+    unique_task_indices = sorted(used_task_indices)
     tasks_df = pd.DataFrame({
         "task_index": unique_task_indices,
         "task": [task_names[i] for i in unique_task_indices],
@@ -325,13 +350,13 @@ def _write_single_dataset(
         "codebase_version": "v3.0",
         "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:06d}.mp4",
         "robot_type": "bimanual",
-        "total_episodes": len(episodes),
+        "total_episodes": n_kept,
         "total_frames": global_frame_idx,
         "total_tasks": len(task_names),
         "total_chunks": 1,
         "chunks_size": 1000,
         "fps": fps,
-        "splits": {"train": f"0:{len(episodes)}"},
+        "splits": {"train": f"0:{n_kept}"},
         "repo_id": repo_id,
         "shapes": {
             "observation.state": [state_dim],
@@ -364,9 +389,13 @@ def _write_single_dataset(
             "count": [int(len(arr))],
         }
 
-    img_placeholder = {"mean": [[[0.5]],[[0.5]],[[0.5]]], "std": [[[0.5]],[[0.5]],[[0.5]]],
-                        "min": [[[0.0]],[[0.0]],[[0.0]]], "max": [[[1.0]],[[1.0]],[[1.0]]],
-                        "count": [int(len(all_rows))]}
+    img_placeholder = {
+        "mean": [[[0.5]], [[0.5]], [[0.5]]],
+        "std":  [[[0.5]], [[0.5]], [[0.5]]],
+        "min":  [[[0.0]], [[0.0]], [[0.0]]],
+        "max":  [[[1.0]], [[1.0]], [[1.0]]],
+        "count": [int(len(all_rows))],
+    }
 
     stats = {
         "observation.state": _stats(state_arr),
@@ -380,7 +409,7 @@ def _write_single_dataset(
         json.dump(stats, f, indent=2)
 
     print(f"\n  [{label}] Dataset ready at: {output_dir}")
-    print(f"    Episodes: {len(episodes)}, Frames: {global_frame_idx}")
+    print(f"    Episodes: {n_kept}, Frames: {global_frame_idx}")
 
 
 # ---------------------------------------------------------------------------
@@ -452,8 +481,8 @@ def write_lerobot_dataset(
 
         for task_idx, task_name in enumerate(task_names):
             n_train = sum(1 for _, _, ti in train_episodes if ti == task_idx)
-            n_val = sum(1 for _, _, ti in val_episodes if ti == task_idx)
-            print(f"  [{task_idx}] '{task_name}': {n_train} train, {n_val} val")
+            n_val_t = sum(1 for _, _, ti in val_episodes if ti == task_idx)
+            print(f"  [{task_idx}] '{task_name}': {n_train} train, {n_val_t} val")
 
         print(f"\n--- Writing train dataset ---")
         _write_single_dataset(train_episodes, task_names, output_dir, repo_id, fps, camera_keys, "train")
