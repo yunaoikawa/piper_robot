@@ -12,6 +12,7 @@ import zmq
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rollout.lid_vision import VisionProfile, detect_blue_marker
+from rollout.apriltag_retarget import detect_tags
 
 
 def bounded_step(jacobian, error, max_step_m=0.025, damping=1e-3):
@@ -25,11 +26,17 @@ def bounded_step(jacobian, error, max_step_m=0.025, damping=1e-3):
     return step
 
 
-def marker_from_reply(reply, profile):
+def feature_from_reply(reply, profile, args):
     path = reply.get("images", {}).get("right")
     image = cv2.imread(path) if path else None
     if image is None:
         raise RuntimeError(f"checkpoint did not provide a right image: {reply}")
+    if args.tracker == "tag":
+        tags = detect_tags(image, args.tag_family)
+        tag = next((item for item in tags if item.tag_id == args.tag_id), None)
+        if tag is None:
+            raise RuntimeError(f"tag {args.tag_family}/{args.tag_id} not found in {path}")
+        return np.asarray(tag.center, dtype=float), path
     marker, _ = detect_blue_marker(image, profile)
     if marker is None:
         raise RuntimeError(f"blue cross not found in {path}")
@@ -45,10 +52,15 @@ def main():
     ap.add_argument("--step-mm", type=float, default=25.0)
     ap.add_argument("--max-iters", type=int, default=10)
     ap.add_argument("--tolerance-px", type=float, default=5.0)
+    ap.add_argument("--tracker", choices=("blue", "tag"), default="blue")
+    ap.add_argument("--target-px", nargs=2, type=float)
+    ap.add_argument("--tag-family", default="DICT_5X5_50")
+    ap.add_argument("--tag-id", type=int, default=0)
     args = ap.parse_args()
 
     profile = VisionProfile.load(args.vision_profile)
-    target = np.asarray(profile.marker_center, dtype=float)
+    target = np.asarray(args.target_px if args.target_px else profile.marker_center,
+                        dtype=float)
     context = zmq.Context()
     socket = context.socket(zmq.REQ)
     socket.setsockopt(zmq.LINGER, 0)
@@ -69,7 +81,7 @@ def main():
     def adjust(bias):
         reply = request({"command": "adjust", "arm": "right",
                          "bias": [float(bias[0]), float(bias[1]), 0.0]})
-        marker, path = marker_from_reply(reply, profile)
+        marker, path = feature_from_reply(reply, profile, args)
         print(f"bias={np.round(bias*1000, 1)}mm marker={np.round(marker, 1)}px "
               f"error={np.round(target-marker, 1)}px image={path}", flush=True)
         return marker
@@ -77,7 +89,7 @@ def main():
     try:
         status = request({"command": "status"})
         base = np.asarray(status["bias"]["right"][:2], dtype=float)
-        base_marker, _ = marker_from_reply(status, profile)
+        base_marker, _ = feature_from_reply(status, profile, args)
         probe = args.probe_mm / 1000.0
         jacobian = np.empty((2, 2), dtype=float)
         for axis in range(2):
