@@ -161,6 +161,14 @@ python src/replay_checkpoint.py --bias 0 0 -0.005  # reapply frame + save new im
 python src/replay_checkpoint.py --resume           # or --abort
 ```
 
+For a misplaced lid, keep frame 81 active and run the image-Jacobian loop. It
+probes X/Y once, then advances by at most 25 mm per observation without homing
+between attempts. It stops at the checkpoint; it never resumes the grasp.
+
+```bash
+python src/servo_blue_cross.py --port 5561
+```
+
 Checkpoint images and marker/transparent-edge overlays are written under
 `/tmp/pasteur_replay_checkpoints` by default. Bias size is not arbitrarily
 clamped; live replay therefore requires a calibrated torque watchdog.

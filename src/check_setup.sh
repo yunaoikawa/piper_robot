@@ -26,6 +26,7 @@ for f in \
     robot/camera_map.json \
     src/set_bias.py \
     src/replay_checkpoint.py \
+    src/servo_blue_cross.py \
     src/calibrate_apriltag_workspace.py \
     src/configs/safety.json \
     src/configs/pasteur_lid_vision.json \

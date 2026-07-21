@@ -1,15 +1,15 @@
 {
   "version": 1,
-  "method": "max_abs + max(20% max_abs, 6 MAD)",
+  "method": "non-contact replay plus active-view envelope, 20% margin",
   "consecutive_samples": 5,
   "thresholds": {
     "right": [
       0.30050999645143744,
       1.692495008111,
-      1.2899250371754167,
-      0.38989337664413454,
-      1.542321603029251,
-      0.22197470825028418
+      1.46,
+      0.68,
+      1.58,
+      0.28
     ]
   },
   "calibration": {
@@ -40,5 +40,8 @@
         0.0038337606284022246
       ]
     }
+  },
+  "active_view_observed_max_abs": {
+    "right": [0.2056, 1.2899, 1.2144, 0.5617, 1.3102, 0.2282]
   }
 }
