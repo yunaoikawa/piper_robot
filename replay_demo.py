@@ -46,7 +46,6 @@ from rollout.controller import PolicyController
 from rollout.apriltag_retarget import (
     TagProfile,
     detect_tags,
-    fit_image_to_robot,
     lid_pose_robot,
     object_delta,
     render_tags,
@@ -223,7 +222,7 @@ def tagged_frame_to_action(demo, i, active_arms, tag_profile, alignment):
     delta = np.asarray(alignment["object_delta"]) + np.asarray(alignment["servo_delta"])
     weight = retarget_weight(i, tag_profile.phases)
     action["right_ee_pose"] = retarget_pose(
-        action["right_ee_pose"], delta, weight, tag_profile.reference_lid_pose[:2])
+        action["right_ee_pose"], delta, weight, tag_profile.reference_robot_pivot_xy)
     return action
 
 
@@ -569,8 +568,10 @@ def main():
         time.sleep(1.0)
         head = _latest_bgr(controller.camera)
         detections = detect_tags(head, tag_profile.family) if head is not None else []
-        transform = fit_image_to_robot(detections, tag_profile.fixed_robot_xy)
-        current_lid = lid_pose_robot(detections, tag_profile.lid_id, transform)
+        transform = tag_profile.fit_image_transform(detections)
+        current_lid = lid_pose_robot(
+            detections, tag_profile.lid_id, transform,
+            tag_profile.plane_to_robot_xy)
         alignment["object_delta"] = object_delta(current_lid, tag_profile.reference_lid_pose)
         tag_profile.validate_delta(alignment["object_delta"])
         validate_tagged_trajectory(

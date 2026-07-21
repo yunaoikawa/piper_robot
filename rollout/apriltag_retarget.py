@@ -173,6 +173,21 @@ def fit_image_to_robot(detections, fixed_robot_xy):
     return np.vstack([affine, [0.0, 0.0, 1.0]])
 
 
+def fit_image_to_plane(detections, fixed_plane_corners):
+    """Fit pixels to an arbitrary metric plane from calibrated tag corners."""
+    by_id = {tag.tag_id: tag for tag in detections}
+    ids = sorted(set(by_id) & {int(key) for key in fixed_plane_corners})
+    if not ids:
+        raise ValueError("no calibrated fixed tag is visible")
+    pixels = np.float32(np.vstack([by_id[tag_id].corners for tag_id in ids]))
+    plane = np.float32(np.vstack([fixed_plane_corners[str(tag_id)] for tag_id in ids]))
+    transform, inliers = cv2.findHomography(
+        pixels, plane, method=cv2.RANSAC, ransacReprojThreshold=0.003)
+    if transform is None or int(inliers.sum()) < 4:
+        raise ValueError(f"fixed-tag plane fit failed for IDs {ids}")
+    return transform
+
+
 def map_points(transform, points):
     points = np.asarray(points, dtype=float).reshape(-1, 2)
     hom = np.c_[points, np.ones(len(points))]
@@ -180,11 +195,14 @@ def map_points(transform, points):
     return mapped[:, :2] / mapped[:, 2:3]
 
 
-def lid_pose_robot(detections, lid_id, image_to_robot):
+def lid_pose_robot(detections, lid_id, image_to_robot, plane_to_robot_xy=None):
     tag = next((tag for tag in detections if tag.tag_id == lid_id), None)
     if tag is None:
         raise ValueError(f"lid tag {lid_id} not detected")
     mapped = map_points(image_to_robot, tag.corners)
+    if plane_to_robot_xy is not None:
+        mapping = np.asarray(plane_to_robot_xy, dtype=float).reshape(2, 2)
+        mapped = mapped @ mapping.T
     center = mapped.mean(axis=0)
     edge = mapped[1] - mapped[0]
     yaw = float(np.arctan2(edge[1], edge[0]))
@@ -240,7 +258,10 @@ class TagProfile:
     family: str
     lid_id: int
     fixed_robot_xy: dict
+    fixed_plane_corners: dict
+    plane_to_robot_xy: np.ndarray | None
     reference_lid_pose: np.ndarray
+    reference_robot_pivot_xy: np.ndarray
     reference_wrist_corners: np.ndarray | None
     phases: dict
     max_translation_m: float = 0.10
@@ -256,18 +277,30 @@ class TagProfile:
         if reference is None:
             raise ValueError("tag profile is not calibrated: missing reference_lid_pose")
         fixed = cfg.get("fixed_robot_xy", {})
-        if len(fixed) < 3:
-            raise ValueError("tag profile is not calibrated: need >=3 fixed tag robot coordinates")
+        plane = cfg.get("fixed_plane_corners", {})
+        plane_to_robot = cfg.get("plane_to_robot_xy")
+        if len(fixed) < 3 and (not plane or plane_to_robot is None):
+            raise ValueError("tag profile is not calibrated: missing fixed-plane mapping")
         corners = cfg.get("reference_wrist_corners")
         return cls(
             family=cfg["family"], lid_id=int(cfg["lid_id"]),
             fixed_robot_xy=fixed,
+            fixed_plane_corners=plane,
+            plane_to_robot_xy=(None if plane_to_robot is None
+                               else np.asarray(plane_to_robot, dtype=float).reshape(2, 2)),
             reference_lid_pose=np.asarray(reference, dtype=float),
+            reference_robot_pivot_xy=np.asarray(
+                cfg.get("reference_robot_pivot_xy", reference[:2]), dtype=float),
             reference_wrist_corners=None if corners is None else np.asarray(corners, dtype=float).reshape(4, 2),
             phases=cfg.get("phases", {}),
             max_translation_m=float(cfg.get("max_translation_m", 0.10)),
             max_yaw_deg=float(cfg.get("max_yaw_deg", 20.0)),
         )
+
+    def fit_image_transform(self, detections):
+        if self.fixed_plane_corners:
+            return fit_image_to_plane(detections, self.fixed_plane_corners)
+        return fit_image_to_robot(detections, self.fixed_robot_xy)
 
     def validate_delta(self, delta):
         if np.linalg.norm(delta[:2]) > self.max_translation_m:

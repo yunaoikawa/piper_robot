@@ -15,6 +15,7 @@ from rollout.apriltag_retarget import (
     detect_tags,
     estimate_tag_camera_pose,
     fit_image_to_robot,
+    fit_image_to_plane,
     lid_pose_robot,
     object_delta,
     retarget_pose,
@@ -58,6 +59,13 @@ fixed_xy = {"1": [0.0, 0.0], "2": [0.5, 0.0], "3": [0.0, 0.3]}
 transform = fit_image_to_robot(tags, fixed_xy)
 pose = lid_pose_robot(tags, 9, transform)
 assert np.allclose(pose[:2], [0.259804, 0.159677], atol=0.003), pose
+
+fixed_corners = {str(tag_id): next(tag for tag in tags if tag.tag_id == tag_id).corners.tolist()
+                 for tag_id in (1, 2, 3)}
+pixel_identity = fit_image_to_plane(tags, fixed_corners)
+identity_pose = lid_pose_robot(tags, 9, pixel_identity, np.eye(2))
+lid_pixels = next(tag for tag in tags if tag.tag_id == 9).center
+assert np.allclose(identity_pose[:2], lid_pixels, atol=0.1)
 
 delta = object_delta([0.20, 0.10, np.deg2rad(10)], [0.18, 0.12, 0.0])
 assert np.allclose(delta[:2], [0.02, -0.02])
