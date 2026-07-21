@@ -241,6 +241,10 @@ class ArmNode:
     def get_joint_positions(self):
         return self.piper.get_joint_state().pos
 
+    def get_joint_torque(self):
+        """Return the latest measured joint torques from the Piper controller."""
+        return np.asarray(self.piper.get_joint_state().torque, dtype=float).copy()
+
     def get_ee_pose(self):
         q = self.get_joint_positions()
         self.ik_solver.update_configuration(q)

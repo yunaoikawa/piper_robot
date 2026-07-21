@@ -37,10 +37,10 @@ From `outputs/lab/act/horizon/EVAL_RESULTS.md`:
 1. **Replay is open-loop.** The bias TRANSLATES the whole path; it does not
    re-time or re-shape it. Object rotation, moves > a few cm, or a grasp that
    needs mid-motion correction → replay will not adapt. That is the policy's job.
-2. **No collision reaction.** The arms *do* expose torque
-   (`piperlib.JointState` has `.torque`, `.vel`), but **nothing reads it yet**.
-   Every safety layer here is preventive/geometric. **Keep a hand on the stop.**
-   Wiring a torque watchdog is the top TODO below.
+2. **Torque reaction must be calibrated.** The replay reads
+   `piperlib.JointState.torque` and stops target submission after five consecutive
+   per-joint threshold violations. Thresholds are hardware/task-specific, so a
+   supervised known-good calibration is mandatory. **Keep a hand on the stop.**
 
 ## Architecture
 
@@ -50,7 +50,7 @@ From `outputs/lab/act/horizon/EVAL_RESULTS.md`:
                               │
                      PolicyController.apply_action()   (rollout/controller.py)
                               │
-                    xyz_bias  (per-arm, robot frame, live-settable, ±0.06 m cap)
+                    xyz_bias  (per-arm, robot frame, live-settable; finite values)
                               │
                     SafetyLayer (rollout/safety.py)
                        • keep-out zones            (src/configs/safety.json)
@@ -101,7 +101,14 @@ existing teleop + `--record` path. It writes an HDF5 with
 **2. Replay it:**
 ```bash
 python replay_demo.py path/to/episode.hdf5 --dry-run
-python replay_demo.py path/to/episode.hdf5 --safety-config src/configs/safety.json --rate 15
+# First supervised known-good run (creates per-joint thresholds):
+python replay_demo.py path/to/episode.hdf5 --rate 15 \
+  --calibrate-torque src/configs/pasteur_lid_torque.json
+# Normal run: torque monitoring is mandatory, and the vision profile adds the
+# confirmed grip-start checkpoint automatically.
+python replay_demo.py path/to/episode.hdf5 --rate 15 \
+  --torque-config src/configs/pasteur_lid_torque.json \
+  --vision-profile src/configs/pasteur_lid_vision.json
 # 's' start, 'e' end, 'q' quit.  Start at --rate 15 for a first run, then 30.
 ```
 
@@ -123,8 +130,9 @@ python src/replay_checkpoint.py --bias 0 0 -0.005  # reapply frame + save new im
 python src/replay_checkpoint.py --resume           # or --abort
 ```
 
-Each adjustment is limited to 10 mm from the previous bias. Checkpoint images
-are written under `/tmp/pasteur_replay_checkpoints` by default.
+Checkpoint images and marker/transparent-edge overlays are written under
+`/tmp/pasteur_replay_checkpoints` by default. Bias size is not arbitrarily
+clamped; live replay therefore requires a calibrated torque watchdog.
 
 **3. Adjust when the object is off** — from another shell, live, no restart:
 ```bash
@@ -133,22 +141,20 @@ python src/set_bias.py --z -0.02       # 2 cm deeper
 python src/set_bias.py --y  0.03       # 3 cm in +y
 python src/set_bias.py --reset
 ```
-Bias is clamped to ±0.06 m. A live change also resets the safety step reference,
-so the trajectory jump it causes won't be falsely rejected.
+A live change resets the safety step reference, so the trajectory jump it causes
+won't be falsely rejected. Bias values must be finite but have no magnitude cap.
 
-**4. Vision-in-the-loop (optional, the "Claude/Codex adjusts" part).** Grab the
-head-camera frame, **crop to the object ROI + contrast-stretch + upscale** (see
-the measurement note above — raw frames don't work), show it to the model, ask
-for a lateral offset RELATIVE to the demo, translate that to a bias, and call
-`set_bias`. Do this **once per attempt while the arm is stationary at the
-start** — never inside the motion (a VLM takes 1–3 s; the loop is 30 Hz), and
-supervise it (no collision sensing yet).
+**4. Vision-in-the-loop.** The right-camera profile first isolates the blue
+fiducial (H=106..115, excluding the teal gripper), translates the confirmed
+teacher ellipse with that marker, crops the narrow expected edge band,
+contrast-stretches and enlarges it 4×, then fits only nearby edge pixels. The
+checkpoint response includes the raw and overlay image paths; display both to
+the operator before resume. An uncertain or missing edge is a stop, not a guess.
 
 ## Regression check — DO THIS FIRST, before any real task
 
-Three things changed in the live control path (clamp re-enabled + recalibrated,
-bias moved off the server, safety layer can now reject). Confirm they didn't
-break a known-good task. Full version in
+The live path now includes calibrated torque monitoring and marker-anchored
+checkpoint inspection. Confirm they do not reject a known-good task. Full version in
 `outputs/lab/act/horizon/REGRESSION_CHECK.md`; the replay-only short form:
 
 1. `bash src/check_setup.sh` → all pass.
@@ -167,15 +173,12 @@ is inert if unused.
 
 ## TODO (in priority order)
 
-1. **Torque watchdog** — the one real safety upgrade available. Read
-   `piper.get_joint_state().torque` (add a `ConeE.get_*_joint_torque()` method;
-   `robot/rpc.py` is a generic getattr proxy so the client sees it automatically),
-   compare against the demo torque distribution, and stop on a sustained
-   exceedance. Calibrate the threshold from a normal replay (record torque while
-   replaying a good demo, take the max, add margin — same method as the 40 mm cap).
-2. **Vision preprocessing helper** — a function that crops the ROI, contrast-
-   stretches, and upscales the head frame, so the bias-from-vision step is
-   reliable. Without it the model cannot resolve cm-level offsets.
+1. **Calibrate the implemented torque watchdog** — run a supervised known-good
+   replay with `--calibrate-torque`, review the generated per-joint thresholds,
+   then use that JSON with `--torque-config` for normal live replay.
+2. **Confirm the marker/edge profile** — checkpoint inspection uses the blue
+   fiducial to register a narrow ROI, enlarges it 4×, and overlays the expected
+   and detected transparent-lid edges for operator confirmation.
 3. **Populate keep-out zones** in `src/configs/safety.json` once real forbidden
    volumes are measured (use `robot/test_boundaries.py` EXPLORE to read live EE
    positions). Ships empty because a wrong zone is worse than none.

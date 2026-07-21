@@ -9,11 +9,18 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from replay_demo import (
+    camera_rgb_to_bgr,
     detect_active_arms,
     frame_to_action,
+    longest_grip_start,
     validate_demo,
     validate_start_pose,
 )
+
+rgb = np.array([[[255, 0, 0], [0, 255, 0]]], dtype=np.uint8)
+bgr = camera_rgb_to_bgr(rgb)
+assert bgr.shape == (2, 1, 3)
+assert bgr[0, 0].tolist() == [0, 0, 255]
 
 
 def demo(n=4):
@@ -42,6 +49,8 @@ assert active == ["right"], active
 action = frame_to_action(d, 2, active)
 assert "right_ee_pose" in action and "right_gripper" in action
 assert "left_ee_pose" not in action and "left_gripper" not in action
+goal = longest_grip_start(d, active)
+assert goal == {"arm": "right", "frame": 3, "length": 1}, goal
 validate_demo(d, 4, active, max_step_m=0.04)
 
 bad = demo()

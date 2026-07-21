@@ -20,10 +20,10 @@ OPEN-LOOP CAVEAT (read before trusting it):
   the grasp needs a mid-motion correction, replay will not adapt -- that is what
   the policy (ACT / pi0.5) is for. Use replay only for near-fixed placements.
 
-NO COLLISION REACTION:
-  The arms expose torque (piperlib JointState has .torque) but nothing here
-  reads it yet. Every safety check is preventive/geometric. Keep a hand on the
-  stop.
+CONTACT REACTION:
+  A calibrated per-joint torque watchdog is required for normal live replay.
+  Use --calibrate-torque once on a supervised known-good replay, then pass the
+  resulting file with --torque-config.
 
 Usage (on pasteur, in the robot-control env):
   python replay_demo.py path/to/episode.hdf5 --safety-config src/configs/safety.json
@@ -43,7 +43,9 @@ import zmq
 
 from robot.cone_e import WORKSPACE_MAX, WORKSPACE_MIN
 from rollout.controller import PolicyController
+from rollout.lid_vision import VisionProfile, inspect_lid, render_inspection
 from rollout.safety import MAX_STEP_M
+from rollout.torque_safety import TorqueCalibrator, TorqueWatchdog
 
 
 # HDF5 field names written by rollout/recorder.py.
@@ -56,9 +58,6 @@ ARM_ROTATION_EPS_DEG = 1.0
 ARM_GRIPPER_EPS = 0.1
 DEFAULT_MAX_START_DISTANCE_M = 0.040
 DEFAULT_MAX_START_ANGLE_DEG = 15.0
-MAX_CHECKPOINT_ADJUSTMENT_M = 0.010
-
-
 def load_demo(path):
     with h5py.File(path, "r") as f:
         keys = list(f.keys())
@@ -205,7 +204,47 @@ def frame_to_action(demo, i, active_arms=("left", "right")):
     return action
 
 
-def _save_checkpoint_images(controller, directory, frame, sequence):
+def longest_grip_start(demo, active_arms=("left", "right"), closed_threshold=0.5):
+    """Start of the longest contiguous closed-gripper run across active arms."""
+    best = None
+    for side in active_arms:
+        closed = np.asarray(demo[_GRIP.format(side=side)], dtype=float) < closed_threshold
+        start = None
+        for i, value in enumerate(np.r_[closed, False]):
+            if value and start is None:
+                start = i
+            elif not value and start is not None:
+                candidate = (i - start, -start, side, start)
+                if best is None or candidate > best:
+                    best = candidate
+                start = None
+    return None if best is None else {"arm": best[2], "frame": best[3], "length": best[0]}
+
+
+def read_joint_torques(controller, active_arms):
+    return {
+        arm: np.asarray(getattr(controller.cone_e, f"get_{arm}_joint_torque")(), dtype=float)
+        for arm in active_arms
+    }
+
+
+def check_torque(controller, active_arms, watchdog=None, calibrator=None):
+    samples = read_joint_torques(controller, active_arms)
+    for arm, values in samples.items():
+        if calibrator is not None:
+            calibrator.add(arm, values)
+        if watchdog is not None and not watchdog.check(arm, values):
+            print(f"[torque] STOP: {watchdog.tripped}", flush=True)
+            return False
+    return True
+
+
+def camera_rgb_to_bgr(image):
+    """Rotate a Record3D frame into replay display coordinates and convert color."""
+    return cv2.cvtColor(np.rot90(image, k=3), cv2.COLOR_RGB2BGR)
+
+
+def _save_checkpoint_images(controller, directory, frame, sequence, vision_profile=None):
     """Save head/right-wrist views while the arm holds its checkpoint pose."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -220,17 +259,28 @@ def _save_checkpoint_images(controller, directory, frame, sequence):
         image, _, _ = camera.get_latest_frame()
         if image is None:
             continue
-        image = np.rot90(image, k=3)
+        image = camera_rgb_to_bgr(image)
         path = directory / f"frame_{frame:04d}_{sequence:02d}_{label}.png"
-        # Record3D head frames are RGB; USB wrist frames are already BGR.
-        if label == "head":
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        # Both head and wrist managers expose Record3D RGB frames.
         cv2.imwrite(str(path), image)
         paths[label] = str(path)
+        if label == "right" and vision_profile is not None:
+            result = inspect_lid(image, vision_profile)
+            overlay = render_inspection(image, result)
+            overlay_path = directory / f"frame_{frame:04d}_{sequence:02d}_right_overlay.png"
+            cv2.imwrite(str(overlay_path), overlay)
+            paths["right_overlay"] = str(overlay_path)
+            paths["vision"] = {
+                "ok": bool(result["ok"]),
+                "reason": result.get("reason"),
+                "edge_points": int(result.get("edge_points", 0)),
+                "marker": result.get("marker").tolist() if result.get("marker") is not None else None,
+            }
     return paths
 
 
-def checkpoint_loop(controller, demo, frame, active_arms, port, directory):
+def checkpoint_loop(controller, demo, frame, active_arms, port, directory,
+                    vision_profile=None, watchdog=None, calibrator=None):
     """Hold at a frame until an external client resumes or aborts."""
     context = zmq.Context()
     socket = context.socket(zmq.REP)
@@ -240,13 +290,15 @@ def checkpoint_loop(controller, demo, frame, active_arms, port, directory):
     poller.register(socket, zmq.POLLIN)
     sequence = 0
     time.sleep(0.75)
-    paths = _save_checkpoint_images(controller, directory, frame, sequence)
+    paths = _save_checkpoint_images(controller, directory, frame, sequence, vision_profile)
     print(f"\nCHECKPOINT frame {frame}: holding pose; images={paths}")
     print(f"Control: python src/replay_checkpoint.py --port {port} --status")
 
     try:
         while not controller.stop_event.is_set():
-            if not poller.poll(200):
+            if not check_torque(controller, active_arms, watchdog, calibrator):
+                return False
+            if not poller.poll(33):
                 continue
             command = socket.recv_pyobj()
             name = command.get("command")
@@ -255,10 +307,11 @@ def checkpoint_loop(controller, demo, frame, active_arms, port, directory):
                     "status": "ok", "state": "holding", "frame": frame,
                     "active_arms": list(active_arms), "images": paths,
                     "bias": {k: v.tolist() for k, v in controller.xyz_bias.items()},
+                    "torque_watchdog": watchdog.tripped if watchdog else None,
                 }
             elif name == "snapshot":
                 sequence += 1
-                paths = _save_checkpoint_images(controller, directory, frame, sequence)
+                paths = _save_checkpoint_images(controller, directory, frame, sequence, vision_profile)
                 reply = {"status": "ok", "frame": frame, "images": paths}
             elif name == "adjust":
                 arm = command.get("arm", "right")
@@ -266,23 +319,16 @@ def checkpoint_loop(controller, demo, frame, active_arms, port, directory):
                     reply = {"status": "error", "message": f"{arm} is not active"}
                 else:
                     requested = np.asarray(command.get("bias"), dtype=float).reshape(3)
-                    delta = float(np.linalg.norm(requested - controller.xyz_bias[arm]))
-                    if delta > MAX_CHECKPOINT_ADJUSTMENT_M + 1e-9:
-                        reply = {
-                            "status": "error",
-                            "message": (f"adjustment {delta * 1000:.1f}mm exceeds "
-                                        f"{MAX_CHECKPOINT_ADJUSTMENT_M * 1000:.0f}mm limit"),
-                        }
-                    else:
-                        applied = controller.set_bias(arm, requested)
-                        controller.apply_action(frame_to_action(demo, frame, active_arms))
-                        time.sleep(0.75)
-                        sequence += 1
-                        paths = _save_checkpoint_images(controller, directory, frame, sequence)
-                        reply = {
-                            "status": "ok", "frame": frame,
-                            "arm": arm, "bias": applied.tolist(), "images": paths,
-                        }
+                    applied = controller.set_bias(arm, requested)
+                    controller.apply_action(frame_to_action(demo, frame, active_arms))
+                    time.sleep(0.75)
+                    sequence += 1
+                    paths = _save_checkpoint_images(
+                        controller, directory, frame, sequence, vision_profile)
+                    reply = {
+                        "status": "ok", "frame": frame,
+                        "arm": arm, "bias": applied.tolist(), "images": paths,
+                    }
             elif name == "resume":
                 socket.send_pyobj({"status": "ok", "state": "resuming", "frame": frame})
                 return True
@@ -317,26 +363,47 @@ def main():
                     help="hold after applying this frame; may be specified more than once")
     ap.add_argument("--checkpoint-port", type=int, default=5561)
     ap.add_argument("--checkpoint-dir", default="/tmp/pasteur_replay_checkpoints")
+    ap.add_argument("--vision-profile", help="marker/transparent-edge JSON profile")
+    torque = ap.add_mutually_exclusive_group()
+    torque.add_argument("--torque-config", help="calibrated joint-torque watchdog JSON")
+    torque.add_argument("--calibrate-torque", metavar="OUTPUT_JSON",
+                        help="supervised known-good replay; write calibrated thresholds")
     ap.add_argument("--host", default="localhost",
                     help="dummy -- no inference server is contacted, but the controller "
                          "still opens its (unused) action sockets.")
     args = ap.parse_args()
 
     demo, n = load_demo(args.demo)
+    vision_profile = VisionProfile.load(args.vision_profile) if args.vision_profile else None
     detected, metrics = detect_active_arms(demo)
     active_arms = resolve_arms(args.arms, detected)
+    grip_goal = longest_grip_start(demo, active_arms)
     print("arm motion metrics:")
     for side, m in metrics.items():
         print(f"  {side}: translation={m['translation_m'] * 1000:.1f}mm, "
               f"rotation={m['rotation_deg']:.1f}deg, gripper_range={m['gripper_range']:.1f}")
     print(f"active arms: {', '.join(active_arms)} ({args.arms})")
+    print(f"longest closed-gripper run: {grip_goal}")
     validate_demo(demo, n, active_arms, _max_step_from_config(args.safety_config))
-    invalid_checkpoints = [i for i in args.checkpoint_frame if not 0 <= i < n]
+    checkpoint_frames = set(args.checkpoint_frame)
+    if vision_profile is not None:
+        checkpoint_frames.add(vision_profile.goal_frame)
+        print(f"vision goal checkpoint: frame {vision_profile.goal_frame}")
+    invalid_checkpoints = [i for i in checkpoint_frames if not 0 <= i < n]
     if invalid_checkpoints:
         raise SystemExit(f"checkpoint frame(s) out of range 0..{n - 1}: {invalid_checkpoints}")
     print("offline demo preflight PASSED")
     if args.dry_run:
         return
+    if not args.torque_config and not args.calibrate_torque:
+        raise SystemExit("live replay requires --torque-config or supervised --calibrate-torque")
+
+    watchdog = TorqueWatchdog.from_file(args.torque_config) if args.torque_config else None
+    calibrator = TorqueCalibrator() if args.calibrate_torque else None
+    if watchdog is not None:
+        missing = sorted(set(active_arms) - set(watchdog.thresholds))
+        if missing:
+            raise SystemExit(f"torque config has no thresholds for active arm(s): {missing}")
 
     controller = PolicyController(
         hpc_host=args.host,
@@ -375,19 +442,30 @@ def main():
             if controller.stop_event.is_set() or not controller.episode_manager.is_active():
                 print(f"interrupted at frame {i}/{n}")
                 break
+            if not check_torque(controller, active_arms, watchdog, calibrator):
+                print(f"torque watchdog aborted at frame {i}/{n}; holding last target")
+                break
             controller.apply_action(frame_to_action(demo, i, active_arms))
             if i % 30 == 0:
                 print(f"  frame {i}/{n}")
             time.sleep(dt)
-            if i in args.checkpoint_frame:
+            if i in checkpoint_frames:
                 if not checkpoint_loop(
                         controller, demo, i, active_arms,
-                        args.checkpoint_port, args.checkpoint_dir):
+                        args.checkpoint_port, args.checkpoint_dir,
+                        vision_profile, watchdog, calibrator):
                     print(f"aborted at checkpoint frame {i}/{n}")
                     break
         else:
             print("replay complete")
     finally:
+        if calibrator is not None:
+            if calibrator.samples:
+                calibrator.save(args.calibrate_torque)
+                print(f"saved torque calibration to {args.calibrate_torque}: "
+                      f"{ {arm: len(values) for arm, values in calibrator.samples.items()} }")
+            else:
+                print("no torque samples collected; calibration file not written")
         controller.stop()
 
 

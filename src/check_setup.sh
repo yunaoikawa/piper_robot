@@ -17,6 +17,8 @@ bad()  { echo "  FAIL  $1"; fail=1; }
 echo "=== required files present ==="
 for f in \
     rollout/safety.py \
+    rollout/torque_safety.py \
+    rollout/lid_vision.py \
     rollout/controller.py \
     robot/cone_e.py \
     robot/camera_id.py \
@@ -24,6 +26,7 @@ for f in \
     src/set_bias.py \
     src/replay_checkpoint.py \
     src/configs/safety.json \
+    src/configs/pasteur_lid_vision.json \
     cloud_inference_control_collect_v2.py \
     replay_demo.py ; do
     [[ -f "$f" ]] && ok "$f" || bad "$f MISSING"
@@ -69,6 +72,15 @@ if [[ -f tests/test_replay_demo.py ]]; then
 else
     bad "tests/test_replay_demo.py MISSING"
 fi
+
+echo "=== vision + torque watchdog unit tests ==="
+for test_file in tests/test_lid_vision.py tests/test_torque_safety.py; do
+    if python "$test_file" >/dev/null 2>&1; then
+        ok "$test_file passed"
+    else
+        bad "$test_file FAILED -- run 'python $test_file' to see why"
+    fi
+done
 
 echo
 if [[ "$fail" -eq 0 ]]; then

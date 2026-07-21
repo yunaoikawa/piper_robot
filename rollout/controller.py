@@ -24,12 +24,6 @@ DATA_DIR = Path("./your_save_dir_here")
 DEFAULT_TASK = "put the flask in the incubator"
 TARGET_H, TARGET_W = 480, 640
 
-# Hard cap on any single-axis EE bias. The largest value ever needed by hand is
-# 0.03 m (outputs/lab/act/horizon/EVAL_RESULTS.md), so 0.06 leaves room to tune
-# while bounding what an automatically-proposed bias can do.
-MAX_BIAS_M = 0.06
-
-
 def quat_to_r6(quat, batched=False):
     rot_mat = R.from_quat(quat, scalar_first=True).as_matrix()
     if batched:
@@ -428,23 +422,17 @@ class PolicyController:
         ]))
 
     def set_bias(self, arm, bias):
-        """Set an arm's xyz bias (metres, robot frame), clamped to MAX_BIAS_M.
-
-        The clamp is the guard against a bad automatic value: a VLM-proposed
-        offset can nudge the arm, never fling it.
-        """
+        """Set an arm's finite xyz bias in metres in the robot frame."""
         b = np.asarray(bias, dtype=float).reshape(3)
-        clamped = np.clip(b, -MAX_BIAS_M, MAX_BIAS_M)
-        if not np.allclose(b, clamped):
-            print(f"[bias] {arm} request {np.round(b, 4)} clamped to "
-                  f"{np.round(clamped, 4)} (limit ±{MAX_BIAS_M} m)", flush=True)
-        self.xyz_bias[arm] = clamped
+        if not np.all(np.isfinite(b)):
+            raise ValueError(f"bias must contain three finite values, got {bias!r}")
+        self.xyz_bias[arm] = b
         # Changing the bias jumps the next target by the delta -- a legitimate
         # discontinuity, not a runaway. Drop the step reference so the safety
         # layer doesn't reject the frame right after a live bias change.
         self.safety.reset(arm)
-        print(f"[bias] {arm} = {np.round(clamped, 4)} m", flush=True)
-        return clamped
+        print(f"[bias] {arm} = {np.round(b, 4)} m", flush=True)
+        return b.copy()
 
     def _apply_arm_action(self, arm, delta_pose, gripper, starting_pose, set_target_fn):
         X_delta = mink.SE3(delta_pose)

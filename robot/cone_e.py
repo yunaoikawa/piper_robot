@@ -179,6 +179,10 @@ class ConeE:
         return self.left_arm.get_joint_positions()
 
     @require_initialization
+    def get_left_joint_torque(self) -> np.ndarray:
+        return self.left_arm.get_joint_torque()
+
+    @require_initialization
     def get_left_gripper_exact(self) -> float:
         """Get left gripper position as open ratio (0.0=closed, 1.0=open)."""
         if self.left_arm.gripper is not None:
@@ -214,6 +218,10 @@ class ConeE:
     @require_initialization
     def get_right_joint_positions(self) -> np.ndarray:
         return self.right_arm.get_joint_positions()
+
+    @require_initialization
+    def get_right_joint_torque(self) -> np.ndarray:
+        return self.right_arm.get_joint_torque()
 
     @require_initialization
     def get_right_gripper_exact(self) -> float:

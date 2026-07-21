@@ -12,7 +12,8 @@ Runs against the robot host, so use the uv .venv (it has pyzmq; no torch needed)
   python src/set_bias.py --arm left --x 0.01
   python src/set_bias.py --reset
 
-Values are metres in the robot frame and are clamped server-side to MAX_BIAS_M.
+Values are metres in the robot frame. Collision reaction is provided by the
+replay torque watchdog, not by an arbitrary bias magnitude cap.
 """
 
 import argparse
