@@ -297,7 +297,7 @@ def _save_checkpoint_images(controller, directory, frame, sequence, vision_profi
     for label, camera in sources.items():
         if camera is None:
             continue
-        image, _, _ = camera.get_latest_frame()
+        image, _, depth = camera.get_latest_frame()
         if image is None:
             continue
         image = camera_rgb_to_bgr(image)
@@ -305,6 +305,21 @@ def _save_checkpoint_images(controller, directory, frame, sequence, vision_profi
         # Both head and wrist managers expose Record3D RGB frames.
         cv2.imwrite(str(path), image)
         paths[label] = str(path)
+        if depth is not None and np.asarray(depth).size:
+            rotated_depth = np.rot90(np.asarray(depth), k=3)
+            depth_path = directory / f"frame_{frame:04d}_{sequence:02d}_{label}_depth.npy"
+            np.save(depth_path, rotated_depth)
+            valid = rotated_depth[np.isfinite(rotated_depth) & (rotated_depth > 0)]
+            if valid.size:
+                lo, hi = np.percentile(valid, [2, 98])
+                normalized = np.clip((rotated_depth - lo) / max(hi - lo, 1e-6), 0, 1)
+                preview = cv2.applyColorMap(
+                    np.uint8(255 * (1.0 - normalized)), cv2.COLORMAP_TURBO)
+                preview[~np.isfinite(rotated_depth) | (rotated_depth <= 0)] = 0
+                preview_path = depth_path.with_suffix(".png")
+                cv2.imwrite(str(preview_path), preview)
+                paths[f"{label}_depth"] = str(depth_path)
+                paths[f"{label}_depth_preview"] = str(preview_path)
         if tag_profile is not None:
             detections = detect_tags(image, tag_profile.family)
             roles = {tag.tag_id: ("lid" if tag.tag_id == tag_profile.lid_id else "fixed")
@@ -564,14 +579,12 @@ def main():
     )
 
     alignment = {"object_delta": np.zeros(3), "servo_delta": np.zeros(3), "servo_ok": False}
-    if args.auto_align:
+    if tag_profile is not None:
         time.sleep(1.0)
         head = _latest_bgr(controller.camera)
         detections = detect_tags(head, tag_profile.family) if head is not None else []
         transform = tag_profile.fit_image_transform(detections)
-        current_lid = lid_pose_robot(
-            detections, tag_profile.lid_id, transform,
-            tag_profile.plane_to_robot_xy)
+        current_lid, tracker_result = tag_profile.locate_lid(head, detections, transform)
         alignment["object_delta"] = object_delta(current_lid, tag_profile.reference_lid_pose)
         tag_profile.validate_delta(alignment["object_delta"])
         validate_tagged_trajectory(
@@ -579,6 +592,8 @@ def main():
             _max_step_from_config(args.safety_config))
         print(f"[tag] current lid={np.round(current_lid, 4)}; "
               f"delta={np.round(alignment['object_delta'], 4)}", flush=True)
+        if tracker_result is not None:
+            print(f"[tag] blue cross={np.round(tracker_result['center'], 1)}px", flush=True)
 
     action_builder = lambda frame: tagged_frame_to_action(
         demo, frame, active_arms, tag_profile, alignment)

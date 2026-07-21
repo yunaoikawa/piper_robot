@@ -13,6 +13,7 @@ from rollout.apriltag_retarget import (
     TagDetection,
     classify_roles,
     detect_tags,
+    detect_blue_cross,
     estimate_tag_camera_pose,
     fit_image_to_robot,
     fit_image_to_plane,
@@ -36,6 +37,15 @@ tags = detect_tags(canvas)
 assert [tag.tag_id for tag in tags] == [1, 2, 3, 9]
 roles = classify_roles(tags)
 assert roles[9] == "lid" and sum(v == "fixed" for v in roles.values()) == 3
+
+blue = np.zeros((100, 100, 3), np.uint8)
+cv2.rectangle(blue, (44, 35), (55, 64), (255, 0, 0), -1)
+cv2.rectangle(blue, (35, 44), (64, 55), (255, 0, 0), -1)
+cross = detect_blue_cross(
+    blue, np.eye(3), np.eye(2), [50, 50],
+    {"hsv_low": [100, 80, 50], "hsv_high": [125, 255, 255],
+     "min_area": 30, "max_area": 1000, "max_distance_m": 1.0})
+assert np.allclose(cross["center"], [49.5, 49.5])
 
 # Verify that the declared 30 mm physical size produces a stable camera pose.
 camera_matrix = np.array([[600.0, 0.0, 350.0],

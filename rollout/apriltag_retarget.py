@@ -195,6 +195,36 @@ def map_points(transform, points):
     return mapped[:, :2] / mapped[:, 2:3]
 
 
+def detect_blue_cross(image_bgr, image_to_plane, plane_to_robot_xy,
+                      reference_robot_xy, config):
+    """Find the blue lid cross nearest its bounded teacher-plane position."""
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    low = np.asarray(config.get("hsv_low", [100, 80, 50]), dtype=np.uint8)
+    high = np.asarray(config.get("hsv_high", [125, 255, 255]), dtype=np.uint8)
+    mask = cv2.inRange(hsv, low, high)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    count, _, stats, centers = cv2.connectedComponentsWithStats(mask)
+    min_area = int(config.get("min_area", 30))
+    max_area = int(config.get("max_area", 500))
+    reference = np.asarray(reference_robot_xy, dtype=float)
+    candidates = []
+    for label in range(1, count):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if not min_area <= area <= max_area:
+            continue
+        plane = map_points(image_to_plane, [centers[label]])[0]
+        robot_xy = np.asarray(plane_to_robot_xy, dtype=float) @ plane
+        distance = float(np.linalg.norm(robot_xy - reference))
+        candidates.append((distance, -area, centers[label], robot_xy))
+    if not candidates:
+        raise ValueError("blue lid cross not detected")
+    best = min(candidates, key=lambda item: (item[0], item[1]))
+    if best[0] > float(config.get("max_distance_m", 0.12)):
+        raise ValueError(f"blue lid cross is {best[0]*1000:.1f}mm from teacher bound")
+    return {"center": np.asarray(best[2]), "robot_xy": np.asarray(best[3]),
+            "distance_m": best[0], "mask": mask}
+
+
 def lid_pose_robot(detections, lid_id, image_to_robot, plane_to_robot_xy=None):
     tag = next((tag for tag in detections if tag.tag_id == lid_id), None)
     if tag is None:
@@ -264,6 +294,7 @@ class TagProfile:
     reference_robot_pivot_xy: np.ndarray
     reference_wrist_corners: np.ndarray | None
     phases: dict
+    lid_tracker: dict | None
     max_translation_m: float = 0.10
     max_yaw_deg: float = 20.0
 
@@ -293,6 +324,7 @@ class TagProfile:
                 cfg.get("reference_robot_pivot_xy", reference[:2]), dtype=float),
             reference_wrist_corners=None if corners is None else np.asarray(corners, dtype=float).reshape(4, 2),
             phases=cfg.get("phases", {}),
+            lid_tracker=cfg.get("lid_tracker"),
             max_translation_m=float(cfg.get("max_translation_m", 0.10)),
             max_yaw_deg=float(cfg.get("max_yaw_deg", 20.0)),
         )
@@ -301,6 +333,15 @@ class TagProfile:
         if self.fixed_plane_corners:
             return fit_image_to_plane(detections, self.fixed_plane_corners)
         return fit_image_to_robot(detections, self.fixed_robot_xy)
+
+    def locate_lid(self, image_bgr, detections, transform):
+        if self.lid_tracker and self.lid_tracker.get("type") == "blue_cross":
+            result = detect_blue_cross(
+                image_bgr, transform, self.plane_to_robot_xy,
+                self.reference_lid_pose[:2], self.lid_tracker)
+            return np.array([*result["robot_xy"], self.reference_lid_pose[2]]), result
+        return (lid_pose_robot(detections, self.lid_id, transform,
+                               self.plane_to_robot_xy), None)
 
     def validate_delta(self, delta):
         if np.linalg.norm(delta[:2]) > self.max_translation_m:
