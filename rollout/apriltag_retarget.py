@@ -57,7 +57,15 @@ def detect_tags(image_bgr: np.ndarray, family: str | None = None,
         dictionary_id = getattr(cv2.aruco, name)
         parameters = cv2.aruco.DetectorParameters()
         parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-        parameters.minMarkerPerimeterRate = 0.01
+        parameters.minMarkerPerimeterRate = 0.005
+        parameters.maxMarkerPerimeterRate = 6.0
+        # More tolerant than the default without accepting the many random IDs
+        # observed at 1.0 on blurred Record3D frames.
+        parameters.errorCorrectionRate = 0.7
+        parameters.adaptiveThreshWinSizeMin = 3
+        parameters.adaptiveThreshWinSizeMax = 53
+        parameters.adaptiveThreshWinSizeStep = 4
+        parameters.minCornerDistanceRate = 0.01
         # The laminated lid tag often appears locally contrast-inverted under
         # the microscope light. OpenCV can test both polarities cheaply.
         parameters.detectInvertedMarker = True

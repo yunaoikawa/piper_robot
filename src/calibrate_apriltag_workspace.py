@@ -29,13 +29,20 @@ def capture_head(timeout=10.0):
     stream = Record3DStream()
     settled = threading.Event()
     frame_holder = [None]
+    best_sharpness = [-1.0]
     frame_count = 0
     def mark_ready():
         nonlocal frame_count
         try:
-            frame_holder[0] = np.array(stream.get_rgb_frame(), copy=True)
+            candidate = np.array(stream.get_rgb_frame(), copy=True)
             frame_count += 1
-            if frame_count >= 12:
+            if frame_count >= 5:
+                gray = cv2.cvtColor(candidate, cv2.COLOR_RGB2GRAY)
+                sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+                if sharpness > best_sharpness[0]:
+                    best_sharpness[0] = sharpness
+                    frame_holder[0] = candidate
+            if frame_count >= 20:
                 settled.set()
         except Exception:
             pass
@@ -106,13 +113,33 @@ def main():
         camera_matrix = None
     else:
         image, intrinsics, camera_matrix = capture_head()
-    detections = detect_tags(image)
-    roles = classify_roles(detections, lid_id_hint)
-    lid_id = next(tag_id for tag_id, role in roles.items() if role == "lid")
     raw_path = (Path(args.raw) if args.raw else
                 Path(args.annotated).with_name(Path(args.annotated).stem + "_raw.png"))
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(raw_path), image)
+    detections = detect_tags(image)
+    detected_ids = {tag.tag_id for tag in detections}
+    if lid_id_hint is None or lid_id_hint in detected_ids:
+        roles = classify_roles(detections, lid_id_hint)
+        lid_id = next(tag_id for tag_id, role in roles.items() if role == "lid")
+    else:
+        # Active-view calibration may expose the fixed workspace tags while the
+        # arm temporarily occludes the lid. Preserve already confirmed roles and
+        # infer only similarly sized new fixed tags; do not relabel a new lid.
+        saved_roles = {int(key): value
+                       for key, value in cfg.get("discovered_ids", {}).items()}
+        fixed_perimeters = [tag.perimeter for tag in detections
+                            if saved_roles.get(tag.tag_id) == "fixed"]
+        fixed_scale = float(np.median(fixed_perimeters)) if fixed_perimeters else None
+        roles = {}
+        for tag in detections:
+            if tag.tag_id in saved_roles:
+                roles[tag.tag_id] = saved_roles[tag.tag_id]
+            elif fixed_scale is not None and tag.perimeter >= 0.70 * fixed_scale:
+                roles[tag.tag_id] = "fixed"
+            else:
+                roles[tag.tag_id] = "ignored"
+        lid_id = int(lid_id_hint)
     annotated = render_tags(image, detections, roles)
     cv2.imwrite(args.annotated, annotated)
 
@@ -121,7 +148,10 @@ def main():
         "family": detections[0].family,
         "lid_id": lid_id,
         "tag_sizes_m": {"lid": 0.03, "fixed": 0.06},
-        "discovered_ids": {str(tag_id): role for tag_id, role in roles.items()},
+        "discovered_ids": {
+            **cfg.get("discovered_ids", {}),
+            **{str(tag_id): role for tag_id, role in roles.items()},
+        },
         "phases": {"approach_ramp_end": 60, "pregrasp": 81, "grip": 82,
                    "retarget_hold_end": 140, "retarget_blend_end": 190,
                    "release": 227},
@@ -162,10 +192,12 @@ def main():
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(cfg, indent=2) + "\n")
     fixed_count = sum(role == "fixed" for role in roles.values())
+    lid_visible = lid_id in detected_ids
     print(json.dumps({"profile": str(path), "raw": str(raw_path),
                       "annotated": args.annotated,
                       "family": detections[0].family, "roles": roles,
                       "fixed_visible": fixed_count,
+                      "lid_visible": lid_visible,
                       "ready_for_planar_fit": fixed_count >= 3}, indent=2))
     if args.capture_head:
         sys.stdout.flush()
