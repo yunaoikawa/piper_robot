@@ -58,7 +58,7 @@ From `outputs/lab/act/horizon/EVAL_RESULTS.md`:
                        • reject → arm holds
                               │
                     cone_e.set_*_ee_target()  ->  clamp_ee_target()  (robot/cone_e.py)
-                       • workspace box, recalibrated, 0/361,838 demo frames clipped
+                       • workspace box, calibrated for commanded active-arm frames
 ```
 
 Both trajectory sources go through the *same* bias + safety + clamp path, so
@@ -100,9 +100,18 @@ existing teleop + `--record` path. It writes an HDF5 with
 
 **2. Replay it:**
 ```bash
+python replay_demo.py path/to/episode.hdf5 --dry-run
 python replay_demo.py path/to/episode.hdf5 --safety-config src/configs/safety.json --rate 15
 # 's' start, 'e' end, 'q' quit.  Start at --rate 15 for a first run, then 30.
 ```
+
+Replay defaults to `--arms auto`: an arm with no meaningful pose or gripper
+change is omitted from every action and holds its current pose. This matters for
+right-arm-only demos, whose recorded left-arm home pose may sit outside the
+active-task workspace. Use `--arms left|right|both` only to override detection
+deliberately. Before connecting to the robot, `--dry-run` validates quaternions,
+workspace bounds, and consecutive steps. A live run also aborts if the first
+target is more than 40 mm or 15 degrees from the post-home pose.
 
 **3. Adjust when the object is off** — from another shell, live, no restart:
 ```bash

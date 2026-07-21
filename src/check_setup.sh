@@ -61,6 +61,14 @@ else
     echo "  (test/test_safety_layer.py not copied -- optional)"
 fi
 
+echo "=== replay preflight unit tests ==="
+if [[ -f tests/test_replay_demo.py ]]; then
+    python tests/test_replay_demo.py >/dev/null 2>&1 && ok "test_replay_demo passed" \
+        || bad "test_replay_demo FAILED -- run 'python tests/test_replay_demo.py' to see why"
+else
+    bad "tests/test_replay_demo.py MISSING"
+fi
+
 echo
 if [[ "$fail" -eq 0 ]]; then
     echo "ALL CHECKS PASSED -- ready for the regression check (docs/PASTEUR_REPLAY_WORKFLOW.md)."
