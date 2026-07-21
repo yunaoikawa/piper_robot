@@ -174,6 +174,8 @@ class PolicyController:
 
                 sock.send_pyobj(reply)
             except Exception as e:
+                if self.stop_event.is_set():
+                    break
                 print(f"[bias] control thread error: {e}", flush=True)
                 # REP sockets must reply or the socket wedges in a bad state.
                 try:
@@ -572,6 +574,10 @@ class PolicyController:
             self.episode_manager.end_episode(reason="shutdown")
         self.stop_event.set()
         self.obs_thread.join(timeout=2.0)
+        # The bias thread owns a socket on self.zmq_context. Let it observe the
+        # stop event and close that socket before terminating the shared
+        # context; otherwise Context.term() can block indefinitely at shutdown.
+        self.bias_thread.join(timeout=2.0)
         self.camera.stop()
         if self.left_wrist_camera:
             self.left_wrist_camera.stop()
