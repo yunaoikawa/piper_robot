@@ -43,6 +43,18 @@ import zmq
 
 from robot.cone_e import WORKSPACE_MAX, WORKSPACE_MIN
 from rollout.controller import PolicyController
+from rollout.apriltag_retarget import (
+    TagProfile,
+    detect_tags,
+    fit_image_to_robot,
+    lid_pose_robot,
+    object_delta,
+    render_tags,
+    retarget_pose,
+    retarget_weight,
+    servo_error,
+    servo_step,
+)
 from rollout.lid_vision import VisionProfile, inspect_lid, render_inspection
 from rollout.safety import MAX_STEP_M
 from rollout.torque_safety import TorqueCalibrator, TorqueWatchdog
@@ -204,6 +216,35 @@ def frame_to_action(demo, i, active_arms=("left", "right")):
     return action
 
 
+def tagged_frame_to_action(demo, i, active_arms, tag_profile, alignment):
+    action = frame_to_action(demo, i, active_arms)
+    if tag_profile is None or "right" not in active_arms:
+        return action
+    delta = np.asarray(alignment["object_delta"]) + np.asarray(alignment["servo_delta"])
+    weight = retarget_weight(i, tag_profile.phases)
+    action["right_ee_pose"] = retarget_pose(
+        action["right_ee_pose"], delta, weight, tag_profile.reference_lid_pose[:2])
+    return action
+
+
+def validate_tagged_trajectory(demo, n, active_arms, tag_profile, alignment, max_step_m):
+    positions = {arm: [] for arm in active_arms}
+    for frame in range(n):
+        action = tagged_frame_to_action(demo, frame, active_arms, tag_profile, alignment)
+        for arm in active_arms:
+            positions[arm].append(np.asarray(action[f"{arm}_ee_pose"])[4:7])
+    errors = []
+    for arm, values in positions.items():
+        values = np.asarray(values)
+        if np.any((values < WORKSPACE_MIN) | (values > WORKSPACE_MAX)):
+            errors.append(f"{arm}: retargeted trajectory leaves workspace")
+        max_step = float(np.linalg.norm(np.diff(values, axis=0), axis=1).max())
+        if max_step > max_step_m:
+            errors.append(f"{arm}: retargeted max step {max_step*1000:.1f}mm exceeds limit")
+    if errors:
+        raise SystemExit("tag-retarget preflight FAILED:\n  " + "\n  ".join(errors))
+
+
 def longest_grip_start(demo, active_arms=("left", "right"), closed_threshold=0.5):
     """Start of the longest contiguous closed-gripper run across active arms."""
     best = None
@@ -244,7 +285,8 @@ def camera_rgb_to_bgr(image):
     return cv2.cvtColor(np.rot90(image, k=3), cv2.COLOR_RGB2BGR)
 
 
-def _save_checkpoint_images(controller, directory, frame, sequence, vision_profile=None):
+def _save_checkpoint_images(controller, directory, frame, sequence, vision_profile=None,
+                            tag_profile=None):
     """Save head/right-wrist views while the arm holds its checkpoint pose."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -264,6 +306,15 @@ def _save_checkpoint_images(controller, directory, frame, sequence, vision_profi
         # Both head and wrist managers expose Record3D RGB frames.
         cv2.imwrite(str(path), image)
         paths[label] = str(path)
+        if tag_profile is not None:
+            detections = detect_tags(image, tag_profile.family)
+            roles = {tag.tag_id: ("lid" if tag.tag_id == tag_profile.lid_id else "fixed")
+                     for tag in detections}
+            tag_overlay = render_tags(image, detections, roles)
+            tag_path = directory / f"frame_{frame:04d}_{sequence:02d}_{label}_tags.png"
+            cv2.imwrite(str(tag_path), tag_overlay)
+            paths[f"{label}_tags"] = str(tag_path)
+            paths[f"{label}_tag_ids"] = [tag.tag_id for tag in detections]
         if label == "right" and vision_profile is not None:
             result = inspect_lid(image, vision_profile)
             overlay = render_inspection(image, result)
@@ -279,8 +330,77 @@ def _save_checkpoint_images(controller, directory, frame, sequence, vision_profi
     return paths
 
 
+def _latest_bgr(camera):
+    image, _, _ = camera.get_latest_frame()
+    return None if image is None else camera_rgb_to_bgr(image)
+
+
+def _lid_tag_from_right(controller, tag_profile):
+    image = _latest_bgr(controller.right_wrist_camera)
+    if image is None:
+        return None
+    # The wrist view makes the tag much larger than the head view; avoiding the
+    # 4x pass keeps the closed-loop observation comfortably below one cycle.
+    detections = detect_tags(image, tag_profile.family, scales=(1, 2))
+    return next((tag for tag in detections if tag.tag_id == tag_profile.lid_id), None)
+
+
+def auto_align_wrist(controller, action_builder, frame, tag_profile, alignment,
+                     active_arms, watchdog=None, calibrator=None):
+    """Numerically estimate wrist image Jacobian and servo before the grasp."""
+    if tag_profile.reference_wrist_corners is None:
+        print("[tag] no reference_wrist_corners; skipping wrist servo", flush=True)
+        return False
+    probes = np.array([0.002, 0.002, np.deg2rad(1.0)])
+
+    def apply_and_observe(delta):
+        alignment["servo_delta"] = np.asarray(delta, dtype=float)
+        controller.apply_action(action_builder(frame))
+        time.sleep(0.6)
+        if not check_torque(controller, active_arms, watchdog, calibrator):
+            return None
+        return _lid_tag_from_right(controller, tag_profile)
+
+    for iteration in range(10):
+        base = np.asarray(alignment["servo_delta"], dtype=float).copy()
+        tag = apply_and_observe(base)
+        if tag is None:
+            print("[tag] wrist servo stopped: lid tag lost", flush=True)
+            return False
+        error = servo_error(tag.corners, tag_profile.reference_wrist_corners)
+        print(f"[tag] servo {iteration}: center={np.round(error[:2], 2)}px "
+              f"angle={np.degrees(error[2]):.2f}deg", flush=True)
+        if np.linalg.norm(error[:2]) <= 3.0 and abs(np.degrees(error[2])) <= 2.0:
+            return True
+        base_feature = np.array([*tag.center, tag.angle])
+        jacobian = np.empty((3, 3), dtype=float)
+        for axis, amount in enumerate(probes):
+            trial = base.copy()
+            trial[axis] += amount
+            observed = apply_and_observe(trial)
+            if observed is None:
+                apply_and_observe(base)
+                print(f"[tag] wrist servo probe {axis} lost lid tag", flush=True)
+                return False
+            feature = np.array([*observed.center, observed.angle])
+            feature[2] = ((feature[2] - base_feature[2] + np.pi) % (2*np.pi) - np.pi) + base_feature[2]
+            jacobian[:, axis] = (feature - base_feature) / amount
+        alignment["servo_delta"] = base
+        step = servo_step(jacobian, error)
+        candidate = base + step
+        if np.linalg.norm(candidate[:2]) > 0.020 or abs(np.degrees(candidate[2])) > 10.0:
+            print(f"[tag] wrist servo stopped: cumulative correction too large {candidate}", flush=True)
+            apply_and_observe(base)
+            return False
+        apply_and_observe(candidate)
+    print("[tag] wrist servo failed to converge in 10 iterations", flush=True)
+    return False
+
+
 def checkpoint_loop(controller, demo, frame, active_arms, port, directory,
-                    vision_profile=None, watchdog=None, calibrator=None):
+                    vision_profile=None, watchdog=None, calibrator=None,
+                    tag_profile=None, alignment=None, action_builder=None,
+                    auto_align=False):
     """Hold at a frame until an external client resumes or aborts."""
     context = zmq.Context()
     socket = context.socket(zmq.REP)
@@ -290,7 +410,16 @@ def checkpoint_loop(controller, demo, frame, active_arms, port, directory,
     poller.register(socket, zmq.POLLIN)
     sequence = 0
     time.sleep(0.75)
-    paths = _save_checkpoint_images(controller, directory, frame, sequence, vision_profile)
+    pregrasp = (tag_profile is not None
+                and frame == int(tag_profile.phases.get("pregrasp", 81)))
+    if auto_align and pregrasp:
+        alignment["servo_ok"] = auto_align_wrist(
+            controller, action_builder, frame, tag_profile, alignment,
+            active_arms, watchdog, calibrator)
+        if not alignment["servo_ok"]:
+            print("[tag] pregrasp alignment failed; holding checkpoint", flush=True)
+    paths = _save_checkpoint_images(
+        controller, directory, frame, sequence, vision_profile, tag_profile)
     print(f"\nCHECKPOINT frame {frame}: holding pose; images={paths}")
     print(f"Control: python src/replay_checkpoint.py --port {port} --status")
 
@@ -308,10 +437,15 @@ def checkpoint_loop(controller, demo, frame, active_arms, port, directory,
                     "active_arms": list(active_arms), "images": paths,
                     "bias": {k: v.tolist() for k, v in controller.xyz_bias.items()},
                     "torque_watchdog": watchdog.tripped if watchdog else None,
+                    "tag_alignment": None if alignment is None else {
+                        "object_delta": np.asarray(alignment["object_delta"]).tolist(),
+                        "servo_delta": np.asarray(alignment["servo_delta"]).tolist(),
+                    },
                 }
             elif name == "snapshot":
                 sequence += 1
-                paths = _save_checkpoint_images(controller, directory, frame, sequence, vision_profile)
+                paths = _save_checkpoint_images(
+                    controller, directory, frame, sequence, vision_profile, tag_profile)
                 reply = {"status": "ok", "frame": frame, "images": paths}
             elif name == "adjust":
                 arm = command.get("arm", "right")
@@ -320,18 +454,21 @@ def checkpoint_loop(controller, demo, frame, active_arms, port, directory,
                 else:
                     requested = np.asarray(command.get("bias"), dtype=float).reshape(3)
                     applied = controller.set_bias(arm, requested)
-                    controller.apply_action(frame_to_action(demo, frame, active_arms))
+                    controller.apply_action(action_builder(frame))
                     time.sleep(0.75)
                     sequence += 1
                     paths = _save_checkpoint_images(
-                        controller, directory, frame, sequence, vision_profile)
+                        controller, directory, frame, sequence, vision_profile, tag_profile)
                     reply = {
                         "status": "ok", "frame": frame,
                         "arm": arm, "bias": applied.tolist(), "images": paths,
                     }
             elif name == "resume":
-                socket.send_pyobj({"status": "ok", "state": "resuming", "frame": frame})
-                return True
+                if auto_align and pregrasp and not alignment.get("servo_ok", False):
+                    reply = {"status": "error", "message": "wrist tag servo has not converged"}
+                else:
+                    socket.send_pyobj({"status": "ok", "state": "resuming", "frame": frame})
+                    return True
             elif name == "abort":
                 socket.send_pyobj({"status": "ok", "state": "aborting", "frame": frame})
                 return False
@@ -364,6 +501,9 @@ def main():
     ap.add_argument("--checkpoint-port", type=int, default=5561)
     ap.add_argument("--checkpoint-dir", default="/tmp/pasteur_replay_checkpoints")
     ap.add_argument("--vision-profile", help="marker/transparent-edge JSON profile")
+    ap.add_argument("--tag-profile", help="calibrated AprilTag workspace/task profile")
+    ap.add_argument("--auto-align", action="store_true",
+                    help="retarget from head tags and run wrist servo at pregrasp")
     torque = ap.add_mutually_exclusive_group()
     torque.add_argument("--torque-config", help="calibrated joint-torque watchdog JSON")
     torque.add_argument("--calibrate-torque", metavar="OUTPUT_JSON",
@@ -375,6 +515,9 @@ def main():
 
     demo, n = load_demo(args.demo)
     vision_profile = VisionProfile.load(args.vision_profile) if args.vision_profile else None
+    tag_profile = TagProfile.load(args.tag_profile) if args.tag_profile else None
+    if args.auto_align and tag_profile is None:
+        raise SystemExit("--auto-align requires --tag-profile")
     detected, metrics = detect_active_arms(demo)
     active_arms = resolve_arms(args.arms, detected)
     grip_goal = longest_grip_start(demo, active_arms)
@@ -389,6 +532,14 @@ def main():
     if vision_profile is not None:
         checkpoint_frames.add(vision_profile.goal_frame)
         print(f"vision goal checkpoint: frame {vision_profile.goal_frame}")
+    if tag_profile is not None:
+        checkpoint_frames.update([
+            int(tag_profile.phases.get("pregrasp", 81)),
+            int(tag_profile.phases.get("grip", 82)),
+            int(tag_profile.phases.get("retarget_hold_end", 140)),
+            int(tag_profile.phases.get("release", 227)) - 1,
+            int(tag_profile.phases.get("release", 227)),
+        ])
     invalid_checkpoints = [i for i in checkpoint_frames if not 0 <= i < n]
     if invalid_checkpoints:
         raise SystemExit(f"checkpoint frame(s) out of range 0..{n - 1}: {invalid_checkpoints}")
@@ -412,6 +563,24 @@ def main():
         bias_port=args.bias_port,
         task="replay",
     )
+
+    alignment = {"object_delta": np.zeros(3), "servo_delta": np.zeros(3), "servo_ok": False}
+    if args.auto_align:
+        time.sleep(1.0)
+        head = _latest_bgr(controller.camera)
+        detections = detect_tags(head, tag_profile.family) if head is not None else []
+        transform = fit_image_to_robot(detections, tag_profile.fixed_robot_xy)
+        current_lid = lid_pose_robot(detections, tag_profile.lid_id, transform)
+        alignment["object_delta"] = object_delta(current_lid, tag_profile.reference_lid_pose)
+        tag_profile.validate_delta(alignment["object_delta"])
+        validate_tagged_trajectory(
+            demo, n, active_arms, tag_profile, alignment,
+            _max_step_from_config(args.safety_config))
+        print(f"[tag] current lid={np.round(current_lid, 4)}; "
+              f"delta={np.round(alignment['object_delta'], 4)}", flush=True)
+
+    action_builder = lambda frame: tagged_frame_to_action(
+        demo, frame, active_arms, tag_profile, alignment)
 
     try:
         print("live start preflight:")
@@ -438,6 +607,8 @@ def main():
     print(f"replaying {n} frames at {args.rate} Hz")
     dt = 1.0 / args.rate
     try:
+        tag_misses = 0
+        previous_tag_center = None
         for i in range(n):
             if controller.stop_event.is_set() or not controller.episode_manager.is_active():
                 print(f"interrupted at frame {i}/{n}")
@@ -445,7 +616,23 @@ def main():
             if not check_torque(controller, active_arms, watchdog, calibrator):
                 print(f"torque watchdog aborted at frame {i}/{n}; holding last target")
                 break
-            controller.apply_action(frame_to_action(demo, i, active_arms))
+            controller.apply_action(action_builder(i))
+            if (args.auto_align and i % 5 == 0
+                    and int(tag_profile.phases.get("grip", 82)) <= i
+                    < int(tag_profile.phases.get("release", 227))):
+                held_tag = _lid_tag_from_right(controller, tag_profile)
+                if held_tag is None:
+                    tag_misses += 1
+                    if tag_misses >= 3:
+                        print(f"[tag] STOP: lid tag lost while gripping at frame {i}")
+                        break
+                else:
+                    tag_misses = 0
+                    if (previous_tag_center is not None
+                            and np.linalg.norm(held_tag.center - previous_tag_center) > 25.0):
+                        print(f"[tag] STOP: lid/gripper relative jump at frame {i}")
+                        break
+                    previous_tag_center = held_tag.center.copy()
             if i % 30 == 0:
                 print(f"  frame {i}/{n}")
             time.sleep(dt)
@@ -453,7 +640,8 @@ def main():
                 if not checkpoint_loop(
                         controller, demo, i, active_arms,
                         args.checkpoint_port, args.checkpoint_dir,
-                        vision_profile, watchdog, calibrator):
+                        vision_profile, watchdog, calibrator,
+                        tag_profile, alignment, action_builder, args.auto_align):
                     print(f"aborted at checkpoint frame {i}/{n}")
                     break
         else:

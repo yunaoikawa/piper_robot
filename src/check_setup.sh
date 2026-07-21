@@ -19,12 +19,14 @@ for f in \
     rollout/safety.py \
     rollout/torque_safety.py \
     rollout/lid_vision.py \
+    rollout/apriltag_retarget.py \
     rollout/controller.py \
     robot/cone_e.py \
     robot/camera_id.py \
     robot/camera_map.json \
     src/set_bias.py \
     src/replay_checkpoint.py \
+    src/calibrate_apriltag_workspace.py \
     src/configs/safety.json \
     src/configs/pasteur_lid_vision.json \
     cloud_inference_control_collect_v2.py \
@@ -74,7 +76,7 @@ else
 fi
 
 echo "=== vision + torque watchdog unit tests ==="
-for test_file in tests/test_lid_vision.py tests/test_torque_safety.py; do
+for test_file in tests/test_lid_vision.py tests/test_torque_safety.py tests/test_apriltag_retarget.py; do
     if python "$test_file" >/dev/null 2>&1; then
         ok "$test_file passed"
     else

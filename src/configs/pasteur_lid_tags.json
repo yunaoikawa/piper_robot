@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "family": "DICT_APRILTAG_36h11",
+  "lid_id": 11,
+  "tag_sizes_m": {
+    "lid": 0.03,
+    "fixed": 0.06
+  },
+  "fixed_robot_xy": {},
+  "reference_lid_pose": null,
+  "reference_wrist_corners": null,
+  "phases": {
+    "approach_ramp_end": 60,
+    "pregrasp": 81,
+    "grip": 82,
+    "retarget_hold_end": 140,
+    "retarget_blend_end": 190,
+    "release": 227
+  },
+  "max_translation_m": 0.1,
+  "max_yaw_deg": 20.0
+}

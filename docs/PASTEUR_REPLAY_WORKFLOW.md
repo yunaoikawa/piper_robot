@@ -16,6 +16,35 @@ of a fixed task.
 This is deliberately the *simplest thing that could work*. Know its limits
 before trusting it.
 
+For placements not seen in the teacher episode, use the AprilTag retargeting
+path instead of searching a constant bias. The lid carries a 30 mm tag and the
+workspace references use 60 mm tags. IDs and dictionary family are discovered
+from the image; they do not need to be typed by the operator.
+
+```bash
+# Discover IDs and save an annotated image. This does not move the robot.
+# Stop any other process holding Record3D cameras first (including cone_e).
+python src/calibrate_apriltag_workspace.py --capture-head \
+  --output src/configs/pasteur_lid_tags.json
+
+# Register at least three fixed tag centers after measuring their robot XY.
+python src/calibrate_apriltag_workspace.py --image head.png \
+  --output src/configs/pasteur_lid_tags.json \
+  --fixed ID X Y --fixed ID X Y --fixed ID X Y \
+  --reference-lid X Y YAW_RAD \
+  --reference-wrist-corners X0 Y0 X1 Y1 X2 Y2 X3 Y3
+
+# Unseen planar placement: head-tag retarget + wrist closed-loop servo.
+python replay_demo.py demo.hdf5 --tag-profile src/configs/pasteur_lid_tags.json \
+  --auto-align --torque-config src/configs/pasteur_lid_torque.json
+```
+
+The shipped tag profile is deliberately incomplete until the fixed-tag robot
+coordinates and one successful reference grasp are registered. `--auto-align`
+fails closed when calibration, three fixed tags, or the lid tag is missing.
+All four black edges of at least three 60 mm fixed tags must be inside the head
+image; a tag clipped by the image boundary or hidden by an arm cannot be decoded.
+
 ## What is grounded in measurement (don't re-lit­igate these)
 
 From `outputs/lab/act/horizon/EVAL_RESULTS.md`:
@@ -150,6 +179,13 @@ teacher ellipse with that marker, crops the narrow expected edge band,
 contrast-stretches and enlarges it 4×, then fits only nearby edge pixels. The
 checkpoint response includes the raw and overlay image paths; display both to
 the operator before resume. An uncertain or missing edge is a stop, not a guess.
+
+For the AprilTag path, frames 0–60 smoothly introduce the object transform,
+frames 60–140 retain it through grasp and initial transport, and frames 140–190
+smoothly return to the teacher trajectory so the fixed destination is not
+shifted. Frame 81 numerically probes X/Y/yaw and converges the wrist tag to the
+stored successful-grasp corners before closing. Each correction is capped at
+2 mm / 2 degrees and failure to converge prevents resume.
 
 ## Regression check — DO THIS FIRST, before any real task
 
