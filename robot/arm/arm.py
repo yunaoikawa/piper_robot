@@ -221,6 +221,16 @@ class ArmNode:
             self.reset()
         q = self.piper.get_joint_state().pos
         self.ik_solver.init(q)
+        if not reset:
+            # PiperJointController starts in damping mode (kp=0). Its normal
+            # reset_to_home() path enables position gains, but that path also
+            # moves the arm. The controller already latched the measured joint
+            # state as its fixed command during construction, so enabling the
+            # configured gains here holds the current pose without a home move.
+            self.piper.set_gain(Gain(
+                self.controller_config.default_kp,
+                self.controller_config.default_kd,
+            ))
 
     def reset(self):
         self.piper.reset_to_home()
