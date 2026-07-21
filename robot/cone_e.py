@@ -74,10 +74,12 @@ def require_initialization(func):
 
 class ConeE:
     def __init__(
-        self, base_max_vel=np.array((1.0, 1.0, 1.57)), base_max_accel=np.array((1.0, 1.0, 1.57)), no_arms=False
+        self, base_max_vel=np.array((1.0, 1.0, 1.57)), base_max_accel=np.array((1.0, 1.0, 1.57)),
+        no_arms=False, reset_arms_on_init=True,
     ):
         self._initialized = False
         self.no_arms = no_arms
+        self.reset_arms_on_init = reset_arms_on_init
 
         if not self.no_arms:
             _HERE = Path(__file__).parent
@@ -99,8 +101,8 @@ class ConeE:
             return
 
         if not self.no_arms:
-            self.left_arm.init()
-            self.right_arm.init()
+            self.left_arm.init(reset=self.reset_arms_on_init)
+            self.right_arm.init(reset=self.reset_arms_on_init)
 
         self._initialized = True
 
@@ -270,17 +272,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Skip initializing the Piper arms. Useful for smoke tests on machines without hardware.",
     )
+    parser.add_argument(
+        "--attach-current",
+        action="store_true",
+        help="Attach to the current joint state without resetting either arm to home.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None):
     args = _parse_args(argv)
-    cone = ConeE(no_arms=args.no_arms)
+    cone = ConeE(
+        no_arms=args.no_arms,
+        reset_arms_on_init=not args.attach_current,
+    )
     rpc_server = RPCServer(cone, args.host, args.port, threaded=False)
     stop_callback = rpc_server.stop
     atexit.register(stop_callback)
 
-    mode_desc = "without arm hardware" if args.no_arms else "with full hardware control"
+    if args.no_arms:
+        mode_desc = "without arm hardware"
+    elif args.attach_current:
+        mode_desc = "attached to current arm state"
+    else:
+        mode_desc = "with full hardware control"
     print(f"ConeE RPC server listening on {args.host}:{args.port} ({mode_desc}).")
     print("Press Ctrl+C to exit.")
 

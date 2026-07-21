@@ -1,3 +1,4 @@
+import os
 import time
 import struct
 import json
@@ -22,7 +23,8 @@ from robot.arm.ik_solver import SingleArmIK
 # =========================
 # Dynamixel constants
 # =========================
-DXL_PORT = "/dev/ttyUSB0"
+DXL_PORT_ENV = "ROBOT_DYNAMIXEL_PORT"
+DXL_BY_ID_GLOB = "usb-FTDI_USB__-__Serial_Converter_*-if00-port0"
 DXL_BAUDRATE = 115200
 DXL_PROTOCOL_VERSION = 2.0
 
@@ -51,15 +53,39 @@ class _SharedDynamixelPort:
     @classmethod
     def get(cls):
         if cls._instance is None:
-            port = PortHandler(DXL_PORT)
+            port_name = _resolve_dynamixel_port()
+            port = PortHandler(port_name)
             if not port.openPort():
-                raise RuntimeError(f"Failed to open {DXL_PORT}")
+                raise RuntimeError(f"Failed to open {port_name}")
             if not port.setBaudRate(DXL_BAUDRATE):
                 raise RuntimeError("Failed to set Dynamixel baudrate")
             packet = PacketHandler(DXL_PROTOCOL_VERSION)
             cls._instance = (port, packet)
-            print(f"[Gripper] Shared Dynamixel port opened: {DXL_PORT}")
+            print(f"[Gripper] Shared Dynamixel port opened: {port_name}")
         return cls._instance
+
+
+def _resolve_dynamixel_port() -> str:
+    """Resolve the gripper adapter without relying on ttyUSB enumeration order."""
+    configured = os.environ.get(DXL_PORT_ENV)
+    if configured:
+        return configured
+
+    by_id = Path("/dev/serial/by-id")
+    candidates = sorted(by_id.glob(DXL_BY_ID_GLOB)) if by_id.exists() else []
+    if len(candidates) == 1:
+        return str(candidates[0])
+    if len(candidates) > 1:
+        raise RuntimeError(
+            f"Multiple Dynamixel adapters found: {candidates}; set {DXL_PORT_ENV}"
+        )
+
+    tty_candidates = sorted(Path("/dev").glob("ttyUSB*"))
+    if len(tty_candidates) == 1:
+        return str(tty_candidates[0])
+    raise RuntimeError(
+        f"Could not identify the Dynamixel adapter; set {DXL_PORT_ENV}"
+    )
 
 
 def _read_pos(packet, port, dxl_id):
@@ -190,8 +216,9 @@ class ArmNode:
             ee_frame=ee_frame,
         )
 
-    def init(self):
-        self.reset()
+    def init(self, reset: bool = True):
+        if reset:
+            self.reset()
         q = self.piper.get_joint_state().pos
         self.ik_solver.init(q)
 
