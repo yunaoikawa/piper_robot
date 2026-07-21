@@ -142,7 +142,10 @@ class PolicyController:
             {'command': 'set_bias', 'arm': 'right', 'bias': [x, y, z]}
             {'command': 'get_bias'}
         """
-        sock = self.zmq_context.socket(zmq.REP)
+        # Use a private context: terminating the policy sockets' context during
+        # shutdown must never wait on a socket owned by this worker thread.
+        context = zmq.Context()
+        sock = context.socket(zmq.REP)
         sock.setsockopt(zmq.LINGER, 0)
         sock.bind(f"tcp://*:{self.bias_port}")
         print(f"Bias control listening on port {self.bias_port}")
@@ -184,6 +187,7 @@ class PolicyController:
                     pass
 
         sock.close()
+        context.term()
 
     def _setup_zmq(self, hpc_host, obs_port, action_port):
         self.zmq_context = zmq.Context()
