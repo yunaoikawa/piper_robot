@@ -4,6 +4,7 @@ import cv2
 import time
 import threading
 import numpy as np
+from robot.camera_id import load_camera_map
 from record3d import Record3DStream
 
 
@@ -59,7 +60,7 @@ class CameraFeedManager:
             print("WARNING: No iPhone devices found. RGB recording disabled.")
             return
 
-        dev = devs[1]
+        cam_map = load_camera_map(); dev = devs[cam_map.get("head", 0)]
         self.session = Record3DStream()
         self.session.on_new_frame = self._on_new_frame
         self.session.on_stream_stopped = lambda: print('iPhone stream stopped')

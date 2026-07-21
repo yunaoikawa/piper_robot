@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "Keep-out zones for rollout/safety.py. Axis-aligned boxes in ROBOT FRAME metres,",
+    "the same frame as WORKSPACE_MIN/MAX in robot/cone_e.py.",
+    "",
+    "Starts EMPTY on purpose: a wrong zone is worse than no zone, because it rejects",
+    "legitimate motion and looks like the policy failing. Measure a real one before",
+    "adding it -- robot/test_boundaries.py EXPLORE mode prints live EE positions and",
+    "snapshots them on ENTER, so drive the arm around the volume you want forbidden",
+    "and read off lo/hi.",
+    "",
+    "Sanity-check any zone against the demo envelope before use:",
+    "  observed action+state range over all tasks was",
+    "  x [-0.004, 0.539]  y [-0.126, 0.387]  z [0.599, 1.052]",
+    "A zone overlapping that range will fire during normal operation.",
+    "",
+    "max_step_m bounds the jump between consecutive commanded targets. The demo",
+    "maximum over 360,863 transitions at 30 Hz was 29.93 mm, so 40 mm cannot trigger",
+    "on normal motion -- only on a genuine runaway."
+  ],
+  "max_step_m": 0.04,
+  "keep_out": []
+}

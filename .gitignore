@@ -17,6 +17,6 @@ inference_outcome/
 test/
 *.swp
 tmp/
-tmp/
 archive/
 slurm-*.out
+pipette/

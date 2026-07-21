@@ -30,6 +30,16 @@ def main():
                         help='Minimum manipulability score (default: 0.005)')
     parser.add_argument('--task', type=str, default='put the flask in the incubator',
                         help='Task description for the policy')
+    parser.add_argument('--safety-config', type=str, default=None,
+                        help='JSON file of keep-out zones and the per-step motion '
+                             'limit (see rollout/safety.py). Omit for bounds-only.')
+    parser.add_argument('--bias', type=float, nargs=3, metavar=('X', 'Y', 'Z'),
+                        default=None,
+                        help='Initial right-arm EE bias in metres, robot frame. '
+                             'Replaces the old server-side --z-bias; change it live '
+                             'on the bias port instead of restarting.')
+    parser.add_argument('--bias-port', type=int, default=5560,
+                        help='Port serving set_bias/get_bias (default: 5560)')
     args = parser.parse_args()
 
     # Create controller
@@ -43,7 +53,12 @@ def main():
         episode_timeout=args.episode_timeout,
         manipulability_threshold=args.manipulability_threshold,
         task=args.task,
+        safety_config=args.safety_config,
+        bias_port=args.bias_port,
     )
+
+    if args.bias is not None:
+        controller.set_bias('right', args.bias)
     atexit.register(controller.stop)
 
     # Print configuration
