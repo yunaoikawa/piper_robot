@@ -67,6 +67,16 @@ def main():
     ap.add_argument("--reference-wrist-corners", nargs=8, type=float)
     args = ap.parse_args()
 
+    path = Path(args.output)
+    cfg = json.loads(path.read_text()) if path.exists() else {}
+    # Once the operator has confirmed the lid ID, never reclassify it from
+    # apparent image size: a distant 60 mm workspace tag can look smaller than
+    # the 30 mm lid tag. An explicit CLI override still takes precedence.
+    configured_lid_id = cfg.get("lid_id")
+    lid_id_hint = (args.lid_id if args.lid_id is not None
+                   else int(configured_lid_id) if configured_lid_id is not None
+                   else None)
+
     if args.capture_head and os.environ.get("PASTEUR_TAG_CAPTURE_WORKER") != "1":
         environment = os.environ.copy()
         environment["PASTEUR_TAG_CAPTURE_WORKER"] = "1"
@@ -88,13 +98,11 @@ def main():
     else:
         image, intrinsics, camera_matrix = capture_head()
     detections = detect_tags(image)
-    roles = classify_roles(detections, args.lid_id)
+    roles = classify_roles(detections, lid_id_hint)
     lid_id = next(tag_id for tag_id, role in roles.items() if role == "lid")
     annotated = render_tags(image, detections, roles)
     cv2.imwrite(args.annotated, annotated)
 
-    path = Path(args.output)
-    cfg = json.loads(path.read_text()) if path.exists() else {}
     cfg.update({
         "version": 1,
         "family": detections[0].family,

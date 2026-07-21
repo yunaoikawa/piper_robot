@@ -18,5 +18,8 @@
     "release": 227
   },
   "max_translation_m": 0.1,
-  "max_yaw_deg": 20.0
+  "max_yaw_deg": 20.0,
+  "discovered_ids": {
+    "11": "lid"
+  }
 }

@@ -42,6 +42,8 @@ python replay_demo.py demo.hdf5 --tag-profile src/configs/pasteur_lid_tags.json 
 The shipped tag profile is deliberately incomplete until the fixed-tag robot
 coordinates and one successful reference grasp are registered. `--auto-align`
 fails closed when calibration, three fixed tags, or the lid tag is missing.
+The confirmed lid tag is ID 11. Once stored, calibration always reuses that ID
+instead of guessing from apparent tag size; ID 12 on the microscope is fixed.
 All four black edges of at least three 60 mm fixed tags must be inside the head
 image; a tag clipped by the image boundary or hidden by an arm cannot be decoded.
 

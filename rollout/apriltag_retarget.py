@@ -121,7 +121,7 @@ def estimate_tag_camera_pose(tag, camera_matrix, size_m, distortion=None):
 
 
 def classify_roles(detections, lid_id=None):
-    """Classify one lid tag and all other detections as fixed references."""
+    """Classify a known lid tag; size inference is discovery-only."""
     if not detections:
         raise ValueError("no AprilTags detected")
     ids = [tag.tag_id for tag in detections]
