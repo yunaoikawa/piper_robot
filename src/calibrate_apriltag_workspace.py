@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -26,20 +27,27 @@ def capture_head(timeout=10.0):
     if index >= len(devices):
         raise RuntimeError(f"head camera index {index} unavailable; found {len(devices)} devices")
     stream = Record3DStream()
+    settled = threading.Event()
+    frame_holder = [None]
     frame_count = 0
     def mark_ready():
         nonlocal frame_count
-        frame_count += 1
+        try:
+            frame_holder[0] = np.array(stream.get_rgb_frame(), copy=True)
+            frame_count += 1
+            if frame_count >= 12:
+                settled.set()
+        except Exception:
+            pass
     stream.on_new_frame = mark_ready
+    stream.on_stream_stopped = lambda: None
     stream.connect(devices[index])
-    deadline = time.time() + timeout
     # The first Record3D frames are often blurred or underexposed. Detection
     # should use a settled frame, particularly for the 30 mm lid tag.
-    while frame_count < 12 and time.time() < deadline:
-        time.sleep(0.02)
-    if frame_count == 0:
+    settled.wait(timeout=timeout)
+    if frame_holder[0] is None:
         raise RuntimeError("timed out waiting for head camera")
-    rgb = np.asarray(stream.get_rgb_frame())
+    rgb = frame_holder[0]
     intrinsics = stream.get_intrinsic_mat()
     # record3d's native destructor/disconnect can segfault on this host. Keep
     # the session alive until the one-shot process exits (see os._exit below).
@@ -60,6 +68,7 @@ def main():
     source.add_argument("--capture-head", action="store_true")
     ap.add_argument("--output", required=True, help="profile JSON to create/update")
     ap.add_argument("--annotated", default="/tmp/apriltag_discovery.png")
+    ap.add_argument("--raw", help="unmodified capture (default: ANNOTATED_raw.png)")
     ap.add_argument("--lid-id", type=int, help="override automatic 30mm lid-tag classification")
     ap.add_argument("--fixed", nargs=3, action="append", metavar=("ID", "ROBOT_X", "ROBOT_Y"),
                     help="register a 60mm fixed tag center; repeat >=3 times")
@@ -100,6 +109,10 @@ def main():
     detections = detect_tags(image)
     roles = classify_roles(detections, lid_id_hint)
     lid_id = next(tag_id for tag_id, role in roles.items() if role == "lid")
+    raw_path = (Path(args.raw) if args.raw else
+                Path(args.annotated).with_name(Path(args.annotated).stem + "_raw.png"))
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(raw_path), image)
     annotated = render_tags(image, detections, roles)
     cv2.imwrite(args.annotated, annotated)
 
@@ -149,7 +162,8 @@ def main():
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(cfg, indent=2) + "\n")
     fixed_count = sum(role == "fixed" for role in roles.values())
-    print(json.dumps({"profile": str(path), "annotated": args.annotated,
+    print(json.dumps({"profile": str(path), "raw": str(raw_path),
+                      "annotated": args.annotated,
                       "family": detections[0].family, "roles": roles,
                       "fixed_visible": fixed_count,
                       "ready_for_planar_fit": fixed_count >= 3}, indent=2))
