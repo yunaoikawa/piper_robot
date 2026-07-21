@@ -22,6 +22,7 @@ for f in \
     robot/camera_id.py \
     robot/camera_map.json \
     src/set_bias.py \
+    src/replay_checkpoint.py \
     src/configs/safety.json \
     cloud_inference_control_collect_v2.py \
     replay_demo.py ; do

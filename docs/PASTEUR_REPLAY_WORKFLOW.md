@@ -113,6 +113,19 @@ deliberately. Before connecting to the robot, `--dry-run` validates quaternions,
 workspace bounds, and consecutive steps. A live run also aborts if the first
 target is more than 40 mm or 15 degrees from the post-home pose.
 
+For supervised contact alignment, pause just before the grasp and adjust in
+small increments while the arm holds its pose:
+
+```bash
+python replay_demo.py demo.hdf5 --rate 15 --checkpoint-frame 70
+python src/replay_checkpoint.py --status
+python src/replay_checkpoint.py --bias 0 0 -0.005  # reapply frame + save new images
+python src/replay_checkpoint.py --resume           # or --abort
+```
+
+Each adjustment is limited to 10 mm from the previous bias. Checkpoint images
+are written under `/tmp/pasteur_replay_checkpoints` by default.
+
 **3. Adjust when the object is off** — from another shell, live, no restart:
 ```bash
 python src/set_bias.py                 # show current bias + safety rejection count

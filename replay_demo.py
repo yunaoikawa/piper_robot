@@ -34,9 +34,12 @@ Usage (on pasteur, in the robot-control env):
 import argparse
 import json
 import time
+from pathlib import Path
 
+import cv2
 import h5py
 import numpy as np
+import zmq
 
 from robot.cone_e import WORKSPACE_MAX, WORKSPACE_MIN
 from rollout.controller import PolicyController
@@ -53,6 +56,7 @@ ARM_ROTATION_EPS_DEG = 1.0
 ARM_GRIPPER_EPS = 0.1
 DEFAULT_MAX_START_DISTANCE_M = 0.040
 DEFAULT_MAX_START_ANGLE_DEG = 15.0
+MAX_CHECKPOINT_ADJUSTMENT_M = 0.010
 
 
 def load_demo(path):
@@ -201,6 +205,99 @@ def frame_to_action(demo, i, active_arms=("left", "right")):
     return action
 
 
+def _save_checkpoint_images(controller, directory, frame, sequence):
+    """Save head/right-wrist views while the arm holds its checkpoint pose."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = {}
+    sources = {
+        "head": controller.camera,
+        "right": controller.right_wrist_camera,
+    }
+    for label, camera in sources.items():
+        if camera is None:
+            continue
+        image, _, _ = camera.get_latest_frame()
+        if image is None:
+            continue
+        image = np.rot90(image, k=3)
+        path = directory / f"frame_{frame:04d}_{sequence:02d}_{label}.png"
+        # Record3D head frames are RGB; USB wrist frames are already BGR.
+        if label == "head":
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(str(path), image)
+        paths[label] = str(path)
+    return paths
+
+
+def checkpoint_loop(controller, demo, frame, active_arms, port, directory):
+    """Hold at a frame until an external client resumes or aborts."""
+    context = zmq.Context()
+    socket = context.socket(zmq.REP)
+    socket.setsockopt(zmq.LINGER, 0)
+    socket.bind(f"tcp://*:{port}")
+    poller = zmq.Poller()
+    poller.register(socket, zmq.POLLIN)
+    sequence = 0
+    time.sleep(0.75)
+    paths = _save_checkpoint_images(controller, directory, frame, sequence)
+    print(f"\nCHECKPOINT frame {frame}: holding pose; images={paths}")
+    print(f"Control: python src/replay_checkpoint.py --port {port} --status")
+
+    try:
+        while not controller.stop_event.is_set():
+            if not poller.poll(200):
+                continue
+            command = socket.recv_pyobj()
+            name = command.get("command")
+            if name == "status":
+                reply = {
+                    "status": "ok", "state": "holding", "frame": frame,
+                    "active_arms": list(active_arms), "images": paths,
+                    "bias": {k: v.tolist() for k, v in controller.xyz_bias.items()},
+                }
+            elif name == "snapshot":
+                sequence += 1
+                paths = _save_checkpoint_images(controller, directory, frame, sequence)
+                reply = {"status": "ok", "frame": frame, "images": paths}
+            elif name == "adjust":
+                arm = command.get("arm", "right")
+                if arm not in active_arms:
+                    reply = {"status": "error", "message": f"{arm} is not active"}
+                else:
+                    requested = np.asarray(command.get("bias"), dtype=float).reshape(3)
+                    delta = float(np.linalg.norm(requested - controller.xyz_bias[arm]))
+                    if delta > MAX_CHECKPOINT_ADJUSTMENT_M + 1e-9:
+                        reply = {
+                            "status": "error",
+                            "message": (f"adjustment {delta * 1000:.1f}mm exceeds "
+                                        f"{MAX_CHECKPOINT_ADJUSTMENT_M * 1000:.0f}mm limit"),
+                        }
+                    else:
+                        applied = controller.set_bias(arm, requested)
+                        controller.apply_action(frame_to_action(demo, frame, active_arms))
+                        time.sleep(0.75)
+                        sequence += 1
+                        paths = _save_checkpoint_images(controller, directory, frame, sequence)
+                        reply = {
+                            "status": "ok", "frame": frame,
+                            "arm": arm, "bias": applied.tolist(), "images": paths,
+                        }
+            elif name == "resume":
+                socket.send_pyobj({"status": "ok", "state": "resuming", "frame": frame})
+                return True
+            elif name == "abort":
+                socket.send_pyobj({"status": "ok", "state": "aborting", "frame": frame})
+                return False
+            else:
+                reply = {"status": "error", "message": f"unknown command {name!r}"}
+            socket.send_pyobj(reply)
+    finally:
+        socket.close()
+        context.term()
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("demo", help="recorded HDF5 episode (from rollout/recorder.py)")
@@ -216,6 +313,10 @@ def main():
                     default=DEFAULT_MAX_START_DISTANCE_M, metavar="METRES")
     ap.add_argument("--max-start-angle", type=float,
                     default=DEFAULT_MAX_START_ANGLE_DEG, metavar="DEGREES")
+    ap.add_argument("--checkpoint-frame", type=int, action="append", default=[],
+                    help="hold after applying this frame; may be specified more than once")
+    ap.add_argument("--checkpoint-port", type=int, default=5561)
+    ap.add_argument("--checkpoint-dir", default="/tmp/pasteur_replay_checkpoints")
     ap.add_argument("--host", default="localhost",
                     help="dummy -- no inference server is contacted, but the controller "
                          "still opens its (unused) action sockets.")
@@ -230,6 +331,9 @@ def main():
               f"rotation={m['rotation_deg']:.1f}deg, gripper_range={m['gripper_range']:.1f}")
     print(f"active arms: {', '.join(active_arms)} ({args.arms})")
     validate_demo(demo, n, active_arms, _max_step_from_config(args.safety_config))
+    invalid_checkpoints = [i for i in args.checkpoint_frame if not 0 <= i < n]
+    if invalid_checkpoints:
+        raise SystemExit(f"checkpoint frame(s) out of range 0..{n - 1}: {invalid_checkpoints}")
     print("offline demo preflight PASSED")
     if args.dry_run:
         return
@@ -275,6 +379,12 @@ def main():
             if i % 30 == 0:
                 print(f"  frame {i}/{n}")
             time.sleep(dt)
+            if i in args.checkpoint_frame:
+                if not checkpoint_loop(
+                        controller, demo, i, active_arms,
+                        args.checkpoint_port, args.checkpoint_dir):
+                    print(f"aborted at checkpoint frame {i}/{n}")
+                    break
         else:
             print("replay complete")
     finally:
