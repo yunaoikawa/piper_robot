@@ -592,5 +592,6 @@ class PolicyController:
         self.keyboard.stop()
         self.obs_socket.close()
         self.action_socket.close()
+        self.control_socket.close()
         self.zmq_context.term()
         print("Policy controller stopped")
