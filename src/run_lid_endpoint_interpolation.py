@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from robot.rpc import RPCClient
 from rollout.endpoint_interpolation import EndpointCalibration
 from rollout.sam_segmentation import detect_blue_cross_center
-from src.calibrate_lid_endpoints import capture_left
+from src.calibrate_lid_endpoints import capture_observer
 
 
 def execute_pregrasp(rpc, target_pose, max_step_m=0.025):
@@ -48,7 +48,7 @@ def main():
     args = parser.parse_args()
 
     calibration = EndpointCalibration.load(args.config)
-    image, timestamp = capture_left(10.0)
+    image, timestamp = capture_observer(calibration.observer_camera, 10.0)
     feature = (
         np.asarray(args.feature_px, dtype=float)
         if args.feature_px is not None
@@ -59,15 +59,18 @@ def main():
     result = calibration.interpolate(feature, reject_outside=args.reject_outside)
 
     rpc = RPCClient("localhost", 8081, timeout_ms=10000)
-    rpc.init()
-    current_observer = np.asarray(rpc.get_left_ee_pose().parameters(), dtype=float)
-    observer_shift = float(
-        np.linalg.norm(current_observer[4:7] - calibration.observer_pose[4:7])
-    )
-    if observer_shift > 0.005:
-        raise SystemExit(
-            f"left observer moved {observer_shift * 1000:.1f}mm since calibration"
+    observer_shift = None
+    if calibration.observer_camera == "left":
+        if calibration.observer_pose is None:
+            raise SystemExit("left-observer calibration is missing observer pose")
+        current_observer = np.asarray(rpc.get_left_ee_pose().parameters(), dtype=float)
+        observer_shift = float(
+            np.linalg.norm(current_observer[4:7] - calibration.observer_pose[4:7])
         )
+        if observer_shift > 0.005:
+            raise SystemExit(
+                f"left observer moved {observer_shift * 1000:.1f}mm since calibration"
+            )
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -115,7 +118,10 @@ def main():
         "unclamped_fraction": result.unclamped_fraction,
         "cross_track_error_px": result.cross_track_error_px,
         "target_pose": result.target_pose.round(6).tolist(),
-        "observer_shift_mm": observer_shift * 1000.0,
+        "observer_camera": calibration.observer_camera,
+        "observer_shift_mm": (
+            None if observer_shift is None else observer_shift * 1000.0
+        ),
         "raw_image": str(raw_path),
         "overlay_image": str(overlay_path),
         "executed": bool(args.execute_pregrasp),

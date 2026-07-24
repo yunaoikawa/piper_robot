@@ -13,19 +13,24 @@ import numpy as np
 class EndpointSample:
     feature_px: np.ndarray
     pregrasp_pose: np.ndarray
+    feature_status: str = "confirmed"
 
     @classmethod
     def from_dict(cls, value):
         return cls(
             feature_px=np.asarray(value["feature_px"], dtype=float).reshape(2),
             pregrasp_pose=np.asarray(value["pregrasp_pose_wxyz_xyz"], dtype=float).reshape(7),
+            feature_status=value.get("feature_status", "confirmed"),
         )
 
     def to_dict(self):
-        return {
+        value = {
             "feature_px": self.feature_px.tolist(),
             "pregrasp_pose_wxyz_xyz": self.pregrasp_pose.tolist(),
         }
+        if self.feature_status != "confirmed":
+            value["feature_status"] = self.feature_status
+        return value
 
 
 @dataclass(frozen=True)
@@ -40,9 +45,10 @@ class InterpolationResult:
 class EndpointCalibration:
     left: EndpointSample
     right: EndpointSample
-    observer_pose: np.ndarray
+    observer_pose: np.ndarray | None
     contact_drop_m: float = 0.010
     max_cross_track_px: float = 25.0
+    observer_camera: str = "left"
 
     @classmethod
     def load(cls, path: str | Path):
@@ -50,16 +56,21 @@ class EndpointCalibration:
         return cls(
             left=EndpointSample.from_dict(value["endpoints"]["left"]),
             right=EndpointSample.from_dict(value["endpoints"]["right"]),
-            observer_pose=np.asarray(value["observer_pose_wxyz_xyz"], dtype=float).reshape(7),
+            observer_pose=(
+                np.asarray(value["observer_pose_wxyz_xyz"], dtype=float).reshape(7)
+                if "observer_pose_wxyz_xyz" in value
+                else None
+            ),
             contact_drop_m=float(value.get("contact_drop_m", 0.010)),
             max_cross_track_px=float(value.get("max_cross_track_px", 25.0)),
+            observer_camera=value.get("observer_camera", "left"),
         )
 
     def save(self, path: str | Path):
         output = {
             "version": 1,
             "feature_source": "blue_cross",
-            "observer_pose_wxyz_xyz": self.observer_pose.tolist(),
+            "observer_camera": self.observer_camera,
             "contact_drop_m": self.contact_drop_m,
             "max_cross_track_px": self.max_cross_track_px,
             "endpoints": {
@@ -67,11 +78,22 @@ class EndpointCalibration:
                 "right": self.right.to_dict(),
             },
         }
+        if self.observer_pose is not None:
+            output["observer_pose_wxyz_xyz"] = self.observer_pose.tolist()
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(output, indent=2) + "\n")
 
     def interpolate(self, feature_px, *, reject_outside: bool = False) -> InterpolationResult:
+        unconfirmed = [
+            side
+            for side, sample in (("left", self.left), ("right", self.right))
+            if sample.feature_status != "confirmed"
+        ]
+        if unconfirmed:
+            raise ValueError(
+                "endpoint image feature needs recalibration: " + ", ".join(unconfirmed)
+            )
         feature = np.asarray(feature_px, dtype=float).reshape(2)
         start = self.left.feature_px
         axis = self.right.feature_px - start

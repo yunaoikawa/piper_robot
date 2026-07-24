@@ -31,6 +31,35 @@ assert np.allclose(middle.target_pose[4:6], [0.20, 0.01])
 assert np.allclose(middle.target_pose[:4], left_pose[:4])
 assert middle.target_pose[6] == left_pose[6]
 
+head_path = Path("/tmp/test_head_endpoint_calibration.json")
+head_cal = EndpointCalibration(
+    left=cal.left,
+    right=cal.right,
+    observer_pose=None,
+    observer_camera="head",
+)
+head_cal.save(head_path)
+loaded_head = EndpointCalibration.load(head_path)
+assert loaded_head.observer_camera == "head"
+assert loaded_head.observer_pose is None
+head_path.unlink()
+
+uncalibrated = EndpointCalibration(
+    left=cal.left,
+    right=EndpointSample(
+        cal.right.feature_px,
+        cal.right.pregrasp_pose,
+        feature_status="recognition_wrong_recompute_with_sam",
+    ),
+    observer_pose=None,
+    observer_camera="head",
+)
+try:
+    uncalibrated.interpolate([300, 250])
+    raise AssertionError("known-wrong endpoint feature must not be used")
+except ValueError as exc:
+    assert "right" in str(exc)
+
 try:
     cal.interpolate([300, 300])
     raise AssertionError("cross-track feature should be rejected")

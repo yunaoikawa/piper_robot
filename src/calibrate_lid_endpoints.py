@@ -21,12 +21,12 @@ from rollout.camera import USBWristCameraFeedManager
 from rollout.sam_segmentation import detect_blue_cross_center
 
 
-def capture_left(timeout_s: float):
+def capture_observer(camera_label: str, timeout_s: float):
     stop = threading.Event()
     camera = USBWristCameraFeedManager(
         stop,
-        device_index=load_camera_map().get("left", 1),
-        label="left endpoint observer",
+        device_index=load_camera_map().get(camera_label, 0),
+        label=f"{camera_label} endpoint observer",
     )
     camera.start()
     deadline = time.time() + timeout_s
@@ -42,12 +42,18 @@ def capture_left(timeout_s: float):
     finally:
         stop.set()
         camera.stop()
-    raise RuntimeError("left camera did not produce a usable frame")
+    raise RuntimeError(f"{camera_label} camera did not produce a usable frame")
+
+
+def capture_left(timeout_s: float):
+    """Backward-compatible left-observer capture helper."""
+    return capture_observer("left", timeout_s)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--side", choices=("left", "right"), required=True)
+    parser.add_argument("--camera", choices=("head", "left"), default="left")
     parser.add_argument(
         "--config", default="src/configs/pasteur_lid_endpoints.json"
     )
@@ -57,7 +63,7 @@ def main():
     parser.add_argument("--timeout-s", type=float, default=10.0)
     args = parser.parse_args()
 
-    image, timestamp = capture_left(args.timeout_s)
+    image, timestamp = capture_observer(args.camera, args.timeout_s)
     feature = (
         np.asarray(args.feature_px, dtype=float)
         if args.feature_px is not None
@@ -67,9 +73,10 @@ def main():
         raise SystemExit("blue cross not detected; use --feature-px after inspecting image")
 
     rpc = RPCClient("localhost", 8081, timeout_ms=10000)
-    rpc.init()
     right_pose = np.asarray(rpc.get_right_ee_pose().parameters(), dtype=float)
-    observer_pose = np.asarray(rpc.get_left_ee_pose().parameters(), dtype=float)
+    observer_pose = None
+    if args.camera == "left":
+        observer_pose = np.asarray(rpc.get_left_ee_pose().parameters(), dtype=float)
 
     config_path = Path(args.config)
     if config_path.exists():
@@ -82,7 +89,17 @@ def main():
             "max_cross_track_px": 25.0,
             "endpoints": {},
         }
-    config["observer_pose_wxyz_xyz"] = observer_pose.tolist()
+    configured_camera = config.get("observer_camera", "left")
+    if config.get("endpoints") and configured_camera != args.camera:
+        raise SystemExit(
+            f"endpoint config already uses {configured_camera} camera; "
+            f"cannot mix it with {args.camera}"
+        )
+    config["observer_camera"] = args.camera
+    if observer_pose is None:
+        config.pop("observer_pose_wxyz_xyz", None)
+    else:
+        config["observer_pose_wxyz_xyz"] = observer_pose.tolist()
     config["contact_drop_m"] = float(args.contact_drop_m)
     config.setdefault("endpoints", {})[args.side] = {
         "feature_px": np.asarray(feature, dtype=float).tolist(),
@@ -125,7 +142,10 @@ def main():
                 "side": args.side,
                 "feature_px": np.asarray(feature).round(2).tolist(),
                 "right_pregrasp_pose": right_pose.round(6).tolist(),
-                "observer_pose": observer_pose.round(6).tolist(),
+                "observer_camera": args.camera,
+                "observer_pose": (
+                    None if observer_pose is None else observer_pose.round(6).tolist()
+                ),
                 "raw_image": str(raw_path),
                 "overlay_image": str(overlay_path),
                 "config": str(config_path),
