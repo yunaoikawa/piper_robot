@@ -20,10 +20,10 @@ OPEN-LOOP CAVEAT (read before trusting it):
   the grasp needs a mid-motion correction, replay will not adapt -- that is what
   the policy (ACT / pi0.5) is for. Use replay only for near-fixed placements.
 
-CONTACT REACTION:
-  A calibrated per-joint torque watchdog is required for normal live replay.
-  Use --calibrate-torque once on a supervised known-good replay, then pass the
-  resulting file with --torque-config.
+CONTACT TELEMETRY:
+  Joint torque can be logged/calibrated, but the absolute-threshold watchdog is
+  optional.  It is not a substitute for contact-aware retreat: stopping target
+  submission can leave the controller holding the last contact target.
 
 Usage (on pasteur, in the robot-control env):
   python replay_demo.py path/to/episode.hdf5 --safety-config src/configs/safety.json
@@ -560,9 +560,6 @@ def main():
     print("offline demo preflight PASSED")
     if args.dry_run:
         return
-    if not args.torque_config and not args.calibrate_torque:
-        raise SystemExit("live replay requires --torque-config or supervised --calibrate-torque")
-
     watchdog = TorqueWatchdog.from_file(args.torque_config) if args.torque_config else None
     calibrator = TorqueCalibrator() if args.calibrate_torque else None
     if watchdog is not None:

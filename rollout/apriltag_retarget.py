@@ -203,7 +203,7 @@ def detect_blue_cross(image_bgr, image_to_plane, plane_to_robot_xy,
     high = np.asarray(config.get("hsv_high", [125, 255, 255]), dtype=np.uint8)
     mask = cv2.inRange(hsv, low, high)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-    count, _, stats, centers = cv2.connectedComponentsWithStats(mask)
+    count, labels, stats, centers = cv2.connectedComponentsWithStats(mask)
     min_area = int(config.get("min_area", 30))
     max_area = int(config.get("max_area", 500))
     reference = np.asarray(reference_robot_xy, dtype=float)
@@ -212,17 +212,54 @@ def detect_blue_cross(image_bgr, image_to_plane, plane_to_robot_xy,
         area = int(stats[label, cv2.CC_STAT_AREA])
         if not min_area <= area <= max_area:
             continue
+        x, y, width, height = (
+            int(stats[label, cv2.CC_STAT_LEFT]),
+            int(stats[label, cv2.CC_STAT_TOP]),
+            int(stats[label, cv2.CC_STAT_WIDTH]),
+            int(stats[label, cv2.CC_STAT_HEIGHT]),
+        )
+        aspect = width / max(height, 1)
+        fill = area / max(width * height, 1)
+        patch = labels[y:y + height, x:x + width] == label
+        center_x = int(np.clip(round(centers[label][0] - x), 0, width - 1))
+        center_y = int(np.clip(round(centers[label][1] - y), 0, height - 1))
+        band_x = max(1, width // 5)
+        band_y = max(1, height // 5)
+        horizontal = patch[
+            max(0, center_y - band_y):min(height, center_y + band_y + 1), :
+        ]
+        vertical = patch[
+            :, max(0, center_x - band_x):min(width, center_x + band_x + 1)
+        ]
+        horizontal_span = float(np.count_nonzero(np.any(horizontal, axis=0))) / width
+        vertical_span = float(np.count_nonzero(np.any(vertical, axis=1))) / height
+        cross_score = min(horizontal_span, vertical_span)
+        if bool(config.get("require_cross_shape", True)):
+            if not 0.55 <= aspect <= 1.80:
+                continue
+            if not 0.20 <= fill <= 0.78:
+                continue
+            if cross_score < float(config.get("min_cross_score", 0.72)):
+                continue
         plane = map_points(image_to_plane, [centers[label]])[0]
         robot_xy = np.asarray(plane_to_robot_xy, dtype=float) @ plane
         distance = float(np.linalg.norm(robot_xy - reference))
-        candidates.append((distance, -area, centers[label], robot_xy))
+        candidates.append((
+            distance, -cross_score, -area, centers[label], robot_xy,
+            {"aspect": aspect, "fill": fill, "cross_score": cross_score},
+        ))
     if not candidates:
         raise ValueError("blue lid cross not detected")
-    best = min(candidates, key=lambda item: (item[0], item[1]))
+    best = min(candidates, key=lambda item: (item[0], item[1], item[2]))
     if best[0] > float(config.get("max_distance_m", 0.12)):
         raise ValueError(f"blue lid cross is {best[0]*1000:.1f}mm from teacher bound")
-    return {"center": np.asarray(best[2]), "robot_xy": np.asarray(best[3]),
-            "distance_m": best[0], "mask": mask}
+    return {
+        "center": np.asarray(best[3]),
+        "robot_xy": np.asarray(best[4]),
+        "distance_m": best[0],
+        "shape": best[5],
+        "mask": mask,
+    }
 
 
 def lid_pose_robot(detections, lid_id, image_to_robot, plane_to_robot_xy=None):

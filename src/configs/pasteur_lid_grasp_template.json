@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "reference_object_position_m": [
+    -0.20360692,
+    0.12156191,
+    0.0
+  ],
+  "goal_ee_pose_wxyz_xyz": [
+    0.7036,
+    0.70449,
+    -0.09042,
+    -0.02182,
+    0.13704,
+    -0.04805,
+    0.86984
+  ],
+  "pregrasp_offset_m": [
+    0.0,
+    0.0,
+    0.01
+  ],
+  "tracked_translation_axes": [
+    true,
+    true,
+    false
+  ],
+  "fine_feature_goal_px": [
+    189.7,
+    296.8
+  ],
+  "empty_close_ratio": 0.01,
+  "active_view_ee_pose_wxyz_xyz": [
+    0.70856,
+    0.70022,
+    -0.0874,
+    0.00226,
+    0.17855,
+    -0.0335,
+    0.89462
+  ]
+}

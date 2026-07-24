@@ -18,6 +18,7 @@ from piperlib import (
     JointState,
     Gain,
 )
+from robot.arm.ik_continuity import joint_target_is_continuous
 from robot.arm.ik_solver import SingleArmIK
 
 # =========================
@@ -256,13 +257,29 @@ class ArmNode:
             self.gripper.set_open_ratio(gripper_target)
 
     def set_ee_target(self, ee_target, gripper_target=None, preview_time=0.01):
-        qd, _ = self.ik_solver.solve_ik(ee_target)
+        # Solve from measured joints, not from the previous requested target.
+        # This keeps repeated small Cartesian corrections on the same IK branch.
+        current_q = np.asarray(self.get_joint_positions(), dtype=float)
+        self.ik_solver.update_configuration(current_q)
+        qd, is_solved = self.ik_solver.solve_ik(ee_target, max_iter=30)
+        if not is_solved:
+            print("[IK] target not solved; holding measured joints", flush=True)
+            return False
+        continuous, delta = joint_target_is_continuous(current_q, qd)
+        if not continuous:
+            print(
+                f"[IK] discontinuous target rejected: "
+                f"max_delta={np.max(np.abs(delta)):.3f}rad",
+                flush=True,
+            )
+            return False
         cmd = JointState(self.robot_config.joint_dof)
         cmd.pos = qd
         cmd.timestamp = self.piper.get_timestamp() + preview_time
         self.piper.set_joint_cmd(cmd)
         if gripper_target is not None and self.gripper is not None:
             self.gripper.set_open_ratio(gripper_target)
+        return True
 
     def open_gripper(self):
         if self.gripper is not None:

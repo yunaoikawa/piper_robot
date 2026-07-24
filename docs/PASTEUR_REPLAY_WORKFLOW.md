@@ -68,10 +68,11 @@ From `outputs/lab/act/horizon/EVAL_RESULTS.md`:
 1. **Replay is open-loop.** The bias TRANSLATES the whole path; it does not
    re-time or re-shape it. Object rotation, moves > a few cm, or a grasp that
    needs mid-motion correction → replay will not adapt. That is the policy's job.
-2. **Torque reaction must be calibrated.** The replay reads
-   `piperlib.JointState.torque` and stops target submission after five consecutive
-   per-joint threshold violations. Thresholds are hardware/task-specific, so a
-   supervised known-good calibration is mandatory. **Keep a hand on the stop.**
+2. **Torque is telemetry, not a general contact stop.** Absolute joint torque
+   varies with configuration and acceleration. Stopping target submission also
+   leaves the controller holding its last target, which can sustain contact.
+   `--torque-config` remains available for characterized tasks, but is optional.
+   **Keep a hand on the stop.**
 
 ## Architecture
 
@@ -135,10 +136,9 @@ python replay_demo.py path/to/episode.hdf5 --dry-run
 # First supervised known-good run (creates per-joint thresholds):
 python replay_demo.py path/to/episode.hdf5 --rate 15 \
   --calibrate-torque src/configs/pasteur_lid_torque.json
-# Normal run: torque monitoring is mandatory, and the vision profile adds the
+# Normal run: torque monitoring is optional, and the vision profile adds the
 # confirmed grip-start checkpoint automatically.
 python replay_demo.py path/to/episode.hdf5 --rate 15 \
-  --torque-config src/configs/pasteur_lid_torque.json \
   --vision-profile src/configs/pasteur_lid_vision.json
 # 's' start, 'e' end, 'q' quit.  Start at --rate 15 for a first run, then 30.
 ```
@@ -171,7 +171,22 @@ python src/servo_blue_cross.py --port 5561
 
 Checkpoint images and marker/transparent-edge overlays are written under
 `/tmp/pasteur_replay_checkpoints` by default. Bias size is not arbitrarily
-clamped; live replay therefore requires a calibrated torque watchdog.
+clamped. Torque can be logged or calibrated, but is not required.
+
+For geometry-based generalization, use the demo-relative controller. It maps
+the fixed 60 mm workspace tags and blue lid fiducial into robot XY, approaches
+the successful grasp pose, then estimates the wrist image Jacobian from
+measured EE motion. It never requires an AprilTag on the circular lid:
+
+```bash
+python src/run_demo_relative_servo.py --dry-run
+# After reviewing the automatically saved overlays:
+python src/run_demo_relative_servo.py
+```
+
+The first live command pauses before demonstrated contact. Rerun with
+`--auto-contact` only after reviewing the head/right overlays under
+`/tmp/demo_relative_servo`.
 
 **3. Adjust when the object is off** — from another shell, live, no restart:
 ```bash
@@ -219,9 +234,9 @@ is inert if unused.
 
 ## TODO (in priority order)
 
-1. **Calibrate the implemented torque watchdog** — run a supervised known-good
-   replay with `--calibrate-torque`, review the generated per-joint thresholds,
-   then use that JSON with `--torque-config` for normal live replay.
+1. **Characterize torque before using it as a stop** — collect multiple poses
+   and speeds with `--calibrate-torque`. Do not enable one absolute envelope as
+   a general collision reaction.
 2. **Confirm the marker/edge profile** — checkpoint inspection uses the blue
    fiducial to register a narrow ROI, enlarges it 4×, and overlays the expected
    and detected transparent-lid edges for operator confirmation.
