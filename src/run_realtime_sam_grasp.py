@@ -51,6 +51,7 @@ class LiveSamGrasp:
         self.previous_lid_center = None
         self.previous_gripper_center = None
         self.orientation = None
+        self.joint_command = None
         self.output_dir = Path(args.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -153,6 +154,7 @@ class LiveSamGrasp:
     def hold_measured(self):
         q = np.asarray(self.rpc.get_right_joint_positions(), dtype=float)
         self.rpc.set_right_joint_target(q, gripper_target=1.0, preview_time=0.2)
+        self.joint_command = None
 
     def monitor_settle(self, duration_s: float):
         strikes = 0
@@ -196,7 +198,12 @@ class LiveSamGrasp:
         return actual
 
     def move_joint_delta(
-        self, delta_joints, preview_time=None, minimum_progress=None
+        self,
+        delta_joints,
+        preview_time=None,
+        minimum_progress=None,
+        *,
+        accumulate=False,
     ):
         if preview_time is None:
             preview_time = self.args.preview_time
@@ -205,12 +212,22 @@ class LiveSamGrasp:
         before = np.asarray(
             self.rpc.get_right_joint_positions(), dtype=float
         )
-        target = before.copy()
+        if accumulate:
+            if self.joint_command is None:
+                self.joint_command = before.copy()
+            target = self.joint_command.copy()
+            # The wrist is never accumulated or commanded away from its
+            # measured state by this position-only visual servo.
+            target[3:] = before[3:]
+        else:
+            target = before.copy()
         target[:3] += np.asarray(delta_joints, dtype=float)
         self.rpc.set_right_joint_target(
             target, gripper_target=1.0, preview_time=preview_time
         )
         self.monitor_settle(preview_time + 0.15)
+        if accumulate:
+            self.joint_command = target.copy()
         after = np.asarray(
             self.rpc.get_right_joint_positions(), dtype=float
         )
@@ -225,12 +242,16 @@ class LiveSamGrasp:
                 )
         return actual
 
-    def move_control_delta(self, delta, *, minimum_progress=None):
+    def move_control_delta(
+        self, delta, *, minimum_progress=None, accumulate=False
+    ):
         if self.args.control_space == "joint":
             kwargs = {}
             if minimum_progress is not None:
                 kwargs["minimum_progress"] = minimum_progress
-            return self.move_joint_delta(delta, **kwargs)
+            return self.move_joint_delta(
+                delta, accumulate=accumulate, **kwargs
+            )
         return self.move_cartesian_delta(
             delta, minimum_progress=minimum_progress
         )
@@ -240,16 +261,28 @@ class LiveSamGrasp:
             origin = np.asarray(
                 self.rpc.get_right_joint_positions(), dtype=float
             )
-            probe_size = self.args.joint_probe_rad
+            probe_sizes = np.array(
+                [
+                    self.args.joint_probe_rad,
+                    self.args.joint_probe2_rad,
+                    self.args.joint_probe3_rad,
+                ],
+                dtype=float,
+            )
+            calibration_min_progress = (
+                self.args.joint_calibration_min_progress
+            )
         else:
             origin = np.asarray(
                 self.rpc.get_right_ee_pose().parameters(), dtype=float
             )
             self.orientation = origin[:4].copy()
-            probe_size = self.args.probe_m
+            probe_sizes = np.full(3, self.args.probe_m, dtype=float)
+            calibration_min_progress = 0.25
         robot_deltas = []
         feature_deltas = []
         for axis in range(3):
+            probe_size = float(probe_sizes[axis])
             baseline = observed = None
             actual = None
             path = None
@@ -262,7 +295,7 @@ class LiveSamGrasp:
                     probe, minimum_progress=0.0
                 )
                 progress = float(np.linalg.norm(actual) / probe_size)
-                if progress >= 0.25:
+                if progress >= calibration_min_progress:
                     observed, _, path, _ = self.observe(clearance_m)
                     direction = sign
                     break
@@ -384,15 +417,22 @@ class LiveSamGrasp:
                         "right-arm SAM servo excursion exceeded 200mm"
                     )
             before_gripper = feature.gripper_feature.copy()
-            actual = self.move_control_delta(step)
+            actual = self.move_control_delta(step, accumulate=True)
             after, _, _, _ = self.observe(clearance_m)
             delta_feature = after.gripper_feature - before_gripper
-            robot_deltas.append(actual)
-            feature_deltas.append(delta_feature)
-            # Refit from recent real-time observations.  This adapts to local
-            # camera geometry while preventing stale samples from dominating.
-            robot_deltas[:] = robot_deltas[-6:]
-            feature_deltas[:] = feature_deltas[-6:]
+            minimum_update = (
+                5e-4
+                if self.args.control_space == "joint"
+                else 3e-4
+            )
+            if np.linalg.norm(actual) >= minimum_update:
+                robot_deltas.append(actual)
+                feature_deltas.append(delta_feature)
+                # Refit from recent real-time observations.  This adapts to
+                # local geometry while zero-motion depth noise cannot erase
+                # the last useful excitation.
+                robot_deltas[:] = robot_deltas[-6:]
+                feature_deltas[:] = feature_deltas[-6:]
             last_error_norm = error_norm
         self.hold_measured()
         raise RuntimeError("real-time SAM pregrasp did not converge")
@@ -412,10 +452,15 @@ def main():
         default="cartesian",
     )
     parser.add_argument("--joint-probe-rad", type=float, default=0.025)
+    parser.add_argument("--joint-probe2-rad", type=float, default=0.025)
+    parser.add_argument("--joint-probe3-rad", type=float, default=0.025)
     parser.add_argument("--joint-max-step-rad", type=float, default=0.035)
     parser.add_argument("--joint-max-axis-rad", type=float, default=0.025)
     parser.add_argument(
         "--joint-minimum-progress", type=float, default=0.25
+    )
+    parser.add_argument(
+        "--joint-calibration-min-progress", type=float, default=0.05
     )
     parser.add_argument("--clearance-m", type=float, default=0.040)
     parser.add_argument("--max-step-m", type=float, default=0.012)
