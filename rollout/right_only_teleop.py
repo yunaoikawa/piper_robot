@@ -40,6 +40,7 @@ class RightOnlyTeleop:
         if self.safety is None:
             self.safety = SafetyLayer()
         self.engaged = False
+        self._engage_armed = False
         self._controller_anchor = None
         self._ee_anchor = None
         self._H = mink.SE3.from_rotation(
@@ -60,14 +61,24 @@ class RightOnlyTeleop:
         """Process one controller state and issue at most one right-arm target."""
         now = time.time() if now is None else float(now)
         if now - float(controller_state.created_timestamp) > self.timeout_s:
+            # Reconnection must include an observed A-release before a new
+            # engagement.  A stale held button can therefore never move an arm.
+            self._engage_armed = False
             return self.disengage(RightTeleopEvent.STALE)
 
         # Stop wins if A and B are somehow reported together.
         if controller_state.right_b:
-            return self.disengage()
+            event = self.disengage()
+            if not controller_state.right_a:
+                self._engage_armed = True
+            return event
+
+        if not controller_state.right_a:
+            self._engage_armed = True
 
         just_engaged = False
-        if controller_state.right_a and not self.engaged:
+        if controller_state.right_a and not self.engaged and self._engage_armed:
+            self._engage_armed = False
             self._controller_anchor = controller_state.right_SE3
             self._ee_anchor = self.rpc.get_right_ee_pose()
             self.safety.reset("right")

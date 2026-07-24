@@ -61,11 +61,21 @@ def test_idle_makes_no_rpc_calls():
     assert rpc.calls == []
 
 
+def test_startup_held_a_cannot_engage_until_release_and_repress():
+    rpc = RightOnlyRPC()
+    teleop = RightOnlyTeleop(rpc, safety=FakeSafety())
+    assert teleop.step(controller_state(10.0, a=True), now=10.0) == RightTeleopEvent.NONE
+    assert rpc.calls == []
+    assert teleop.step(controller_state(10.1), now=10.1) == RightTeleopEvent.NONE
+    assert teleop.step(controller_state(10.2, a=True), now=10.2) == RightTeleopEvent.ENGAGED
+
+
 def test_right_engage_move_and_stop_never_access_left():
     rpc = RightOnlyRPC()
     safety = FakeSafety()
     teleop = RightOnlyTeleop(rpc, safety=safety)
 
+    teleop.step(controller_state(9.9), now=9.9)
     event = teleop.step(controller_state(10.0, a=True), now=10.0)
     assert event == RightTeleopEvent.ENGAGED
     assert [call[0] for call in rpc.calls] == [
@@ -88,6 +98,7 @@ def test_right_engage_move_and_stop_never_access_left():
 def test_stale_stream_disengages_without_new_command():
     rpc = RightOnlyRPC()
     teleop = RightOnlyTeleop(rpc, timeout_s=0.5, safety=FakeSafety())
+    teleop.step(controller_state(9.9), now=9.9)
     teleop.step(controller_state(10.0, a=True), now=10.0)
     call_count = len(rpc.calls)
     assert teleop.step(controller_state(10.0), now=10.6) == RightTeleopEvent.STALE
@@ -97,6 +108,7 @@ def test_stale_stream_disengages_without_new_command():
 
 if __name__ == "__main__":
     test_idle_makes_no_rpc_calls()
+    test_startup_held_a_cannot_engage_until_release_and_repress()
     test_right_engage_move_and_stop_never_access_left()
     test_stale_stream_disengages_without_new_command()
     print("right-only teleop checks passed")
