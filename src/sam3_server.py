@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SAM 3.1 image segmentation server for the left observer camera.
+"""SAM 3 image segmentation server for the observer camera.
 
 The server deliberately keeps the wire protocol model-agnostic.  It accepts
 JPEG frames and a concept prompt, and returns PNG masks.  Video-side tracking
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from contextlib import nullcontext
 
 import numpy as np
 import zmq
@@ -31,7 +32,7 @@ class Sam3Backend:
             from sam3.model.sam3_image_processor import Sam3Processor
         except ImportError as exc:  # pragma: no cover - remote-only dependency
             raise RuntimeError(
-                "SAM 3.1 server requires the sam3 checkout, torch, and Pillow"
+                "SAM 3 server requires the sam3 checkout, torch, and Pillow"
             ) from exc
         self.torch = torch
         self.Image = Image
@@ -41,16 +42,22 @@ class Sam3Backend:
 
     def segment(self, image_bgr, prompt: str, confidence_threshold: float):
         rgb = image_bgr[:, :, ::-1]
-        state = self.processor.set_image(self.Image.fromarray(rgb))
-        output = self.processor.set_text_prompt(state=state, prompt=prompt)
+        autocast = (
+            self.torch.autocast("cuda", dtype=self.torch.bfloat16)
+            if self.torch.cuda.is_available()
+            else nullcontext()
+        )
+        with self.torch.inference_mode(), autocast:
+            state = self.processor.set_image(self.Image.fromarray(rgb))
+            output = self.processor.set_text_prompt(state=state, prompt=prompt)
         masks = output.get("masks")
         boxes = output.get("boxes")
         scores = output.get("scores")
         if masks is None or boxes is None or scores is None:
             return []
-        masks = masks.detach().cpu().numpy()
-        boxes = boxes.detach().cpu().numpy()
-        scores = scores.detach().cpu().numpy().reshape(-1)
+        masks = masks.detach().float().cpu().numpy()
+        boxes = boxes.detach().float().cpu().numpy()
+        scores = scores.detach().float().cpu().numpy().reshape(-1)
         if masks.ndim == 4:
             masks = masks[:, 0]
         candidates = []
@@ -90,7 +97,7 @@ def serve(endpoint: str, checkpoint: str | None, prompt: str):
                 encode_response(
                     frame_id=int(metadata["frame_id"]),
                     source_timestamp=float(metadata["timestamp"]),
-                    model="sam3.1",
+                    model="sam3",
                     inference_ms=elapsed_ms,
                     candidates=candidates,
                 )
@@ -108,7 +115,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--endpoint", default="tcp://*:5562")
     parser.add_argument("--checkpoint", default=None)
-    parser.add_argument("--prompt", default="transparent circular petri-dish lid")
+    parser.add_argument("--prompt", default="petri dish lid")
     args = parser.parse_args()
     serve(args.endpoint, args.checkpoint, args.prompt)
 

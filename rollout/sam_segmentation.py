@@ -179,7 +179,7 @@ class SamSegmentationClient:
         *,
         frame_id: int,
         timestamp: float | None = None,
-        prompt: str = "transparent circular petri-dish lid",
+        prompt: str = "petri dish lid",
         confidence_threshold: float = 0.25,
     ) -> SegmentationResult:
         timestamp = time.time() if timestamp is None else float(timestamp)
