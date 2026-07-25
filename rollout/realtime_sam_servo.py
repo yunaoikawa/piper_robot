@@ -139,10 +139,15 @@ def scene_feature(
     previous_lid_center_px: np.ndarray | None = None,
     previous_gripper_center_px: np.ndarray | None = None,
     clearance_m: float = 0.040,
+    lid_support_depth_m: float | None = None,
+    selected_lid: tuple[MaskCandidate, LidMaskGeometry] | None = None,
 ) -> SamSceneFeature:
-    lid_candidate, lid_geometry = choose_lid(
-        lid_candidates, previous_center_px=previous_lid_center_px
-    )
+    if selected_lid is None:
+        lid_candidate, lid_geometry = choose_lid(
+            lid_candidates, previous_center_px=previous_lid_center_px
+        )
+    else:
+        lid_candidate, lid_geometry = selected_lid
     gripper_candidate = choose_right_gripper(
         gripper_candidates,
         image_width=depth_m.shape[1],
@@ -150,7 +155,11 @@ def scene_feature(
     )
     lid_px = lid_left_grasp_px(lid_candidate, lid_geometry)
     gripper_px = gripper_tip_px(gripper_candidate)
-    lid_depth = mask_depth_median(depth_m, lid_candidate.mask)
+    lid_depth = (
+        mask_depth_median(depth_m, lid_candidate.mask)
+        if lid_support_depth_m is None
+        else float(lid_support_depth_m)
+    )
     gripper_depth = mask_depth_median(depth_m, gripper_candidate.mask)
     lid_feature = np.array(
         [lid_px[0], lid_px[1], DEPTH_SCALE * (lid_depth - clearance_m)], dtype=float

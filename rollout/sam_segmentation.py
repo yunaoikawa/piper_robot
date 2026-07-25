@@ -39,6 +39,25 @@ class LidMaskGeometry:
     circularity: float
 
 
+def enhance_low_light(image_bgr: np.ndarray) -> np.ndarray:
+    """Contrast-stretch a dark Record3D frame without discarding its colour."""
+
+    image = np.asarray(image_bgr, dtype=np.uint8)
+    luminance = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    low, high = np.percentile(luminance, [1.0, 99.5])
+    if high <= low + 2:
+        return image.copy()
+    scale = 255.0 / float(high - low)
+    stretched = np.clip(
+        (image.astype(np.float32) - float(low)) * scale, 0, 255
+    ).astype(np.uint8)
+    lab = cv2.cvtColor(stretched, cv2.COLOR_BGR2LAB)
+    lab[:, :, 0] = cv2.createCLAHE(
+        clipLimit=2.0, tileGridSize=(8, 8)
+    ).apply(lab[:, :, 0])
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+
 def encode_request(
     image_bgr: np.ndarray,
     *,
@@ -285,8 +304,11 @@ def choose_lid_candidate(
     *,
     image_bgr: np.ndarray,
     previous_center_px: np.ndarray | None = None,
+    require_blue_cross: bool = False,
 ) -> tuple[MaskCandidate, LidMaskGeometry] | None:
     blue = detect_blue_cross_center(image_bgr)
+    if require_blue_cross and blue is None:
+        return None
     ranked = []
     for candidate in candidates:
         geometry = mask_geometry(candidate.mask)
@@ -303,6 +325,8 @@ def choose_lid_candidate(
             if 0 <= by < height and 0 <= bx < width:
                 contains_cross = bool(candidate.mask[by, bx])
             cross_penalty = 0.0 if contains_cross else 500.0
+        if require_blue_cross and not contains_cross:
+            continue
         temporal_distance = (
             0.0
             if previous_center_px is None

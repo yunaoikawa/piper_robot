@@ -13,6 +13,7 @@ from rollout.sam_segmentation import (
     choose_lid_candidate,
     decode_request,
     decode_response,
+    enhance_low_light,
     encode_request,
     encode_response,
     map_image_point,
@@ -53,6 +54,18 @@ assert geometry.circularity > 0.8
 selected = choose_lid_candidate([candidate], image_bgr=image)
 assert selected is not None
 assert selected[0].score == 0.91
+assert (
+    choose_lid_candidate(
+        [candidate], image_bgr=image, require_blue_cross=True
+    )
+    is None
+)
+
+dark = np.tile(np.arange(2, 18, dtype=np.uint8), (32, 2))
+dark = cv2.cvtColor(dark, cv2.COLOR_GRAY2BGR)
+enhanced = enhance_low_light(dark)
+assert enhanced.shape == dark.shape
+assert float(enhanced.mean()) > float(dark.mean()) * 3
 
 H = np.array([[0.001, 0, -0.1], [0, 0.002, 0.2], [0, 0, 1]])
 mapped = map_image_point(H, [100, 50])

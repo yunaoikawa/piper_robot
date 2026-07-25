@@ -5,10 +5,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from rollout.scene_3d import (
+    backproject,
+    register_point_clouds,
+    scaled_camera_matrix,
+)
 
 
 def camera_matrix_from_profile(path: str) -> np.ndarray:
@@ -33,25 +42,6 @@ def align_depth(depth: np.ndarray, rgb_shape) -> np.ndarray:
             f"depth {depth.shape} does not match RGB {rgb_shape[:2]}"
         )
     return depth
-
-
-def scaled_camera_matrix(matrix: np.ndarray, source_shape, target_shape):
-    source_height, source_width = source_shape[:2]
-    target_height, target_width = target_shape[:2]
-    out = np.asarray(matrix, dtype=float).copy()
-    out[0, :] *= target_width / source_width
-    out[1, :] *= target_height / source_height
-    out[2, :] = (0.0, 0.0, 1.0)
-    return out
-
-
-def backproject(depth_m: np.ndarray, camera_matrix: np.ndarray):
-    height, width = depth_m.shape
-    yy, xx = np.mgrid[:height, :width]
-    z = depth_m
-    x = (xx - camera_matrix[0, 2]) * z / camera_matrix[0, 0]
-    y = (yy - camera_matrix[1, 2]) * z / camera_matrix[1, 1]
-    return np.stack((x, y, z), axis=-1)
 
 
 def bbox_mask(shape, bbox_xyxy):
@@ -123,6 +113,10 @@ def main():
     parser.add_argument("--profile", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--target-bbox", type=float, nargs=4)
+    parser.add_argument(
+        "--reference-points",
+        help="optional reference .npy cloud for AprilTag-free camera-shift check",
+    )
     parser.add_argument("--min-depth", type=float, default=0.20)
     parser.add_argument("--max-depth", type=float, default=2.00)
     args = parser.parse_args()
@@ -163,6 +157,19 @@ def main():
     write_ascii_ply(
         output_dir / "head_scene.ply", points, colors, selected
     )
+    np.save(output_dir / "head_scene_points.npy", points)
+    registration = None
+    if args.reference_points:
+        result = register_point_clouds(
+            points, np.load(args.reference_points)
+        )
+        registration = {
+            "accepted": result.accepted,
+            "rmse_m": result.rmse_m,
+            "inlier_fraction": result.inlier_fraction,
+            "iterations": result.iterations,
+            "live_to_reference": result.live_to_reference.tolist(),
+        }
 
     if np.any(selected):
         target_points = points[selected]
@@ -231,6 +238,7 @@ def main():
         "target_10_90_percentile_camera_xyz_m": target_spread.tolist(),
         "rgb_source": str(Path(args.rgb)),
         "depth_source": str(Path(args.depth)),
+        "registration": registration,
     }
     (output_dir / "head_scene.json").write_text(
         json.dumps(report, indent=2)

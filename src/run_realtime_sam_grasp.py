@@ -22,10 +22,23 @@ from rollout.realtime_sam_servo import (
     bounded_reachable_servo_step,
     estimate_reachable_feature_model,
     gripper_mask_center,
+    lid_left_grasp_px,
     render_scene,
     scene_feature,
 )
 from rollout.sam_segmentation import SamSegmentationClient
+from rollout.sam_segmentation import (
+    choose_lid_candidate,
+    enhance_low_light,
+)
+from rollout.scene_3d import (
+    backproject,
+    estimate_target_on_support_plane,
+    nearest_scene_distance,
+    register_point_clouds,
+    scaled_camera_matrix,
+    temporal_median_depth,
+)
 
 
 class TorqueStop(RuntimeError):
@@ -54,6 +67,19 @@ class LiveSamGrasp:
         self.joint_command = None
         self.output_dir = Path(args.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        profile = json.loads(Path(args.scene_config).read_text())
+        self.head_camera_matrix = np.asarray(
+            profile["head_camera_matrix_rotated"], dtype=float
+        )
+        self.support_plane_config = profile.get("support_plane", {})
+        self.registration_config = profile.get("registration", {})
+        self.proximity_warning_m = float(
+            profile.get("proximity_warning_m", 0.02)
+        )
+        self.last_target_3d = None
+        self.last_depth = None
+        self.last_camera_matrix = None
+        self.last_proximity_m = None
 
     def start(self):
         self.camera.start()
@@ -78,16 +104,48 @@ class LiveSamGrasp:
         if age > 0.5:
             raise RuntimeError(f"stale head frame: {age:.2f}s")
         image = cv2.cvtColor(np.rot90(rgb, k=3), cv2.COLOR_RGB2BGR)
-        lid = self.sam.segment(
-            image,
-            frame_id=self.frame_id,
-            timestamp=timestamp,
-            prompt="petri dish lid",
-            confidence_threshold=0.10,
+        raw_path = self.output_dir / f"{self.sequence:03d}_head_raw.png"
+        cv2.imwrite(str(raw_path), image)
+        sam_image = (
+            enhance_low_light(image) if float(image.mean()) < 35.0 else image
         )
-        self.frame_id += 1
+        enhanced_path = (
+            self.output_dir / f"{self.sequence:03d}_head_sam_input.png"
+        )
+        cv2.imwrite(str(enhanced_path), sam_image)
+        lid = None
+        selected_lid = None
+        lid_attempts = []
+        for prompt in (
+            "transparent round petri dish lid with blue cross",
+            "petri dish lid",
+            "round transparent plastic dish",
+        ):
+            lid = self.sam.segment(
+                sam_image,
+                frame_id=self.frame_id,
+                timestamp=timestamp,
+                prompt=prompt,
+                confidence_threshold=0.05,
+            )
+            self.frame_id += 1
+            lid_attempts.append((prompt, len(lid.candidates)))
+            selected_lid = choose_lid_candidate(
+                lid.candidates,
+                image_bgr=sam_image,
+                previous_center_px=self.previous_lid_center,
+                require_blue_cross=True,
+            )
+            if selected_lid is not None:
+                break
+        if selected_lid is None:
+            raise ValueError(
+                "SAM did not identify the blue-cross lid; "
+                f"attempts={lid_attempts}, raw={raw_path}, "
+                f"input={enhanced_path}"
+            )
         gripper = self.sam.segment(
-            image,
+            sam_image,
             frame_id=self.frame_id,
             timestamp=timestamp,
             prompt="blue clamp",
@@ -115,19 +173,42 @@ class LiveSamGrasp:
                 time.sleep(0.01)
         if len(depth_frames) < max(3, self.args.depth_frames // 2):
             raise RuntimeError("insufficient fresh depth frames")
-        depth_stack = np.stack(
-            [np.rot90(frame, k=3) for frame in depth_frames], axis=0
-        ).astype(float)
-        depth_stack[
-            (~np.isfinite(depth_stack))
-            | (depth_stack <= 0.05)
-            | (depth_stack >= 5.0)
-        ] = np.nan
-        with np.errstate(all="ignore"):
-            depth = np.nanmedian(depth_stack, axis=0)
+        depth = temporal_median_depth(
+            depth_frames, rotate_clockwise=True
+        )
         depth = cv2.resize(
             depth, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST
         )
+        lid_candidate, lid_geometry = selected_lid
+        grasp_px = lid_left_grasp_px(lid_candidate, lid_geometry)
+        camera_matrix = scaled_camera_matrix(
+            self.head_camera_matrix, image.shape, depth.shape
+        )
+        self.last_depth = depth
+        self.last_camera_matrix = camera_matrix
+        target_3d = estimate_target_on_support_plane(
+            depth,
+            camera_matrix,
+            lid_candidate.mask,
+            grasp_px,
+            ring_margin_px=int(
+                self.support_plane_config.get("ring_margin_px", 70)
+            ),
+            plane_threshold_m=float(
+                self.support_plane_config.get(
+                    "ransac_threshold_m", 0.006
+                )
+            ),
+        )
+        minimum_plane_confidence = float(
+            self.support_plane_config.get("minimum_confidence", 0.20)
+        )
+        if target_3d.confidence < minimum_plane_confidence:
+            raise RuntimeError(
+                "low-confidence local support plane: "
+                f"{target_3d.confidence:.3f}"
+            )
+        self.last_target_3d = target_3d
         feature = scene_feature(
             lid_candidates=lid.candidates,
             gripper_candidates=gripper.candidates,
@@ -135,21 +216,97 @@ class LiveSamGrasp:
             previous_lid_center_px=self.previous_lid_center,
             previous_gripper_center_px=self.previous_gripper_center,
             clearance_m=clearance_m,
+            lid_support_depth_m=float(
+                target_3d.point_camera_xyz_m[2]
+            ),
+            selected_lid=selected_lid,
         )
         self.previous_lid_center = feature.lid_geometry.center_px.copy()
         self.previous_gripper_center = gripper_mask_center(
             feature.gripper_candidate
         )
+        xyz = backproject(depth, camera_matrix)
+        exclusion = (
+            np.asarray(feature.lid_candidate.mask, dtype=np.uint8)
+            | np.asarray(feature.gripper_candidate.mask, dtype=np.uint8)
+        )
+        exclusion = cv2.dilate(
+            exclusion,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31)),
+        ).astype(bool)
+        scene_valid = (
+            ~exclusion
+            & np.isfinite(depth)
+            & (depth > 0.05)
+            & (depth < 5.0)
+        )
+        tip = np.rint(feature.gripper_feature[:2]).astype(int)
+        tip[0] = np.clip(tip[0], 0, depth.shape[1] - 1)
+        tip[1] = np.clip(tip[1], 0, depth.shape[0] - 1)
+        tool_point = xyz[tip[1], tip[0]]
+        self.last_proximity_m = nearest_scene_distance(
+            tool_point, xyz[scene_valid]
+        )
         error = feature.lid_grasp_feature - feature.gripper_feature
+        proximity_label = (
+            "WARN"
+            if self.last_proximity_m < self.proximity_warning_m
+            else "ok"
+        )
         label = (
             f"live SAM seq={self.sequence} error="
-            f"({error[0]:.1f}px,{error[1]:.1f}px,{error[2]:.1f}mm)"
+            f"({error[0]:.1f}px,{error[1]:.1f}px,{error[2]:.1f}mm) "
+            f"plane={target_3d.confidence:.2f} "
+            f"near={self.last_proximity_m*1000:.0f}mm({proximity_label})"
         )
         overlay = render_scene(image, feature, label)
         path = self.output_dir / f"{self.sequence:03d}.png"
         cv2.imwrite(str(path), overlay)
         self.sequence += 1
         return feature, error, str(path), float(timestamp)
+
+    def check_scene_registration(self, reference_points_path: str | None):
+        """Validate head-camera placement without detecting an AprilTag."""
+
+        if not reference_points_path:
+            return None
+        if self.last_depth is None or self.last_camera_matrix is None:
+            raise RuntimeError("observe a depth frame before registration")
+        xyz = backproject(self.last_depth, self.last_camera_matrix)
+        valid = (
+            np.all(np.isfinite(xyz), axis=2)
+            & (self.last_depth >= 0.20)
+            & (self.last_depth <= 2.00)
+        )
+        config = self.registration_config
+        result = register_point_clouds(
+            xyz[valid],
+            np.load(reference_points_path),
+            max_correspondence_m=float(
+                config.get("max_correspondence_m", 0.035)
+            ),
+            acceptance_rmse_m=float(
+                config.get("maximum_rmse_m", 0.012)
+            ),
+            acceptance_inlier_fraction=float(
+                config.get("minimum_inlier_fraction", 0.55)
+            ),
+        )
+        report = {
+            "accepted": result.accepted,
+            "rmse_m": result.rmse_m,
+            "inlier_fraction": result.inlier_fraction,
+            "iterations": result.iterations,
+            "live_to_reference": result.live_to_reference.tolist(),
+        }
+        (self.output_dir / "scene_registration.json").write_text(
+            json.dumps(report, indent=2) + "\n"
+        )
+        if not result.accepted:
+            raise RuntimeError(
+                "head scene registration rejected; do not use old alignment"
+            )
+        return report
 
     def hold_measured(self):
         q = np.asarray(self.rpc.get_right_joint_positions(), dtype=float)
@@ -445,6 +602,11 @@ def main():
     parser.add_argument(
         "--torque-config", default="src/configs/pasteur_lid_torque.json"
     )
+    parser.add_argument(
+        "--scene-config",
+        default="src/configs/pasteur_lid_scene3d.json",
+    )
+    parser.add_argument("--reference-points")
     parser.add_argument("--probe-m", type=float, default=0.008)
     parser.add_argument(
         "--control-space",
@@ -467,7 +629,7 @@ def main():
     parser.add_argument("--max-axis-m", type=float, default=0.008)
     parser.add_argument("--max-iters", type=int, default=16)
     parser.add_argument("--minimum-progress", type=float, default=0.15)
-    parser.add_argument("--depth-frames", type=int, default=7)
+    parser.add_argument("--depth-frames", type=int, default=15)
     parser.add_argument("--preview-time", type=float, default=1.2)
     parser.add_argument("--xy-tolerance-px", type=float, default=6.0)
     parser.add_argument("--depth-tolerance-mm", type=float, default=8.0)
@@ -481,6 +643,9 @@ def main():
         # outlier; warm the live temporal filter before reporting or moving.
         runner.observe(args.clearance_m)
         feature, error, path, timestamp = runner.observe(args.clearance_m)
+        registration = runner.check_scene_registration(
+            args.reference_points
+        )
         initial = {
             "mode": "execute" if args.execute_pregrasp else "dry_run",
             "error": error.round(2).tolist(),
@@ -489,6 +654,8 @@ def main():
             "lid_center": feature.lid_geometry.center_px.round(2).tolist(),
             "lid_score": feature.lid_candidate.score,
             "gripper_score": feature.gripper_candidate.score,
+            "proximity_warning_only_m": runner.last_proximity_m,
+            "registration": registration,
         }
         print(json.dumps(initial), flush=True)
         if not args.execute_pregrasp:

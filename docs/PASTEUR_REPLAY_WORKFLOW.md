@@ -188,6 +188,58 @@ The first live command pauses before demonstrated contact. Rerun with
 `--auto-contact` only after reviewing the head/right overlays under
 `/tmp/demo_relative_servo`.
 
+### AprilTag-free 3D servo (preferred experimental path)
+
+The live 3D path does not detect or require AprilTags. Record3D depth is
+temporally filtered, a local bench plane is fitted around the live SAM lid
+mask, and the grasp ray is intersected with that plane. This avoids treating
+the LiDAR return through a transparent lid as the lid's physical height.
+Historical/live point clouds can be registered with ICP to detect a shifted
+head camera. One fixed 60 mm tag may remain available for exceptional manual
+recalibration, but it is not part of normal execution and no tag is placed on
+the lid.
+
+The default command is observation-only and saves both head and right-camera
+SAM overlays. It sends no arm target:
+
+```bash
+python src/run_staged_sam_pregrasp.py
+```
+
+Raw and contrast-enhanced SAM inputs are saved even when recognition fails.
+Software enhancement cannot recover detail from a nearly black, quantized
+Record3D frame: zero SAM candidates is a hard observation failure, so restore
+camera exposure/lighting and rerun the observation-only command.
+
+After reviewing those images, horizontal movement must be enabled explicitly:
+
+```bash
+python src/run_staged_sam_pregrasp.py --execute-horizontal
+```
+
+This state only probes and corrects robot X/Y. It cannot request a downward
+move, never commands the left arm, and never homes either arm. It stops at
+`HORIZONTAL_ALIGNED_DESCENT_PAUSED`; descent remains a separate,
+operator-confirmed stage. Joint-torque sustained exceedance remains the hard
+stop. Point-cloud proximity is configured as a warning rather than a hard
+stop in `src/configs/pasteur_lid_scene3d.json`.
+
+For offline camera-shift validation, first save a reference cloud, then compare
+a later capture. `registration.accepted=false` means stop and recalibrate; it
+must not silently fall back to an old image-to-motion bias.
+
+```bash
+python src/reconstruct_head_pointcloud.py \
+  --rgb reference.png --depth reference_depth.npy \
+  --profile src/configs/pasteur_lid_scene3d.json \
+  --output-dir /tmp/head_reference
+python src/reconstruct_head_pointcloud.py \
+  --rgb live.png --depth live_depth.npy \
+  --profile src/configs/pasteur_lid_scene3d.json \
+  --reference-points /tmp/head_reference/head_scene_points.npy \
+  --output-dir /tmp/head_live
+```
+
 **3. Adjust when the object is off** — from another shell, live, no restart:
 ```bash
 python src/set_bias.py                 # show current bias + safety rejection count

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "runtime_apriltag_count": 0,
+  "recovery_apriltag_count": 1,
+  "head_camera_matrix_rotated": [
+    [733.2575073242188, 0.0, 479.1193542480469],
+    [0.0, 733.2575073242188, 374.58673095703125],
+    [0.0, 0.0, 1.0]
+  ],
+  "temporal_depth_frames": 15,
+  "support_plane": {
+    "ring_margin_px": 70,
+    "ransac_threshold_m": 0.006,
+    "minimum_confidence": 0.2
+  },
+  "registration": {
+    "voxel_m": 0.008,
+    "max_correspondence_m": 0.035,
+    "maximum_rmse_m": 0.012,
+    "minimum_inlier_fraction": 0.55
+  },
+  "proximity_warning_m": 0.02,
+  "proximity_is_hard_stop": false
+}
