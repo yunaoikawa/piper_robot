@@ -211,6 +211,15 @@ Software enhancement cannot recover detail from a nearly black, quantized
 Record3D frame: zero SAM candidates is a hard observation failure, so restore
 camera exposure/lighting and rerun the observation-only command.
 
+The dry-run report also measures camera geometry at the detected lid. For this
+setup, aim the head camera within 40 degrees of the bench normal (20--30
+degrees is preferable) and make the native LiDAR pixel footprint no larger
+than 7 mm at the lid. A closer, more top-down view improves both metrics. The
+current saved scene measures about 48 degrees and 5.0 x 6.4 mm, so it is useful
+for coarse scene geometry but is rejected for autonomous motion. Repositioning
+the camera invalidates the old ICP reference; capture a new reference cloud
+after the mount is fixed.
+
 After reviewing those images, horizontal movement must be enabled explicitly:
 
 ```bash

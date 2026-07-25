@@ -39,6 +39,15 @@ class RegistrationResult:
     accepted: bool
 
 
+@dataclass(frozen=True)
+class GeometryQuality:
+    view_angle_deg: float
+    native_pixel_footprint_x_m: float
+    native_pixel_footprint_y_m: float
+    accepted: bool
+    reasons: tuple[str, ...]
+
+
 def temporal_median_depth(
     frames,
     *,
@@ -148,6 +157,52 @@ def ray_plane_intersection(pixel_xy, camera_matrix, plane: PlaneModel):
     if not 0.05 < distance < 5.0:
         raise ValueError("support-plane intersection is behind/outside camera")
     return ray * distance
+
+
+def assess_target_geometry(
+    target: TargetEstimate,
+    camera_matrix,
+    *,
+    native_pixel_stride_xy=(1.0, 1.0),
+    maximum_view_angle_deg: float = 40.0,
+    maximum_native_footprint_m: float = 0.007,
+) -> GeometryQuality:
+    """Quantify perspective loss at the target in operator-friendly units."""
+
+    point = np.asarray(target.point_camera_xyz_m, dtype=float)
+    view_to_camera = -point / np.linalg.norm(point)
+    alignment = float(
+        np.clip(abs(target.plane.normal @ view_to_camera), 0.0, 1.0)
+    )
+    angle = float(np.degrees(np.arccos(alignment)))
+    pixel = np.asarray(target.pixel_xy, dtype=float)
+    stride = np.asarray(native_pixel_stride_xy, dtype=float)
+    step_x = ray_plane_intersection(
+        pixel + [stride[0], 0.0], camera_matrix, target.plane
+    )
+    step_y = ray_plane_intersection(
+        pixel + [0.0, stride[1]], camera_matrix, target.plane
+    )
+    footprint_x = float(np.linalg.norm(step_x - point))
+    footprint_y = float(np.linalg.norm(step_y - point))
+    reasons = []
+    if angle > maximum_view_angle_deg:
+        reasons.append(
+            f"view angle {angle:.1f}deg > {maximum_view_angle_deg:.1f}deg"
+        )
+    footprint = max(footprint_x, footprint_y)
+    if footprint > maximum_native_footprint_m:
+        reasons.append(
+            f"depth-pixel footprint {footprint*1000:.1f}mm > "
+            f"{maximum_native_footprint_m*1000:.1f}mm"
+        )
+    return GeometryQuality(
+        view_angle_deg=angle,
+        native_pixel_footprint_x_m=footprint_x,
+        native_pixel_footprint_y_m=footprint_y,
+        accepted=not reasons,
+        reasons=tuple(reasons),
+    )
 
 
 def estimate_target_on_support_plane(

@@ -32,6 +32,7 @@ from rollout.sam_segmentation import (
     enhance_low_light,
 )
 from rollout.scene_3d import (
+    assess_target_geometry,
     backproject,
     estimate_target_on_support_plane,
     nearest_scene_distance,
@@ -73,10 +74,12 @@ class LiveSamGrasp:
         )
         self.support_plane_config = profile.get("support_plane", {})
         self.registration_config = profile.get("registration", {})
+        self.geometry_quality_config = profile.get("geometry_quality", {})
         self.proximity_warning_m = float(
             profile.get("proximity_warning_m", 0.02)
         )
         self.last_target_3d = None
+        self.last_geometry_quality = None
         self.last_depth = None
         self.last_camera_matrix = None
         self.last_proximity_m = None
@@ -176,6 +179,7 @@ class LiveSamGrasp:
         depth = temporal_median_depth(
             depth_frames, rotate_clockwise=True
         )
+        native_depth_shape = depth.shape
         depth = cv2.resize(
             depth, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST
         )
@@ -209,6 +213,24 @@ class LiveSamGrasp:
                 f"{target_3d.confidence:.3f}"
             )
         self.last_target_3d = target_3d
+        self.last_geometry_quality = assess_target_geometry(
+            target_3d,
+            camera_matrix,
+            native_pixel_stride_xy=(
+                image.shape[1] / native_depth_shape[1],
+                image.shape[0] / native_depth_shape[0],
+            ),
+            maximum_view_angle_deg=float(
+                self.geometry_quality_config.get(
+                    "maximum_view_angle_deg", 40.0
+                )
+            ),
+            maximum_native_footprint_m=float(
+                self.geometry_quality_config.get(
+                    "maximum_native_depth_pixel_footprint_m", 0.007
+                )
+            ),
+        )
         feature = scene_feature(
             lid_candidates=lid.candidates,
             gripper_candidates=gripper.candidates,
@@ -253,10 +275,15 @@ class LiveSamGrasp:
             if self.last_proximity_m < self.proximity_warning_m
             else "ok"
         )
+        geometry_label = (
+            "ok" if self.last_geometry_quality.accepted else "BAD"
+        )
         label = (
             f"live SAM seq={self.sequence} error="
             f"({error[0]:.1f}px,{error[1]:.1f}px,{error[2]:.1f}mm) "
             f"plane={target_3d.confidence:.2f} "
+            f"view={self.last_geometry_quality.view_angle_deg:.0f}deg"
+            f"({geometry_label}) "
             f"near={self.last_proximity_m*1000:.0f}mm({proximity_label})"
         )
         overlay = render_scene(image, feature, label)
@@ -655,11 +682,29 @@ def main():
             "lid_score": feature.lid_candidate.score,
             "gripper_score": feature.gripper_candidate.score,
             "proximity_warning_only_m": runner.last_proximity_m,
+            "geometry_quality": {
+                "accepted": runner.last_geometry_quality.accepted,
+                "view_angle_deg": (
+                    runner.last_geometry_quality.view_angle_deg
+                ),
+                "native_depth_pixel_footprint_mm": [
+                    runner.last_geometry_quality.native_pixel_footprint_x_m
+                    * 1000.0,
+                    runner.last_geometry_quality.native_pixel_footprint_y_m
+                    * 1000.0,
+                ],
+                "reasons": list(runner.last_geometry_quality.reasons),
+            },
             "registration": registration,
         }
         print(json.dumps(initial), flush=True)
         if not args.execute_pregrasp:
             return
+        if not runner.last_geometry_quality.accepted:
+            raise RuntimeError(
+                "camera geometry is too oblique for autonomous motion: "
+                + "; ".join(runner.last_geometry_quality.reasons)
+            )
         robot_deltas, feature_deltas, origin = runner.calibrate(
             args.clearance_m
         )

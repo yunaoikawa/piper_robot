@@ -246,6 +246,21 @@ def main():
                     "support_plane_confidence": (
                         runner.last_target_3d.confidence
                     ),
+                    "geometry_quality": {
+                        "accepted": runner.last_geometry_quality.accepted,
+                        "view_angle_deg": (
+                            runner.last_geometry_quality.view_angle_deg
+                        ),
+                        "native_depth_pixel_footprint_mm": [
+                            runner.last_geometry_quality.native_pixel_footprint_x_m
+                            * 1000.0,
+                            runner.last_geometry_quality.native_pixel_footprint_y_m
+                            * 1000.0,
+                        ],
+                        "reasons": list(
+                            runner.last_geometry_quality.reasons
+                        ),
+                    },
                     "proximity_warning_only_m": (
                         runner.last_proximity_m
                     ),
@@ -264,6 +279,11 @@ def main():
         )
         if not args.execute_horizontal:
             return
+        if not runner.last_geometry_quality.accepted:
+            raise RuntimeError(
+                "camera geometry is too oblique for horizontal execution: "
+                + "; ".join(runner.last_geometry_quality.reasons)
+            )
         origin = np.asarray(
             runner.rpc.get_right_ee_pose().parameters(), dtype=float
         )

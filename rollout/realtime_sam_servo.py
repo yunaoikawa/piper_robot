@@ -122,12 +122,30 @@ def lid_left_grasp_px(candidate: MaskCandidate, geometry: LidMaskGeometry) -> np
     ys, xs = np.where(np.asarray(candidate.mask, dtype=bool))
     if xs.size < 50:
         raise ValueError("lid mask is too small")
+    contour = np.asarray(geometry.contour, dtype=np.float32).reshape(-1, 1, 2)
+    if len(contour) >= 5:
+        # A tilted circular lid appears as an ellipse.  Fitting the whole rim is
+        # substantially less jittery than taking the left-most mask percentile.
+        (cx, cy), (diameter_a, diameter_b), angle_deg = cv2.fitEllipse(contour)
+        angle = np.deg2rad(angle_deg)
+        phase = np.linspace(0.0, 2.0 * np.pi, 720, endpoint=False)
+        a = 0.5 * diameter_a
+        b = 0.5 * diameter_b
+        ellipse_x = (
+            cx
+            + a * np.cos(phase) * np.cos(angle)
+            - b * np.sin(phase) * np.sin(angle)
+        )
+        ellipse_y = (
+            cy
+            + a * np.cos(phase) * np.sin(angle)
+            + b * np.sin(phase) * np.cos(angle)
+        )
+        left = int(np.argmin(ellipse_x))
+        return np.array([ellipse_x[left], ellipse_y[left]], dtype=float)
     edge = float(np.percentile(xs, 1))
     band_y = ys[xs <= edge + 3.0]
     y = float(np.median(band_y)) if band_y.size else float(geometry.center_px[1])
-    # Transparent rims can be incomplete. Keep the vertical target near the
-    # robust enclosing-circle center while retaining the observed left edge.
-    y = 0.5 * y + 0.5 * float(geometry.center_px[1])
     return np.array([edge, y], dtype=float)
 
 

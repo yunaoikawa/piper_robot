@@ -13,6 +13,10 @@
     "ransac_threshold_m": 0.006,
     "minimum_confidence": 0.2
   },
+  "geometry_quality": {
+    "maximum_view_angle_deg": 40.0,
+    "maximum_native_depth_pixel_footprint_m": 0.007
+  },
   "registration": {
     "voxel_m": 0.008,
     "max_correspondence_m": 0.035,

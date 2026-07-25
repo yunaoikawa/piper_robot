@@ -9,6 +9,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rollout.scene_3d import (
+    assess_target_geometry,
     backproject,
     estimate_target_on_support_plane,
     nearest_scene_distance,
@@ -43,6 +44,15 @@ def test_transparent_target_uses_support_plane():
     assert abs(estimate.point_camera_xyz_m[2] - expected_z) < 0.006
     assert estimate.plane.inlier_fraction > 0.90
     assert estimate.confidence > 0.50
+    quality = assess_target_geometry(
+        estimate,
+        matrix,
+        native_pixel_stride_xy=(4.0, 4.0),
+        maximum_view_angle_deg=60.0,
+        maximum_native_footprint_m=0.030,
+    )
+    assert quality.accepted
+    assert quality.native_pixel_footprint_x_m > 0
 
 
 def test_small_scene_registration():
