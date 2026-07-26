@@ -4,11 +4,13 @@
     All names prefixed with "left_" to avoid conflicts with piper.xml.
     No assets defined - reuses meshes/materials from piper.xml.
     Position set via base body pos attribute.
+    UPDATED: left arm now PARALLEL beside the right arm (was pos="0.23 0.68 0"
+    euler="0 0 -1.5708"; now same facing as right, +Y offset). PH: 0.25 spacing.
   -->
 
   <worldbody>
     <light name="left_spotlight" mode="targetbodycom" target="left_gripper_base" pos="0 0 1"/>
-    <body name="left_base_link" pos="0.23 0.68 0" euler="0 0 -1.5708" childclass="piper" gravcomp="1">
+    <body name="left_base_link" pos="0 0.30 0" euler="0 0 0" childclass="piper" gravcomp="1">
       <inertial pos="-0.00979275 1.82906e-06 0.04101" quat="0.692988 -0.137524 -0.137826 0.69416" mass="0.162549"
         diaginertia="0.000269445 0.000227478 0.000221437"/>
       <geom class="visual" density="0" mesh="base_link" material="gray_mat"/>
@@ -114,6 +116,8 @@
 
                 <body name="left_link6_mount" pos="0 0.091 0.0014165" quat="0 0 -0.707105 -0.707108" gravcomp="1">
                   <body name="left_gripper_base" gravcomp="1">
+                    <!-- WetRobo grasp target: midpoint between the finger pads, in gripper_base frame -->
+                    <site name="left_grasp" pos="-0.0288 -0.0183 0.058" size="0.006" rgba="0 1 0 0"/>
                     <body name="left_gripper" euler="0 0 0" gravcomp="1">
                       <body name="left_gripper_align" pos="0 0 0" euler="0 1.5708 0" gravcomp="1">
                         <inertial pos="-0.000183807 8.05033e-05 0.0321437"

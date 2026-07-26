@@ -20,3 +20,5 @@ tmp/
 archive/
 slurm-*.out
 pipette/
+MUJOCO_LOG.TXT
+runs/
