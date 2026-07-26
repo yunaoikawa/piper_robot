@@ -249,6 +249,29 @@ python src/reconstruct_head_pointcloud.py \
   --output-dir /tmp/head_live
 ```
 
+For offline collision-map development, a saved RGB/depth pair can also produce
+a projective TSDF, a conservative ESDF, and a triangle surface mesh without
+connecting to either robot or camera:
+
+```bash
+python src/reconstruct_scene_esdf.py \
+  --rgb saved_head.png --depth saved_head_depth.npy \
+  --profile saved_head_profile.json \
+  --output-dir /tmp/head_esdf \
+  --voxel-size 0.01 --truncation 0.03 \
+  --support-normal-file support_plane_normal.npy \
+  --support-offset 0.6252082262814739
+python -m http.server 8765 --bind 0.0.0.0 --directory /tmp/head_esdf
+```
+
+Open `http://<tailscale-ip>:8765/esdf.html` on the phone. The viewer uses a
+polygon mesh for surfaces, colors observed free-space clearance red through
+green, and shows the unknown-space frontier in purple. Unknown or occluded
+space remains `NaN` in `scene_esdf.npz`; collision checking must reject it
+rather than treating it as free. A single old frame has no saved Record3D
+confidence or pose, so it is suitable for pipeline and viewer validation, not
+for authorizing arm motion.
+
 **3. Adjust when the object is off** — from another shell, live, no restart:
 ```bash
 python src/set_bias.py                 # show current bias + safety rejection count
