@@ -4,7 +4,8 @@
 The MacBook WetRobo model supplies nominal articulation, fixture shapes,
 materials, and gripper sites.  SAM plus synchronized RGB-D is the runtime pose
 authority.  Without an accepted camera-to-robot transform, the measured scene
-is deliberately placed beside the nominal model rather than overlaid.
+is deliberately placed beside the nominal model rather than overlaid, unless
+the caller explicitly requests a clearly labelled display-only rough alignment.
 
 All measured triangle geoms are visual-only; static collision clearance stays
 in the ESDF because a whole-scene MuJoCo mesh would collide as a convex hull.
@@ -110,6 +111,108 @@ def load_transform_file(path):
     return validate_transform(value, name="T_robot_camera")
 
 
+def compute_rough_alignment(payload):
+    """Build an upright display-only transform from one point and one heading.
+
+    This is deliberately a separate path from camera-to-robot calibration.  It
+    is useful for visually comparing a historical, levelled capture with a
+    nominal scene when a recognizable fixture (for example an incubator face)
+    provides a rough origin and table-plane heading.
+    """
+
+    if not isinstance(payload, dict):
+        raise ValueError("rough alignment must be a JSON object")
+    if payload.get("display_only") is not True:
+        raise ValueError("rough alignment must explicitly set display_only=true")
+    anchor = payload.get("anchor")
+    if not isinstance(anchor, dict):
+        raise ValueError("rough alignment requires an anchor object")
+    source = np.asarray(anchor.get("source_xyz_m"), dtype=float)
+    target = np.asarray(anchor.get("target_xyz_m"), dtype=float)
+    if source.shape != (3,) or target.shape != (3,):
+        raise ValueError("rough alignment anchor points must be xyz triples")
+    source_heading = np.asarray(
+        payload.get("source_heading_xy"), dtype=float
+    )
+    target_heading = np.asarray(
+        payload.get("target_heading_xy"), dtype=float
+    )
+    if source_heading.shape != (2,) or target_heading.shape != (2,):
+        raise ValueError("rough alignment headings must be xy pairs")
+    source_norm = float(np.linalg.norm(source_heading))
+    target_norm = float(np.linalg.norm(target_heading))
+    if source_norm < 1e-9 or target_norm < 1e-9:
+        raise ValueError("rough alignment headings must be non-zero")
+    source_heading /= source_norm
+    target_heading /= target_norm
+    source_yaw = float(np.arctan2(source_heading[1], source_heading[0]))
+    target_yaw = float(np.arctan2(target_heading[1], target_heading[0]))
+    yaw = target_yaw - source_yaw
+    cosine, sine = np.cos(yaw), np.sin(yaw)
+    transform = np.eye(4)
+    transform[:3, :3] = np.array(
+        [[cosine, -sine, 0.0], [sine, cosine, 0.0], [0.0, 0.0, 1.0]]
+    )
+    transform[:3, 3] = target - transform[:3, :3] @ source
+    return validate_transform(transform, name="T_nominal_level_rough")
+
+
+def load_rough_alignment(path):
+    payload = json.loads(Path(path).read_text())
+    transform = compute_rough_alignment(payload)
+    provenance = {
+        **payload,
+        "computed_T_nominal_level": transform.tolist(),
+        "authoritative_calibration": False,
+        "collision_authorized": False,
+        "motion_authorized": False,
+    }
+    return transform, provenance
+
+
+def apply_rough_body_overrides(spec, rough_alignment):
+    """Apply explicitly display-only nominal fixture poses from rough evidence."""
+
+    if rough_alignment is None:
+        return []
+    applied = []
+    for override in rough_alignment.get("nominal_body_overrides", []):
+        if not isinstance(override, dict) or not override.get("name"):
+            raise ValueError("each nominal_body_override requires a body name")
+        body = spec.body(str(override["name"]))
+        original = {
+            "name": body.name,
+            "pos": np.asarray(body.pos, dtype=float).tolist(),
+            "euler": np.asarray(body.alt.euler, dtype=float).tolist(),
+        }
+        if "pos" in override:
+            pos = np.asarray(override["pos"], dtype=float)
+            if pos.shape != (3,) or not np.all(np.isfinite(pos)):
+                raise ValueError(
+                    f"rough body {body.name} position must be a finite xyz triple"
+                )
+            body.pos = pos
+        if "euler" in override:
+            euler = np.asarray(override["euler"], dtype=float)
+            if euler.shape != (3,) or not np.all(np.isfinite(euler)):
+                raise ValueError(
+                    f"rough body {body.name} euler must be a finite xyz triple"
+                )
+            body.alt.euler = euler
+        applied.append(
+            {
+                "name": body.name,
+                "original": original,
+                "rough_display_pose": {
+                    "pos": np.asarray(body.pos, dtype=float).tolist(),
+                    "euler": np.asarray(body.alt.euler, dtype=float).tolist(),
+                },
+                "authoritative": False,
+            }
+        )
+    return applied
+
+
 def classify_faces(vertex_labels, faces) -> np.ndarray:
     labels = np.asarray(vertex_labels, dtype=np.uint8)
     face_labels = labels[np.asarray(faces, dtype=np.int32)]
@@ -137,7 +240,7 @@ def add_semantic_capture(
     vertex_labels,
     transform_world_from_level,
     *,
-    registered,
+    placement_name,
 ):
     face_labels = classify_faces(vertex_labels, faces)
     materials = {
@@ -154,11 +257,7 @@ def add_semantic_capture(
     quat = np.zeros(4, dtype=float)
     mujoco.mju_mat2Quat(quat, transform[:3, :3].reshape(9))
     body = spec.worldbody.add_body(
-        name=(
-            "SAM_REGISTERED_level_capture"
-            if registered
-            else "UNREGISTERED_level_capture"
-        ),
+        name=f"SAM_{placement_name}_level_capture",
         pos=transform[:3, 3],
         quat=quat,
     )
@@ -231,6 +330,208 @@ def labelled_panel(image_rgb, title, subtitle):
     return image
 
 
+def _topdown_box_polygon(model, data, geom_name):
+    geom_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_GEOM, geom_name
+    )
+    if geom_id < 0 or model.geom_type[geom_id] != mujoco.mjtGeom.mjGEOM_BOX:
+        return None
+    sx, sy = model.geom_size[geom_id, :2]
+    corners = np.array(
+        [[-sx, -sy, 0.0], [sx, -sy, 0.0], [sx, sy, 0.0], [-sx, sy, 0.0]]
+    )
+    rotation = data.geom_xmat[geom_id].reshape(3, 3)
+    return corners @ rotation.T + data.geom_xpos[geom_id]
+
+
+def render_topdown_alignment_map(
+    vertices_world,
+    labels,
+    model,
+    data,
+    output_path,
+    rough_alignment,
+):
+    """Draw a metric XY diagnostic without perspective or wall occlusion."""
+
+    vertices_world = np.asarray(vertices_world, dtype=float)
+    labels = np.asarray(labels, dtype=np.uint8)
+    finite = np.all(np.isfinite(vertices_world), axis=1)
+    measured = vertices_world[finite]
+    measured_labels = labels[finite]
+    if not len(measured):
+        raise ValueError("top-down alignment map has no finite measured vertices")
+
+    named_polygons = {}
+    for name in (
+        "table_top",
+        "black_wall",
+        "front_wall",
+        "right_wall",
+        "fridge_back",
+        "fridge_left",
+        "fridge_right",
+        "fridge_top",
+        "fridge_door_panel",
+    ):
+        polygon = _topdown_box_polygon(model, data, name)
+        if polygon is not None:
+            named_polygons[name] = polygon
+
+    robust_low = np.percentile(measured[:, :2], 1.0, axis=0)
+    robust_high = np.percentile(measured[:, :2], 99.0, axis=0)
+    bound_points = [robust_low, robust_high]
+    for polygon in named_polygons.values():
+        bound_points.extend(polygon[:, :2])
+    bounds = np.asarray(bound_points)
+    low = np.min(bounds, axis=0)
+    high = np.max(bounds, axis=0)
+    span = np.maximum(high - low, 0.2)
+    low -= 0.06 * span
+    high += 0.06 * span
+
+    width, height, header = 960, 760, 92
+    canvas = np.full((height, width, 3), (8, 12, 19), dtype=np.uint8)
+    plot_height = height - header - 28
+    scale = min(
+        (width - 56) / (high[0] - low[0]),
+        plot_height / (high[1] - low[1]),
+    )
+    x_pad = 0.5 * (width - scale * (high[0] - low[0]))
+    y_pad = header + 0.5 * (
+        plot_height - scale * (high[1] - low[1])
+    )
+
+    def project(points_xy):
+        points_xy = np.asarray(points_xy, dtype=float)
+        x = x_pad + (points_xy[:, 0] - low[0]) * scale
+        y = y_pad + (high[1] - points_xy[:, 1]) * scale
+        return np.rint(np.column_stack((x, y))).astype(np.int32)
+
+    table = named_polygons.get("table_top")
+    if table is not None:
+        overlay = canvas.copy()
+        cv2.fillConvexPoly(
+            overlay, project(table[:, :2]), (24, 31, 40), lineType=cv2.LINE_AA
+        )
+        cv2.addWeighted(overlay, 0.85, canvas, 0.15, 0, canvas)
+
+    # Draw the measured projection before nominal outlines.  Limit density so
+    # vertical surfaces remain legible rather than becoming solid gray blocks.
+    stride = max(1, len(measured) // 85000)
+    sample_points = measured[::stride, :2]
+    sample_labels = measured_labels[::stride]
+    pixels = project(sample_points)
+    inside = (
+        (pixels[:, 0] >= 0)
+        & (pixels[:, 0] < width)
+        & (pixels[:, 1] >= header)
+        & (pixels[:, 1] < height)
+    )
+    pixels = pixels[inside]
+    sample_labels = sample_labels[inside]
+    point_colors = {
+        LABEL_BACKGROUND: (135, 143, 153),
+        LABEL_ROBOT: (225, 210, 20),
+        LABEL_LID: (245, 115, 35),
+    }
+    for label in (LABEL_BACKGROUND, LABEL_ROBOT, LABEL_LID):
+        points = pixels[sample_labels == label]
+        if len(points):
+            canvas[points[:, 1], points[:, 0]] = point_colors[label]
+
+    outline_styles = {
+        "table_top": ((235, 235, 235), 2),
+        "black_wall": ((90, 160, 255), 2),
+        "front_wall": ((90, 160, 255), 2),
+        "right_wall": ((90, 160, 255), 2),
+        "fridge_back": ((80, 235, 255), 3),
+        "fridge_left": ((80, 235, 255), 3),
+        "fridge_right": ((80, 235, 255), 3),
+        "fridge_top": ((80, 235, 255), 3),
+        "fridge_door_panel": ((80, 235, 255), 2),
+    }
+    for name, polygon in named_polygons.items():
+        color, thickness = outline_styles[name]
+        cv2.polylines(
+            canvas,
+            [project(polygon[:, :2])],
+            True,
+            color,
+            thickness,
+            lineType=cv2.LINE_AA,
+        )
+
+    for body_name, short_name in (
+        ("base_link", "R base"),
+        ("left_base_link", "L base"),
+    ):
+        body_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_BODY, body_name
+        )
+        if body_id >= 0:
+            pixel = project(data.xpos[body_id : body_id + 1, :2])[0]
+            cv2.circle(canvas, tuple(pixel), 9, (255, 80, 210), 2)
+            cv2.putText(
+                canvas,
+                short_name,
+                tuple(pixel + np.array([11, -8])),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.43,
+                (255, 150, 225),
+                1,
+                cv2.LINE_AA,
+            )
+
+    anchor = rough_alignment.get("anchor", {})
+    target = np.asarray(anchor.get("target_xyz_m", []), dtype=float)
+    if target.shape == (3,):
+        pixel = project(target[None, :2])[0]
+        cv2.drawMarker(
+            canvas,
+            tuple(pixel),
+            (80, 255, 120),
+            cv2.MARKER_CROSS,
+            22,
+            2,
+            cv2.LINE_AA,
+        )
+
+    cv2.putText(
+        canvas,
+        "ROUGH TOP-DOWN ALIGNMENT (metric XY, no perspective)",
+        (18, 31),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.68,
+        (245, 245, 245),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        canvas,
+        "Measured: gray static / cyan robot / blue lid    "
+        "Nominal: white table, orange walls, yellow fridge",
+        (18, 58),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.43,
+        (170, 205, 240),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        canvas,
+        "DISPLAY ONLY - camera-to-robot calibration and synchronized "
+        "qpos are still missing",
+        (18, 80),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.43,
+        (80, 180, 255),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.imwrite(str(output_path), canvas)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--scene-mesh", required=True)
@@ -247,9 +548,20 @@ def main():
         "--fallback-robot-model",
         default="robot/cone-e-description/lab-scene.mjcf",
     )
-    parser.add_argument(
+    registration_group = parser.add_mutually_exclusive_group()
+    registration_group.add_argument(
         "--robot-from-camera",
-        help="explicit T_robot_camera 4x4 JSON/NPY; omit for fail-closed side-by-side view",
+        help=(
+            "explicit T_robot_camera 4x4 JSON/NPY; omit for fail-closed "
+            "side-by-side view"
+        ),
+    )
+    registration_group.add_argument(
+        "--rough-alignment",
+        help=(
+            "display-only fixture/heading JSON; roughly overlays the levelled "
+            "capture but never counts as camera-to-robot calibration"
+        ),
     )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--robot-keyframe", default="lab_home")
@@ -287,6 +599,8 @@ def main():
     center = 0.5 * (lower + upper)
 
     T_robot_level = None
+    T_nominal_level_rough = None
+    rough_alignment = None
     registration_error = None
     if args.robot_from_camera:
         try:
@@ -295,13 +609,32 @@ def main():
             )
         except CalibrationRejected as error:
             registration_error = str(error)
+    elif args.rough_alignment:
+        T_nominal_level_rough, rough_alignment = load_rough_alignment(
+            args.rough_alignment
+        )
+    rough_body_overrides = apply_rough_body_overrides(spec, rough_alignment)
+    if rough_alignment is not None:
+        rough_alignment["applied_nominal_body_overrides"] = (
+            rough_body_overrides
+        )
     registered = T_robot_level is not None
+    roughly_aligned = T_nominal_level_rough is not None
     if registered:
         capture_transform = T_robot_level
         capture_center_world = (
             T_robot_level[:3, :3] @ center + T_robot_level[:3, 3]
         )
         display_offset = None
+        placement_name = "REGISTERED"
+    elif roughly_aligned:
+        capture_transform = T_nominal_level_rough
+        capture_center_world = (
+            T_nominal_level_rough[:3, :3] @ center
+            + T_nominal_level_rough[:3, 3]
+        )
+        display_offset = None
+        placement_name = "ROUGH_ALIGNED_DISPLAY_ONLY"
     else:
         # Side-by-side placement is intentional. A camera-local capture must
         # never look as if it were calibrated to the nominal lab.
@@ -311,13 +644,14 @@ def main():
         display_offset = capture_center_world - center
         capture_transform = np.eye(4)
         capture_transform[:3, 3] = display_offset
+        placement_name = "UNREGISTERED"
     face_counts = add_semantic_capture(
         spec,
         vertices,
         faces,
         labels,
         capture_transform,
-        registered=registered,
+        placement_name=placement_name,
     )
     model = spec.compile()
     data = mujoco.MjData(model)
@@ -328,14 +662,20 @@ def main():
         raise ValueError(f"MuJoCo keyframe not found: {args.robot_keyframe}")
     mujoco.mj_resetDataKeyframe(model, data, keyframe_id)
     mujoco.mj_forward(model, data)
-    registration_name = "REGISTERED" if registered else "UNREGISTERED"
+    registration_name = placement_name
     xml_path = output_dir / f"semantic_comparison_{registration_name}.mjcf"
     diagnostic_comment = (
         "SAM capture is registered to robot coordinates, but synchronized "
         "joint state is unavailable; measured meshes remain visual-only."
         if registered
-        else "Camera-to-robot registration is unavailable. The SAM capture is "
-        "shown beside the nominal lab and measured meshes are visual-only."
+        else (
+            "A heuristic fixture alignment places the SAM capture near the "
+            "nominal lab for visual comparison only. It is not camera-to-robot "
+            "calibration and measured meshes remain visual-only."
+            if roughly_aligned
+            else "Camera-to-robot registration is unavailable. The SAM capture "
+            "is shown beside the nominal lab and measured meshes are visual-only."
+        )
     )
     xml_path.write_text(
         f"<!-- OFFLINE DIAGNOSTIC ONLY: {diagnostic_comment} -->\n"
@@ -352,23 +692,31 @@ def main():
         azimuth=180,
         elevation=-28,
     )
-    combined_camera = free_camera(
-        [0.78, 0.0, 0.30],
-        distance=3.35,
-        azimuth=180,
-        elevation=-54,
-    )
     cad = render_view(renderer, data, cad_camera, (0, 1, 2))
     collision = render_view(renderer, data, cad_camera, (0, 1, 3))
     capture = render_view(renderer, data, capture_camera, (4,))
-    combined = render_view(renderer, data, combined_camera, (0, 1, 2, 4))
+    # The same fixed top-down camera makes displacement directly legible.  An
+    # oblique free camera let the nominal walls occlude the measured capture
+    # and made a good rough XY fit look badly separated.
+    combined = render_view(renderer, data, cad_camera, (0, 1, 2, 4))
     renderer.close()
 
     panels = [
         labelled_panel(
             cad,
-            "MacBook MuJoCo nominal lab",
-            "shape/material/gripper sites only; nominal pose is not measurement",
+            (
+                "MacBook MuJoCo prior + rough fixture pose"
+                if rough_body_overrides
+                else "MacBook MuJoCo nominal lab"
+            ),
+            (
+                "display-only observed fixture pose; not calibrated"
+                if rough_body_overrides
+                else (
+                    "shape/material/gripper sites only; nominal pose "
+                    "is not measurement"
+                )
+            ),
         ),
         labelled_panel(
             capture,
@@ -376,7 +724,11 @@ def main():
             (
                 "cyan robot / blue lid / gray static; robot-base registered"
                 if registered
-                else "cyan robot / blue lid / gray static; levelled camera frame"
+                else (
+                    "cyan robot / blue lid / gray static; rough fixture alignment"
+                    if roughly_aligned
+                    else "cyan robot / blue lid / gray static; levelled camera frame"
+                )
             ),
         ),
         labelled_panel(
@@ -390,7 +742,11 @@ def main():
             (
                 "registered capture; robot keyframe is still not synchronized"
                 if registered
-                else "side-by-side by design; do not infer relative pose"
+                else (
+                    "rough visual overlay only; no calibration or clearance use"
+                    if roughly_aligned
+                    else "side-by-side by design; do not infer relative pose"
+                )
             ),
         ),
     ]
@@ -404,9 +760,13 @@ def main():
         "SAM REGISTERED - robot qpos still unavailable; no motion/clearance use"
         if registered
         else (
-            "SAM QUALITY CHECKED, UNREGISTERED - no robot-frame pose or clearance"
-            if artifact.quality.accepted
-            else "SAM QUALITY REJECTED - diagnostic display only"
+            "ROUGH FIXTURE ALIGNMENT - DISPLAY ONLY, NOT CALIBRATION OR CLEARANCE"
+            if roughly_aligned
+            else (
+                "SAM QUALITY CHECKED, UNREGISTERED - no robot-frame pose or clearance"
+                if artifact.quality.accepted
+                else "SAM QUALITY REJECTED - diagnostic display only"
+            )
         )
     )
     cv2.putText(
@@ -421,14 +781,41 @@ def main():
     diagnostic = np.vstack((warning, diagnostic))
     image_path = output_dir / "mujoco_semantic_diagnostic.png"
     cv2.imwrite(str(image_path), diagnostic)
+    topdown_alignment_path = None
+    if roughly_aligned:
+        topdown_alignment_path = output_dir / "rough_topdown_alignment.png"
+        vertices_world = (
+            T_nominal_level_rough[:3, :3] @ vertices.T
+        ).T + T_nominal_level_rough[:3, 3]
+        render_topdown_alignment_map(
+            vertices_world,
+            labels,
+            model,
+            data,
+            topdown_alignment_path,
+            rough_alignment,
+        )
 
     footprint_estimates = {}
+    rough_footprint_estimates = {}
     for label in (LABEL_LID, LABEL_ROBOT):
         try:
             footprint = artifact.estimate_horizontal_footprint(
                 label, T_robot_level=T_robot_level
             )
             footprint_estimates[LABEL_NAMES[label]] = footprint.to_dict()
+            if roughly_aligned:
+                rough_footprint = footprint.to_dict()
+                rough_footprint["frame"] = "nominal_mujoco_world_rough"
+                rough_footprint["center_m"] = (
+                    T_nominal_level_rough[:3, :3] @ footprint.center_m
+                    + T_nominal_level_rough[:3, 3]
+                ).tolist()
+                rough_footprint["rotation"] = (
+                    T_nominal_level_rough[:3, :3] @ footprint.rotation
+                ).tolist()
+                rough_footprint["authoritative"] = False
+                rough_footprint_estimates[LABEL_NAMES[label]] = rough_footprint
         except CalibrationRejected as error:
             footprint_estimates[LABEL_NAMES[label]] = {
                 "accepted": False,
@@ -448,6 +835,10 @@ def main():
         "camera_to_robot_extrinsic_provided": bool(args.robot_from_camera),
         "camera_to_robot_extrinsic_accepted": registered,
         "spatially_registered": registered,
+        "rough_alignment_provided": bool(args.rough_alignment),
+        "spatially_rough_aligned_for_display": roughly_aligned,
+        "rough_alignment": rough_alignment,
+        "rough_nominal_body_overrides": rough_body_overrides,
         "registration_error": registration_error,
         "robot_collision_ready": False,
         "object_bench_state_ready": bool(
@@ -483,17 +874,28 @@ def main():
         ),
         "sam_artifact": artifact.summary(),
         "semantic_pose_estimates": footprint_estimates,
+        "rough_semantic_pose_estimates": rough_footprint_estimates,
         "capture_offset_for_side_by_side_display_m": (
             None if display_offset is None else display_offset.tolist()
         ),
         "T_robot_level": (
             None if T_robot_level is None else T_robot_level.tolist()
         ),
+        "T_nominal_level_rough": (
+            None
+            if T_nominal_level_rough is None
+            else T_nominal_level_rough.tolist()
+        ),
         "semantic_face_counts": face_counts,
         "mujoco_ngeom": int(model.ngeom),
         "mujoco_nmesh": int(model.nmesh),
         "mjcf": str(xml_path),
         "diagnostic_image": str(image_path),
+        "rough_topdown_alignment_image": (
+            None
+            if topdown_alignment_path is None
+            else str(topdown_alignment_path)
+        ),
     }
     (output_dir / "mujoco_report.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False)

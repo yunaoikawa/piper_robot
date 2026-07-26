@@ -41,6 +41,38 @@ Without an accepted transform, the renderer deliberately shows the capture besid
 nominal model. It must not overlay it, update a MuJoCo body, or use it for robot-frame
 clearance.
 
+### Display-only rough fixture alignment
+
+Historical data can still be overlaid approximately for human inspection when a
+recognizable fixture supplies one point and one table-plane heading. This is a
+different mode from calibration and stays ineligible for collision checking, motion,
+or a robot-frame `BenchState`.
+
+For example, a levelled capture whose incubator front-face bottom center is measured at
+`[0.397, 0.751, 0]` and whose front-to-back direction is level-frame `+Y` can be placed
+near the nominal incubator front face as follows:
+
+```json
+{
+  "schema_version": 1,
+  "display_only": true,
+  "method": "incubator_front_face_and_support_plane",
+  "anchor": {
+    "name": "incubator_front_face_bottom_center",
+    "source_xyz_m": [0.397, 0.751, 0.0],
+    "target_xyz_m": [0.35, 0.0, 0.0]
+  },
+  "source_heading_xy": [0.0, 1.0],
+  "target_heading_xy": [1.0, 0.0]
+}
+```
+
+Pass that JSON with `--rough-alignment`. The resulting MJCF, image banner, and report
+all say `ROUGH_ALIGNED_DISPLAY_ONLY`; `spatially_registered`,
+`robot_collision_ready`, and `motion_scene_ready` remain false. A rough alignment and
+`--robot-from-camera` are mutually exclusive so heuristic evidence cannot be mistaken
+for an external calibration.
+
 ## Semantic collision layers
 
 - `robot_surface`: dynamic; excluded from the static ESDF and replaced by synchronized
