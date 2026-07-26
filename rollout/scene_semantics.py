@@ -133,11 +133,18 @@ def warp_mask(mask, homography, target_shape) -> np.ndarray:
 def compose_surface_labels(
     shape, *, robot_mask=None, lid_mask=None
 ) -> np.ndarray:
+    """Compose mutually-exclusive surface labels.
+
+    The robot is foreground and therefore wins an overlap with a target mask.
+    This is deliberately conservative: an occluded target pixel must not bake a
+    moving gripper into the static scene map.
+    """
+
     labels = np.full(shape[:2], LABEL_BACKGROUND, dtype=np.uint8)
-    if robot_mask is not None:
-        labels[np.asarray(robot_mask, dtype=bool)] = LABEL_ROBOT
     if lid_mask is not None:
         labels[np.asarray(lid_mask, dtype=bool)] = LABEL_LID
+    if robot_mask is not None:
+        labels[np.asarray(robot_mask, dtype=bool)] = LABEL_ROBOT
     return labels
 
 

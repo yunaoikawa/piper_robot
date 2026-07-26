@@ -14,12 +14,17 @@ refinement of **skill parameters** (and, optionally, skill code), not network we
 This machine does not drive the real robot, so everything here is **sim-first**. The
 first task is **flask → incubator** with the right 5-DOF Piper arm.
 
-### The paper thesis
+### Operational thesis: SAM-calibrated digital twin
 
-Authoring a CAD/MJCF of the lab each day (capturing where the movable labware actually
-is) makes WetRobo faster and more reliable than recovering the layout from vision. The
-`daily_cad_ablation` experiment measures this as an A/B on real MuJoCo rollouts, and
-`report.py` turns the log into the figure.
+The checked-in MJCF is a **nominal geometry prior**, not a measurement of today's lab.
+Runtime object and fixture poses come from synchronized RGB-D plus instance-preserving
+SAM masks, transformed through an explicitly registered camera-to-robot calibration.
+If that transform, capture synchronization, or perception quality gate is missing, the
+observation remains camera-local and must not update MuJoCo poses or collision state.
+
+`daily_cad_ablation` is a legacy simulation experiment and may still be useful for
+controlled research. Its oracle-CAD and synthetic MuJoCo segmentation conditions are
+not evidence for the real SAM calibration path and must be reported separately.
 
 ## Architecture (`wetrobo/`)
 
@@ -29,6 +34,7 @@ is) makes WetRobo faster and more reliable than recovering the layout from visio
 | `sim/lab_env.py` | `LabEnv` — headless MuJoCo world; grasp/release/move_ee/render/step. |
 | `perception/cad.py` | `CADObserver` — the day's CAD: exact poses (ground truth) as a `BenchState`. |
 | `perception/vision.py` | `VisionObserver` — renders depth+segmentation and back-projects; models transparent-glass depth failure (dropout + correlated bias). |
+| `perception/sam.py` | Quality-gated saved SAM+RGB-D calibration; only registered observations may become robot-base poses. |
 | `perception/fiducials.py` | Versioned AprilTag manifests, exact-size assets, multi-anchor camera pose, and hard quality gates. |
 | `skills/library.py` | `SkillLibrary` — parametric `pick`/`place` skills + JSON param store. |
 | `tasks/flask_to_incubator.py` | Goal region derived from the incubator geoms; success = real flask pose inside it. |
@@ -78,10 +84,14 @@ python -m wetrobo.agent.llm_agent --log runs/ablation.jsonl --condition vision
   hardcoded. `bench_verify/validate.py` is a labeled pre-registration harness, not evidence.
 - **If an LLM proposes anything, the sim still decides.** `LLMSkillAuthor` only proposes
   numbers for existing knobs; success is always the real `SceneVerifier` end-state.
-- **Do not conflate tags with vision-only.** Fixed anchor tags may establish the shared
-  robot frame for every condition. Object-tag localization is a separate
-  `tag_assisted_deployment` condition; `oracle_cad`, `measured_daily_cad`, and
-  `calibrated_vision_only` must remain distinguishable in logs.
+- **SAM is the runtime pose authority; CAD supplies shape priors.** A nominal MJCF pose
+  never overrides an accepted SAM+RGB-D observation. AprilTags are optional providers
+  of the camera-to-robot transform, not object-localization requirements. Object-tag
+  localization remains a separate `tag_assisted_deployment` condition.
+- **Fail closed across coordinate frames.** Camera-local or support-plane-levelled
+  observations may be displayed beside the nominal model, but they cannot update a
+  robot-base `BenchState`, MuJoCo body pose, or collision map until an accepted explicit
+  transform is present.
 - **No implicit tag transforms.** An unregistered `T_parent_tag` is unusable. Never use
   identity as a fallback or infer metric size from an image filename.
 
@@ -116,5 +126,9 @@ definition so results are not over-claimed:
 ## Conventions
 
 - Keep new numbers derived from the MJCF or measured from rollouts — do not hardcode.
+- Treat MJCF fixture and object poses as nominal unless their provenance says they were
+  produced by an accepted calibration artifact.
+- Preserve SAM instance IDs and synchronized RGB/depth/qpos provenance. Legacy blended
+  overlays are acceptable for offline recovery, not the preferred real-time format.
 - Log every attempt and episode through `EpisodeLog`; `report.py` reads only logs.
 - Durable tests live under `test/`; delete scratch scripts when done.

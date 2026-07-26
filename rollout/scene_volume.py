@@ -16,6 +16,7 @@ from rollout.scene_3d import backproject
 from rollout.scene_semantics import (
     LABEL_BACKGROUND,
     LABEL_FREE,
+    LABEL_LID,
     LABEL_ROBOT,
     LABEL_UNKNOWN,
 )
@@ -185,10 +186,12 @@ def integrate_projective_depth(
 
     free = observed & (tsdf > 0.0)
     occupied = observed & ~free
-    # Robot returns are a dynamic semantic layer.  They remain labelled and
-    # visible, but are not baked into the static-environment ESDF because the
-    # complete posed robot CAD is responsible for robot geometry.
-    static_occupied = occupied & (semantics != LABEL_ROBOT)
+    # Robot returns and manipulation targets are dynamic semantic layers.
+    # They remain labelled and visible, but are not baked into the static
+    # environment ESDF.  Robot geometry comes from synchronized CAD and target
+    # geometry is checked separately at its SAM-calibrated pose.
+    dynamic = (semantics == LABEL_ROBOT) | (semantics == LABEL_LID)
+    static_occupied = occupied & ~dynamic
     esdf = np.full(tsdf.shape, np.nan, dtype=np.float32)
     if np.any(static_occupied):
         distance_to_occupied = distance_transform_edt(

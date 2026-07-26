@@ -25,93 +25,25 @@
           <inertial pos="0.148794 -0.00242027 0.00175155" quat="-0.0249063 0.70684 0.00803509 0.706889" mass="0.290889"
             diaginertia="0.00177549 0.00173142 0.00014552"/>
           <joint name="left_joint2" axis="0 0 1" range="0 3.14"/>
-          <geom mesh="link2_0" material="gray_mat" class="visual"/>
-          <geom mesh="link2_1" material="darker_gray_mat" class="visual"/>
-          <geom mesh="link2_2" material="darker_gray_mat" class="visual"/>
-          <geom mesh="link2_3" material="dark_gray_mat" class="visual"/>
-          <geom mesh="link2_4" material="dark_gray_mat" class="visual"/>
-          <geom mesh="link2_5" material="red_mat" class="visual"/>
-          <geom mesh="link2_6" material="dark_gray_mat" class="visual"/>
-          <geom mesh="link2_7" material="gray_mat" class="visual"/>
-          <geom mesh="link2_8" material="red_mat" class="visual"/>
-          <geom mesh="link2_9" material="red_mat" class="visual"/>
-          <geom mesh="link2_10" material="gray_mat" class="visual"/>
-          <geom mesh="link2_11" material="red_mat" class="visual"/>
-          <geom mesh="link2_12" material="red_mat" class="visual"/>
-          <geom mesh="link2_13" material="red_mat" class="visual"/>
-          <geom mesh="link2_14" material="red_mat" class="visual"/>
-          <geom mesh="link2_15" material="red_mat" class="visual"/>
-          <geom mesh="link2_16" material="red_mat" class="visual"/>
-          <geom mesh="link2_17" material="red_mat" class="visual"/>
-          <geom mesh="link2_18" material="red_mat" class="visual"/>
-          <geom mesh="link2_19" material="red_mat" class="visual"/>
-          <geom mesh="link2_20" material="red_mat" class="visual"/>
-          <geom mesh="link2_21" material="gray_mat" class="visual"/>
-          <geom mesh="link2_22" material="red_mat" class="visual"/>
-          <geom mesh="link2_23" material="red_mat" class="visual"/>
-          <geom mesh="link2_24" material="red_mat" class="visual"/>
-          <geom mesh="link2_25" material="dark_gray_mat" class="visual"/>
-          <geom mesh="link2_26" material="red_mat" class="visual"/>
-          <geom mesh="link2_27" material="darker_gray_mat" class="visual"/>
-          <geom mesh="link2_28" material="darker_gray_mat" class="visual"/>
-          <geom mesh="link2_29" material="darker_gray_mat" class="visual"/>
-          <geom mesh="link2_30" material="darker_gray_mat" class="visual"/>
-          <geom mesh="link2_31" material="light_medium_gray_mat" class="visual"/>
+          <geom mesh="link2" material="gray_mat" class="visual"/>
           <geom mesh="link2" class="collision"/>
           <body name="left_link3" pos="0.28358 0.028726 0" quat="0.998726 0 0 0.0504536" gravcomp="1">
             <inertial pos="-0.0996835 0.0349477 0.000508026" quat="0.0777021 0.702287 -0.0990541 0.700674"
               mass="0.290848" diaginertia="0.000241946 0.000222224 0.000100384"/>
             <joint name="left_joint3" pos="0 0 0" axis="0 0 1" range="-2.697 0"/>
-            <geom mesh="link3_0" material="darker_gray_mat" class="visual"/>
-            <geom mesh="link3_1" material="red_mat" class="visual"/>
-            <geom mesh="link3_2" material="gray_mat" class="visual"/>
-            <geom mesh="link3_3" material="gray_mat" class="visual"/>
-            <geom mesh="link3_4" material="gray_mat" class="visual"/>
-            <geom mesh="link3_5" material="gray_mat" class="visual"/>
-            <geom mesh="link3_7" material="darker_gray_mat" class="visual"/>
-            <geom mesh="link3_8" material="white_mat" class="visual"/>
-            <geom mesh="link3_9" material="red_mat" class="visual"/>
-            <geom mesh="link3_10" material="white_mat" class="visual"/>
-            <geom mesh="link3_11" material="white_mat" class="visual"/>
-            <geom mesh="link3_12" material="white_mat" class="visual"/>
-            <geom mesh="link3_13" material="white_mat" class="visual"/>
-            <geom mesh="link3_14" material="gray_mat" class="visual"/>
-            <geom mesh="link3_15" material="gray_mat" class="visual"/>
-            <geom mesh="link3_16" material="gray_mat" class="visual"/>
-            <geom mesh="link3_17" material="gray_mat" class="visual"/>
-            <geom mesh="link3_18" material="gray_mat" class="visual"/>
-            <geom mesh="link3_19" material="gray_mat" class="visual"/>
-            <geom mesh="link3_20" material="gray_mat" class="visual"/>
-            <geom mesh="link3_21" material="gray_mat" class="visual"/>
-            <geom mesh="link3_22" material="gray_mat" class="visual"/>
-            <geom mesh="link3_23" material="gray_mat" class="visual"/>
-            <geom mesh="link3_24" material="gray_mat" class="visual"/>
-            <geom mesh="link3_25" material="gray_mat" class="visual"/>
-            <geom mesh="link3_26" material="gray_mat" class="visual"/>
-            <geom mesh="link3_27" material="gray_mat" class="visual"/>
-            <geom mesh="link3_28" material="gray_mat" class="visual"/>
+            <geom mesh="link3" material="gray_mat" class="visual"/>
             <geom mesh="link3" class="collision"/>
             <body name="left_link4" pos="-0.24221 0.068514 0" quat="0.544767 -0.544769 -0.450809 0.450808" gravcomp="1">
               <inertial pos="0.000276465 -0.00102804 -0.00472831" quat="0.492305 0.505285 0.503294 0.499017"
                 mass="0.127087" diaginertia="4.87057e-05 4.10595e-05 3.82001e-05"/>
               <joint name="left_joint4" axis="0 0 1" range="-1.832 1.832"/>
-              <geom mesh="link4_2" material="gray_mat" class="visual"/>
-              <geom mesh="link4_3" material="darker_gray_mat" class="visual"/>
-              <geom mesh="link4_4" material="gray_mat" class="visual"/>
-              <geom mesh="link4_5" material="gray_mat" class="visual"/>
-              <geom mesh="link4_6" material="gray_mat" class="visual"/>
+              <geom mesh="link4" material="gray_mat" class="visual"/>
               <geom mesh="link4" class="collision"/>
               <body name="left_link5" quat="0.707105 0.707108 0 0" gravcomp="1">
                 <inertial pos="8.82262e-05 0.0566829 -0.0019612" quat="0.507447 0.490986 0.506887 0.494466"
                   mass="0.144711" diaginertia="0.001 0.001 0.001"/>
                 <joint name="left_joint5" axis="0 0 1" range="-1.22 1.22"/>
-                <geom mesh="link5_2" material="black_mat" class="visual"/>
-                <geom mesh="link5_3" material="black_mat" class="visual"/>
-                <geom mesh="link5_4" material="darker_gray_mat" class="visual"/>
-                <geom mesh="link5_5" material="gray_mat" class="visual"/>
-                <geom mesh="link5_6" material="light_gray_mat" class="visual"/>
-                <geom mesh="link5_7" material="gray_mat" class="visual"/>
-                <geom mesh="link5_8" material="gray_mat" class="visual"/>
+                <geom mesh="link5" material="gray_mat" class="visual"/>
                 <geom mesh="link5" class="collision"/>
 
                 <body name="left_link6_mount" pos="0 0.091 0.0014165" quat="0 0 -0.707105 -0.707108" gravcomp="1">
@@ -131,6 +63,7 @@
                         <!-- Upper blade -->
                         <body name="left_upper_jaw" pos="-0.0308 -0.0051 -0.0302" gravcomp="1">
                           <joint name="left_upper_jaw_joint" type="hinge" axis="0 0 1" range="0 0.99" ref="0.66" damping="2" stiffness="50" springref="0" frictionloss="0.5" armature="0.01"/>
+                          <site name="left_pad_upper" pos="-0.0230 -0.0172 0.0014" size="0.005" rgba="1 0.5 0 0"/>
                           <geom mesh="gripper_upper" class="visual" material="light_blue"
                                 euler="3.14159265359 0 0" pos="0.0308 0.0051 0.0302"/>
                           <geom mesh="gripper_upper" class="collision_gripper"
@@ -140,6 +73,7 @@
                         <!-- Lower blade -->
                         <body name="left_lower_jaw" pos="-0.0314 -0.0321 -0.0275" gravcomp="1">
                           <joint name="left_lower_jaw_joint" type="hinge" axis="0 0 1" range="-0.99 0" ref="-0.66" damping="2" stiffness="50" springref="0" frictionloss="0.5" armature="0.01"/>
+                          <site name="left_pad_lower" pos="-0.0230 0.0165 -0.0013" size="0.005" rgba="1 0.5 0 0"/>
                           <geom mesh="gripper_lower" class="visual" material="light_blue"
                                 euler="3.14159265359 0 0" pos="0.0314 0.0321 0.0275"/>
                           <geom mesh="gripper_lower" class="collision_gripper"

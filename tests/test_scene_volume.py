@@ -14,7 +14,7 @@ from rollout.scene_volume import (
     organized_depth_mesh,
     transform_points,
 )
-from rollout.scene_semantics import LABEL_ROBOT
+from rollout.scene_semantics import LABEL_LID, LABEL_ROBOT
 
 
 def test_projective_esdf_preserves_unknown_space():
@@ -89,17 +89,18 @@ def test_support_plane_is_levelled():
     assert np.allclose(rotation @ rotation.T, np.eye(3), atol=1e-9)
 
 
-def test_robot_surface_is_labelled_but_not_baked_into_static_esdf():
+def test_dynamic_surfaces_are_labelled_but_not_baked_into_static_esdf():
     depth = np.ones((40, 50), dtype=float)
-    labels = np.full(depth.shape, LABEL_ROBOT, dtype=np.uint8)
     matrix = np.array([[50.0, 0, 25.0], [0, 50.0, 20.0], [0, 0, 1]])
     grid = VoxelGrid(np.array([-0.2, -0.2, 0.8]), 0.02, (12, 20, 20))
-    volume = integrate_projective_depth(
-        depth, matrix, grid, surface_labels=labels
-    )
-    robot = volume.semantic_labels == LABEL_ROBOT
-    assert np.any(robot)
-    assert np.all(np.isnan(volume.esdf_m[robot]))
+    for dynamic_label in (LABEL_ROBOT, LABEL_LID):
+        labels = np.full(depth.shape, dynamic_label, dtype=np.uint8)
+        volume = integrate_projective_depth(
+            depth, matrix, grid, surface_labels=labels
+        )
+        dynamic = volume.semantic_labels == dynamic_label
+        assert np.any(dynamic)
+        assert np.all(np.isnan(volume.esdf_m[dynamic]))
 
 
 if __name__ == "__main__":
@@ -107,5 +108,5 @@ if __name__ == "__main__":
     test_confidence_zero_is_not_ray_carved()
     test_depth_mesh_rejects_discontinuity()
     test_support_plane_is_levelled()
-    test_robot_surface_is_labelled_but_not_baked_into_static_esdf()
+    test_dynamic_surfaces_are_labelled_but_not_baked_into_static_esdf()
     print("scene volume checks passed")

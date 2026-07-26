@@ -49,7 +49,9 @@ def test_semantic_priority_and_component_filter():
         robot.shape, robot_mask=robot, lid_mask=lid
     )
     assert labels[7, 7] == LABEL_ROBOT
-    assert labels[17, 17] == LABEL_LID
+    # The gripper is foreground.  Overlap must never turn a moving robot
+    # pixel into a static target return.
+    assert labels[17, 17] == LABEL_ROBOT
     assert labels[0, 0] == LABEL_BACKGROUND
     assert labels[25, 35] == LABEL_BACKGROUND
 

@@ -354,6 +354,12 @@ def main():
     surface_labels_rgb = compose_surface_labels(
         rgb_bgr.shape, robot_mask=robot_mask, lid_mask=lid_mask
     )
+    mask_overlap_pixels = int(
+        np.count_nonzero(
+            np.asarray(robot_mask, dtype=bool)
+            & np.asarray(lid_mask, dtype=bool)
+        )
+    ) if robot_mask is not None and lid_mask is not None else 0
     surface_labels_depth = cv2.resize(
         surface_labels_rgb,
         (depth.shape[1], depth.shape[0]),
@@ -453,11 +459,19 @@ def main():
         mesh.colors_rgb,
         mesh.semantic_labels,
     )
-    static_face_mask = ~np.any(
-        mesh.semantic_labels[mesh.faces] == LABEL_ROBOT, axis=1
+    dynamic_face_mask = np.any(
+        np.isin(
+            mesh.semantic_labels[mesh.faces],
+            (LABEL_ROBOT, LABEL_LID),
+        ),
+        axis=1,
     )
+    static_face_mask = ~dynamic_face_mask
     robot_face_mask = np.any(
         mesh.semantic_labels[mesh.faces] == LABEL_ROBOT, axis=1
+    )
+    lid_face_mask = np.any(
+        mesh.semantic_labels[mesh.faces] == LABEL_LID, axis=1
     )
     write_mesh_ply(
         output_dir / "scene_static_mesh_levelled.ply",
@@ -475,6 +489,11 @@ def main():
         output_dir / "scene_robot_observation_levelled.obj",
         mesh.vertices_xyz_m,
         mesh.faces[robot_face_mask],
+    )
+    write_mesh_obj(
+        output_dir / "scene_lid_observation_levelled.obj",
+        mesh.vertices_xyz_m,
+        mesh.faces[lid_face_mask],
     )
     np.save(output_dir / "semantic_labels_rgb.npy", surface_labels_rgb)
     np.savez_compressed(
@@ -512,18 +531,28 @@ def main():
         ),
     )
     report = {
+        "artifact_version": 2,
         "offline_only": True,
         "rgb_source": str(Path(args.rgb)),
         "depth_source": str(Path(args.depth)),
+        "rgb_shape_hw": list(rgb_bgr.shape[:2]),
+        "depth_shape_hw": list(depth.shape),
+        "rgb_camera_matrix": full_matrix.tolist(),
+        "depth_camera_matrix": depth_matrix.tolist(),
         "rgb_depth_file_mtime_delta_s": abs(
             Path(args.rgb).stat().st_mtime - Path(args.depth).stat().st_mtime
         ),
+        "capture_sync_verified": False,
+        "capture_sync_evidence": "file_mtime_only",
         "confidence_available": False,
         "pose_available": False,
         "sam_semantics": bool(
             overlay_requested or args.lid_mask or args.robot_mask
         ),
+        "sam_raw_masks_saved": bool(args.lid_mask or args.robot_mask),
+        "sam_scores_available": False,
         "sam_registration": sam_registration,
+        "sam_mask_overlap_pixels": mask_overlap_pixels,
         "support_plane_fit": fitted_support,
         "coordinate_frame": (
             "support-plane-levelled" if support_normal is not None else "camera"
@@ -537,11 +566,17 @@ def main():
         "static_occupied_band_voxels": int(
             np.count_nonzero(
                 volume.occupied
-                & (volume.semantic_labels != LABEL_ROBOT)
+                & ~np.isin(
+                    volume.semantic_labels,
+                    (LABEL_ROBOT, LABEL_LID),
+                )
             )
         ),
         "robot_band_voxels": int(
             np.count_nonzero(volume.semantic_labels == LABEL_ROBOT)
+        ),
+        "dynamic_target_band_voxels": int(
+            np.count_nonzero(volume.semantic_labels == LABEL_LID)
         ),
         "unknown_voxels": int(np.count_nonzero(volume.unknown)),
         "mesh_vertices": int(len(mesh.vertices_xyz_m)),
@@ -549,6 +584,9 @@ def main():
         "static_mesh_triangles": int(np.count_nonzero(static_face_mask)),
         "robot_observation_triangles": int(
             np.count_nonzero(robot_face_mask)
+        ),
+        "dynamic_target_observation_triangles": int(
+            np.count_nonzero(lid_face_mask)
         ),
         "semantic_surface_pixels": {
             LABEL_NAMES[label]: int(np.count_nonzero(surface_labels_rgb == label))
@@ -561,6 +599,7 @@ def main():
             "saved frame has no Record3D confidence map or camera pose",
             "transparent lid may return the support surface rather than lid",
             "camera-to-robot calibration is not available in this artifact",
+            "SAM scores and model version were not preserved in the legacy overlays",
         ],
     }
     (output_dir / "esdf_report.json").write_text(
