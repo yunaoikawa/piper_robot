@@ -13,6 +13,12 @@ import numpy as np
 from scipy.ndimage import binary_dilation, distance_transform_edt
 
 from rollout.scene_3d import backproject
+from rollout.scene_semantics import (
+    LABEL_BACKGROUND,
+    LABEL_FREE,
+    LABEL_ROBOT,
+    LABEL_UNKNOWN,
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,7 @@ class SceneVolume:
     tsdf: np.ndarray
     observed: np.ndarray
     esdf_m: np.ndarray
+    semantic_labels: np.ndarray
 
     @property
     def free(self) -> np.ndarray:
@@ -57,6 +64,7 @@ class TriangleMesh:
     vertices_xyz_m: np.ndarray
     faces: np.ndarray
     colors_rgb: np.ndarray
+    semantic_labels: np.ndarray | None = None
 
 
 def automatic_grid(
@@ -110,6 +118,7 @@ def integrate_projective_depth(
     max_depth_m: float = 2.00,
     confidence=None,
     minimum_confidence: int = 1,
+    surface_labels=None,
 ) -> SceneVolume:
     """Integrate one depth image while ray-carving only measured free space.
 
@@ -130,12 +139,17 @@ def integrate_projective_depth(
         if confidence.shape != depth.shape:
             raise ValueError("confidence and depth shapes differ")
         valid_depth &= confidence >= minimum_confidence
+    if surface_labels is not None:
+        surface_labels = np.asarray(surface_labels, dtype=np.uint8)
+        if surface_labels.shape != depth.shape:
+            raise ValueError("surface labels and depth shapes differ")
 
     nz, ny, nx = grid.shape_zyx
     x, y, z = grid.centers()
     xx, yy = np.meshgrid(x, y)
     tsdf = np.ones((nz, ny, nx), dtype=np.float32)
     observed = np.zeros((nz, ny, nx), dtype=bool)
+    semantics = np.full((nz, ny, nx), LABEL_UNKNOWN, dtype=np.uint8)
     fx, fy = float(matrix[0, 0]), float(matrix[1, 1])
     cx, cy = float(matrix[0, 2]), float(matrix[1, 2])
     for iz, z_value in enumerate(z):
@@ -159,22 +173,39 @@ def integrate_projective_depth(
         tsdf[iz, layer_observed] = np.clip(
             signed[layer_observed] / truncation_m, -1.0, 1.0
         )
+        layer_free = layer_observed & (signed > 0.0)
+        semantics[iz, layer_free] = LABEL_FREE
+        layer_surface = layer_observed & ~layer_free
+        if surface_labels is None:
+            semantics[iz, layer_surface] = LABEL_BACKGROUND
+        else:
+            sampled_labels = np.full((ny, nx), LABEL_BACKGROUND, dtype=np.uint8)
+            sampled_labels[inside] = surface_labels[v[inside], u[inside]]
+            semantics[iz, layer_surface] = sampled_labels[layer_surface]
 
     free = observed & (tsdf > 0.0)
     occupied = observed & ~free
+    # Robot returns are a dynamic semantic layer.  They remain labelled and
+    # visible, but are not baked into the static-environment ESDF because the
+    # complete posed robot CAD is responsible for robot geometry.
+    static_occupied = occupied & (semantics != LABEL_ROBOT)
     esdf = np.full(tsdf.shape, np.nan, dtype=np.float32)
-    if np.any(occupied):
+    if np.any(static_occupied):
         distance_to_occupied = distance_transform_edt(
-            ~occupied, sampling=grid.voxel_size_m
+            ~static_occupied, sampling=grid.voxel_size_m
         )
         esdf[free] = distance_to_occupied[free]
     if np.any(free):
         distance_to_free = distance_transform_edt(
             ~free, sampling=grid.voxel_size_m
         )
-        esdf[occupied] = -distance_to_free[occupied]
+        esdf[static_occupied] = -distance_to_free[static_occupied]
     return SceneVolume(
-        grid=grid, tsdf=tsdf, observed=observed, esdf_m=esdf
+        grid=grid,
+        tsdf=tsdf,
+        observed=observed,
+        esdf_m=esdf,
+        semantic_labels=semantics,
     )
 
 
@@ -213,6 +244,7 @@ def organized_depth_mesh(
     min_depth_m: float = 0.20,
     max_depth_m: float = 2.00,
     maximum_edge_m: float = 0.045,
+    semantic_labels=None,
 ) -> TriangleMesh:
     """Triangulate adjacent depth samples and reject depth discontinuities."""
 
@@ -241,6 +273,16 @@ def organized_depth_mesh(
             interpolation=cv2.INTER_AREA,
         )
         colors = image[valid][:, ::-1].copy()
+    vertex_labels = None
+    if semantic_labels is not None:
+        import cv2
+
+        label_image = cv2.resize(
+            np.asarray(semantic_labels, dtype=np.uint8),
+            (depth.shape[1], depth.shape[0]),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        vertex_labels = label_image[valid]
 
     faces = []
     h, w = depth.shape
@@ -276,7 +318,7 @@ def organized_depth_mesh(
         if faces
         else np.empty((0, 3), dtype=np.int32)
     )
-    return TriangleMesh(vertices, face_array, colors)
+    return TriangleMesh(vertices, face_array, colors, vertex_labels)
 
 
 def unknown_frontier(volume: SceneVolume) -> np.ndarray:

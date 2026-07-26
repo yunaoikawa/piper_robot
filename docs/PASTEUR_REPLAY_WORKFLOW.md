@@ -272,6 +272,32 @@ rather than treating it as free. A single old frame has no saved Record3D
 confidence or pose, so it is suitable for pipeline and viewer validation, not
 for authorizing arm motion.
 
+When lossless SAM diagnostic overlays and their synchronized RGB-D frame are
+available, recover the semantic masks while building the volume:
+
+```bash
+python src/reconstruct_scene_esdf.py \
+  --rgb synchronized_rgb.png --depth synchronized_depth.npy \
+  --profile saved_head_profile.json --output-dir /tmp/head_semantic \
+  --sam-source-rgb sam_input.png \
+  --sam-lid-overlay sam_lid_overlay.png \
+  --sam-robot-overlay sam_robot_overlay.png
+python src/render_semantic_mujoco.py \
+  --scene-mesh /tmp/head_semantic/scene_mesh_levelled.npz \
+  --output-dir /tmp/head_semantic/mujoco
+```
+
+The robot mask is retained as a semantic observation but excluded from the
+static ESDF. Complete robot geometry comes from the existing MuJoCo CAD; this
+avoids both sparse single-view arm surfaces and double-counting the robot as a
+static obstacle. Do not fuse a SAM RGB frame with depth from another time.
+The renderer intentionally places the capture beside the CAD whenever the
+saved frame lacks synchronized joint state or a camera-to-robot extrinsic.
+`semantic_comparison_UNREGISTERED.mjcf` is then a visual diagnostic, not a
+clearance model. The measured whole-scene triangle mesh is visual-only because
+using one non-convex scene mesh as a MuJoCo collision geom would create a
+misleading convex-hull collision volume.
+
 **3. Adjust when the object is off** — from another shell, live, no restart:
 ```bash
 python src/set_bias.py                 # show current bias + safety rejection count
