@@ -378,20 +378,94 @@ class LiveSamGrasp:
             preview_time = self.args.preview_time
         if minimum_progress is None:
             minimum_progress = self.args.minimum_progress
+        preview_time = float(preview_time)
+        if preview_time <= 0.0:
+            raise ValueError("preview_time must be positive")
         before = np.asarray(self.rpc.get_right_ee_pose().parameters(), dtype=float)
-        target = before.copy()
-        target[4:7] += np.asarray(delta_xyz, dtype=float)
-        self.rpc.set_right_ee_target(
-            mink.SE3(target),
-            gripper_target=None,
-            preview_time=preview_time,
-        )
-        self.monitor_settle(preview_time + 0.15)
+        requested = np.asarray(delta_xyz, dtype=float).reshape(3)
+        if not np.all(np.isfinite(requested)):
+            raise ValueError("Cartesian delta must contain three finite values")
+
+        # ConeE teleoperation succeeds by refreshing 0.05-second targets at
+        # 30 Hz.  A single long-horizon target can stall under the deliberately
+        # low position gains, so stream the same straight path with exactly
+        # those proven timing parameters while checking torque every tick.
+        command_rate_hz = 30.0
+        steps = max(1, int(np.ceil(preview_time * command_rate_hz)))
+        period_s = preview_time / steps
+        command_preview_s = 0.05
+        started = time.monotonic()
+        strikes = 0
+
+        def check_torque(stage):
+            nonlocal strikes
+            torque = np.abs(
+                np.asarray(self.rpc.get_right_joint_torque(), dtype=float)
+            )
+            if (
+                torque.shape != self.torque_limit.shape
+                or not np.all(np.isfinite(torque))
+            ):
+                raise TorqueStop(
+                    f"invalid right torque sample {stage}: "
+                    f"shape={torque.shape}, values={torque.tolist()}"
+                )
+            strikes = (
+                strikes + 1
+                if np.any(torque > self.torque_limit)
+                else 0
+            )
+            if strikes >= self.torque_samples:
+                raise TorqueStop(
+                    f"right torque stop {stage}: "
+                    f"{np.round(torque, 3).tolist()}"
+                )
+
+        try:
+            for index in range(steps):
+                check_torque("during streamed move")
+
+                target = before.copy()
+                target[4:7] += requested * ((index + 1) / steps)
+                accepted = self.rpc.set_right_ee_target(
+                    mink.SE3(target),
+                    gripper_target=None,
+                    preview_time=command_preview_s,
+                )
+                if accepted is not True:
+                    raise RuntimeError(
+                        f"right Cartesian setpoint {index + 1}/{steps} rejected"
+                    )
+
+                deadline = started + (index + 1) * period_s
+                remaining = deadline - time.monotonic()
+                if remaining < -period_s:
+                    raise RuntimeError(
+                        "right Cartesian streaming missed its control "
+                        f"deadline at setpoint {index + 1}/{steps}"
+                    )
+                if remaining > 0.0:
+                    time.sleep(remaining)
+
+            settle_deadline = time.monotonic() + command_preview_s + 0.15
+            while True:
+                check_torque("while settling after streamed move")
+                remaining = settle_deadline - time.monotonic()
+                if remaining <= 0.0:
+                    break
+                time.sleep(min(0.05, remaining))
+            check_torque("after streamed move settled")
+        except BaseException:
+            self.hold_measured()
+            raise
+
         after = np.asarray(self.rpc.get_right_ee_pose().parameters(), dtype=float)
         actual = after[4:7] - before[4:7]
-        requested = np.asarray(delta_xyz, dtype=float)
         if np.linalg.norm(requested) > 0.001:
-            progress = np.linalg.norm(actual) / np.linalg.norm(requested)
+            progress = float(
+                np.dot(actual, requested)
+                / np.dot(requested, requested)
+            )
             if progress < minimum_progress:
                 self.hold_measured()
                 raise RuntimeError(

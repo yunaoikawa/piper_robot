@@ -203,7 +203,9 @@ class ConeE:
     @require_initialization
     def set_right_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
         ee_target = clamp_ee_target(ee_target)
-        self.right_arm.set_ee_target(ee_target, gripper_target, preview_time)
+        return self.right_arm.set_ee_target(
+            ee_target, gripper_target, preview_time
+        )
 
     @require_initialization
     def set_right_gain(self, kp: np.ndarray, kd: np.ndarray):
