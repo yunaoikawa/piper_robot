@@ -61,6 +61,31 @@ assert (
     is None
 )
 
+# A stronger blue cross elsewhere in the full frame must not hide the smaller
+# marker inside the SAM lid mask.
+cross_image = np.zeros((240, 320, 3), np.uint8)
+correct_mask = np.zeros(cross_image.shape[:2], np.uint8)
+cv2.circle(correct_mask, (250, 170), 35, 1, -1)
+wrong_mask = np.zeros(cross_image.shape[:2], np.uint8)
+cv2.circle(wrong_mask, (70, 65), 38, 1, -1)
+cv2.rectangle(cross_image, (35, 57), (105, 73), (255, 0, 0), -1)
+cv2.rectangle(cross_image, (62, 30), (78, 100), (255, 0, 0), -1)
+cv2.rectangle(cross_image, (228, 164), (272, 176), (255, 0, 0), -1)
+cv2.rectangle(cross_image, (244, 148), (256, 192), (255, 0, 0), -1)
+wrong_candidate = MaskCandidate(
+    wrong_mask.astype(bool), np.array([32, 27, 108, 103]), 0.99
+)
+correct_candidate = MaskCandidate(
+    correct_mask.astype(bool), np.array([215, 135, 285, 205]), 0.88
+)
+selected = choose_lid_candidate(
+    [wrong_candidate, correct_candidate],
+    image_bgr=cross_image,
+    require_blue_cross=True,
+)
+assert selected is not None
+assert selected[0] is correct_candidate
+
 dark = np.tile(np.arange(2, 18, dtype=np.uint8), (32, 2))
 dark = cv2.cvtColor(dark, cv2.COLOR_GRAY2BGR)
 enhanced = enhance_low_light(dark)

@@ -249,8 +249,12 @@ def mask_geometry(mask: np.ndarray, min_area_px: int = 200) -> LidMaskGeometry |
     )
 
 
-def detect_blue_cross_center(image_bgr: np.ndarray) -> np.ndarray | None:
-    """Return the most cross-shaped blue component, rejecting teal gripper blobs."""
+def detect_blue_cross_centers(image_bgr: np.ndarray) -> tuple[np.ndarray, ...]:
+    """Return all cross-shaped blue components, strongest candidate first.
+
+    Keeping every plausible component lets a semantic mask disambiguate the
+    lid marker from unrelated blue hardware elsewhere in a full-frame view.
+    """
     hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, np.array([100, 80, 50]), np.array([125, 255, 255]))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
@@ -294,9 +298,15 @@ def detect_blue_cross_center(image_bgr: np.ndarray) -> np.ndarray | None:
         score = min(float(hspan), float(vspan))
         if score >= 0.72:
             candidates.append((score, area, np.asarray(centers[label], dtype=float)))
-    if not candidates:
-        return None
-    return max(candidates, key=lambda item: (item[0], item[1]))[2]
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return tuple(item[2] for item in candidates)
+
+
+def detect_blue_cross_center(image_bgr: np.ndarray) -> np.ndarray | None:
+    """Return the strongest cross-shaped blue component, if one exists."""
+
+    centers = detect_blue_cross_centers(image_bgr)
+    return centers[0] if centers else None
 
 
 def choose_lid_candidate(
@@ -306,8 +316,8 @@ def choose_lid_candidate(
     previous_center_px: np.ndarray | None = None,
     require_blue_cross: bool = False,
 ) -> tuple[MaskCandidate, LidMaskGeometry] | None:
-    blue = detect_blue_cross_center(image_bgr)
-    if require_blue_cross and blue is None:
+    blue_centers = detect_blue_cross_centers(image_bgr)
+    if require_blue_cross and not blue_centers:
         return None
     ranked = []
     for candidate in candidates:
@@ -320,10 +330,13 @@ def choose_lid_candidate(
             continue
         cross_penalty = 0.0
         contains_cross = False
-        if blue is not None:
+        for blue in blue_centers:
             bx, by = np.rint(blue).astype(int)
             if 0 <= by < height and 0 <= bx < width:
                 contains_cross = bool(candidate.mask[by, bx])
+            if contains_cross:
+                break
+        if blue_centers:
             cross_penalty = 0.0 if contains_cross else 500.0
         if require_blue_cross and not contains_cross:
             continue
