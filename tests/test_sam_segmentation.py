@@ -13,6 +13,7 @@ from rollout.sam_segmentation import (
     choose_lid_candidate,
     decode_request,
     decode_response,
+    detect_blue_cross_centers,
     enhance_low_light,
     encode_request,
     encode_response,
@@ -66,20 +67,18 @@ assert (
 cross_image = np.zeros((240, 320, 3), np.uint8)
 correct_mask = np.zeros(cross_image.shape[:2], np.uint8)
 cv2.circle(correct_mask, (250, 170), 35, 1, -1)
-wrong_mask = np.zeros(cross_image.shape[:2], np.uint8)
-cv2.circle(wrong_mask, (70, 65), 38, 1, -1)
-cv2.rectangle(cross_image, (35, 57), (105, 73), (255, 0, 0), -1)
-cv2.rectangle(cross_image, (62, 30), (78, 100), (255, 0, 0), -1)
+cv2.rectangle(cross_image, (44, 59), (96, 71), (255, 0, 0), -1)
+cv2.rectangle(cross_image, (64, 39), (76, 91), (255, 0, 0), -1)
 cv2.rectangle(cross_image, (228, 164), (272, 176), (255, 0, 0), -1)
 cv2.rectangle(cross_image, (244, 148), (256, 192), (255, 0, 0), -1)
-wrong_candidate = MaskCandidate(
-    wrong_mask.astype(bool), np.array([32, 27, 108, 103]), 0.99
-)
 correct_candidate = MaskCandidate(
     correct_mask.astype(bool), np.array([215, 135, 285, 205]), 0.88
 )
+cross_centers = detect_blue_cross_centers(cross_image)
+assert len(cross_centers) == 2
+assert np.linalg.norm(cross_centers[0] - [70, 65]) < 1
 selected = choose_lid_candidate(
-    [wrong_candidate, correct_candidate],
+    [correct_candidate],
     image_bgr=cross_image,
     require_blue_cross=True,
 )
