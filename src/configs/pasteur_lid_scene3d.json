@@ -1,12 +1,18 @@
 {
-  "version": 1,
+  "version": 2,
   "runtime_apriltag_count": 0,
   "recovery_apriltag_count": 1,
+  "head_camera_reference_shape_hw": [1440, 1920],
   "head_camera_matrix_rotated": [
-    [733.2575073242188, 0.0, 479.1193542480469],
-    [0.0, 733.2575073242188, 374.58673095703125],
+    [1466.4942626953125, 0.0, 959.1229553222656],
+    [0.0, 1466.4942626953125, 749.0789489746094],
     [0.0, 0.0, 1.0]
   ],
+  "head_camera_intrinsics_provenance": {
+    "method": "median Record3D LiDAR intrinsics across 30 synchronized frames",
+    "capture_id": "20260727T034333.072580Z_head_front_oblique_lidar_baseline_verified_f0fb6378",
+    "record3d_device_type": 1
+  },
   "temporal_depth_frames": 15,
   "support_plane": {
     "ring_margin_px": 70,

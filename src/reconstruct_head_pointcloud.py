@@ -20,14 +20,31 @@ from rollout.scene_3d import (
 )
 
 
-def camera_matrix_from_profile(path: str) -> np.ndarray:
+def camera_calibration_from_profile(
+    path: str,
+) -> tuple[np.ndarray, tuple[int, int]]:
     profile = json.loads(Path(path).read_text())
     matrix = np.asarray(
         profile["head_camera_matrix_rotated"], dtype=float
     )
     if matrix.shape != (3, 3):
         raise ValueError("invalid rotated head camera matrix")
-    return matrix
+    shape = profile.get("head_camera_reference_shape_hw")
+    if (
+        shape is None
+        or len(shape) != 2
+        or any(int(value) <= 0 for value in shape)
+    ):
+        raise ValueError(
+            "profile requires head_camera_reference_shape_hw"
+        )
+    return matrix, (int(shape[0]), int(shape[1]))
+
+
+def camera_matrix_from_profile(path: str) -> np.ndarray:
+    """Backward-compatible matrix-only accessor."""
+
+    return camera_calibration_from_profile(path)[0]
 
 
 def align_depth(depth: np.ndarray, rgb_shape) -> np.ndarray:
@@ -127,9 +144,11 @@ def main():
     if rgb is None:
         raise RuntimeError(f"could not read RGB image: {args.rgb}")
     depth = align_depth(np.load(args.depth), rgb.shape)
-    full_matrix = camera_matrix_from_profile(args.profile)
+    full_matrix, matrix_reference_shape = camera_calibration_from_profile(
+        args.profile
+    )
     depth_matrix = scaled_camera_matrix(
-        full_matrix, rgb.shape, depth.shape
+        full_matrix, matrix_reference_shape, depth.shape
     )
     xyz = backproject(depth, depth_matrix)
     valid = (

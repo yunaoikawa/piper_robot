@@ -96,7 +96,7 @@ class RightLidObserver:
     def stop(self):
         self.camera.stop()
 
-    def observe(self):
+    def observe(self, *, require_lid=True):
         rgb, timestamp, _ = self.camera.get_latest_frame()
         if rgb is None or timestamp is None:
             raise RuntimeError("right wrist camera frame disappeared")
@@ -104,12 +104,14 @@ class RightLidObserver:
             raise RuntimeError("stale right wrist camera frame")
         image = cv2.rotate(rgb, cv2.ROTATE_90_CLOCKWISE)
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        raw_path = self.output_dir / f"{self.sequence:03d}_raw.png"
+        sequence = self.sequence
+        self.sequence += 1
+        raw_path = self.output_dir / f"{sequence:03d}_raw.png"
         cv2.imwrite(str(raw_path), image)
         sam_image = (
             enhance_low_light(image) if float(image.mean()) < 35.0 else image
         )
-        input_path = self.output_dir / f"{self.sequence:03d}_sam_input.png"
+        input_path = self.output_dir / f"{sequence:03d}_sam_input.png"
         cv2.imwrite(str(input_path), sam_image)
         selected = None
         attempts = []
@@ -136,10 +138,34 @@ class RightLidObserver:
             if selected is not None:
                 break
         if selected is None:
-            raise RuntimeError(
-                "right SAM did not identify the blue-cross lid; "
-                f"attempts={attempts}, raw={raw_path}, input={input_path}"
+            if require_lid:
+                raise RuntimeError(
+                    "right SAM did not identify the blue-cross lid; "
+                    f"attempts={attempts}, raw={raw_path}, input={input_path}"
+                )
+            overlay = sam_image.copy()
+            label = f"RIGHT lid outside view; attempts={attempts}"
+            cv2.putText(
+                overlay,
+                label,
+                (12, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 0),
+                3,
             )
+            cv2.putText(
+                overlay,
+                label,
+                (12, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
+            )
+            path = self.output_dir / f"{sequence:03d}.png"
+            cv2.imwrite(str(path), overlay)
+            return None, None, str(path), float(timestamp)
         candidate, geometry = selected
         self.previous_center = geometry.center_px.copy()
         overlay = sam_image.copy()
@@ -175,9 +201,8 @@ class RightLidObserver:
             (255, 255, 255),
             1,
         )
-        path = self.output_dir / f"{self.sequence:03d}.png"
+        path = self.output_dir / f"{sequence:03d}.png"
         cv2.imwrite(str(path), overlay)
-        self.sequence += 1
         return geometry, candidate, str(path), float(timestamp)
 
 
@@ -229,7 +254,7 @@ def main():
             args.reference_points
         )
         right_geometry, right_candidate, right_path, right_timestamp = (
-            right.observe()
+            right.observe(require_lid=False)
         )
         print(
             json.dumps(
@@ -269,8 +294,14 @@ def main():
                     "head_timestamp": timestamp,
                     "right_lid_center_px": (
                         right_geometry.center_px.round(2).tolist()
+                        if right_geometry is not None
+                        else None
                     ),
-                    "right_lid_score": float(right_candidate.score),
+                    "right_lid_score": (
+                        float(right_candidate.score)
+                        if right_candidate is not None
+                        else None
+                    ),
                     "right_image": right_path,
                     "right_timestamp": right_timestamp,
                 }
@@ -301,10 +332,10 @@ def main():
                 # Horizontal probes may experience a little IK sag. Ask the
                 # controller to restore, never lower, the starting height.
                 request[2] = max(0.0, float(origin[6] - current[6]))
+            moved = True
             actual = runner.move_cartesian_delta(
                 request, minimum_progress=0.0
             )
-            moved = True
             after, _, path, _ = runner.observe(0.0)
             delta_feature = (
                 after.gripper_feature - before.gripper_feature
@@ -337,7 +368,7 @@ def main():
                 right_candidate,
                 right_path,
                 right_timestamp,
-            ) = right.observe()
+            ) = right.observe(require_lid=False)
             jacobian = fit_horizontal_jacobian(
                 samples_robot, samples_feature
             )
@@ -360,8 +391,14 @@ def main():
                 "timestamp": timestamp,
                 "right_lid_center_px": (
                     right_geometry.center_px.round(2).tolist()
+                    if right_geometry is not None
+                    else None
                 ),
-                "right_lid_score": float(right_candidate.score),
+                "right_lid_score": (
+                    float(right_candidate.score)
+                    if right_candidate is not None
+                    else None
+                ),
                 "right_image": right_path,
                 "right_timestamp": right_timestamp,
             }
@@ -369,6 +406,24 @@ def main():
             final_path = path
             if horizontal_norm <= args.horizontal_tolerance_m:
                 runner.hold_measured()
+                if right_candidate is None:
+                    print(
+                        json.dumps(
+                            {
+                                "status": (
+                                    "HORIZONTAL_ALIGNED_"
+                                    "RIGHT_CONFIRMATION_MISSING"
+                                ),
+                                "image": path,
+                                "right_image": right_path,
+                                "estimated_descent_m": float(
+                                    displacement[2]
+                                ),
+                            }
+                        ),
+                        flush=True,
+                    )
+                    return
                 print(
                     json.dumps(
                         {
@@ -412,10 +467,10 @@ def main():
                 0.002,
             )
             before_gripper = feature.gripper_feature.copy()
+            moved = True
             actual = runner.move_cartesian_delta(
                 step, minimum_progress=0.0
             )
-            moved = True
             after, _, _, _ = runner.observe(0.0)
             if np.linalg.norm(actual) >= 5e-4:
                 samples_robot.append(actual)
@@ -430,7 +485,7 @@ def main():
         raise RuntimeError(
             f"horizontal-only alignment did not converge; image={final_path}"
         )
-    except Exception:
+    except BaseException:
         if moved:
             try:
                 runner.hold_measured()

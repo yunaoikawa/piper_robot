@@ -72,6 +72,18 @@ class LiveSamGrasp:
         self.head_camera_matrix = np.asarray(
             profile["head_camera_matrix_rotated"], dtype=float
         )
+        reference_shape = profile.get("head_camera_reference_shape_hw")
+        if (
+            reference_shape is None
+            or len(reference_shape) != 2
+            or any(int(value) <= 0 for value in reference_shape)
+        ):
+            raise ValueError(
+                "scene profile requires head_camera_reference_shape_hw"
+            )
+        self.head_camera_reference_shape = tuple(
+            int(value) for value in reference_shape
+        )
         self.support_plane_config = profile.get("support_plane", {})
         self.registration_config = profile.get("registration", {})
         self.geometry_quality_config = profile.get("geometry_quality", {})
@@ -186,7 +198,9 @@ class LiveSamGrasp:
         lid_candidate, lid_geometry = selected_lid
         grasp_px = lid_left_grasp_px(lid_candidate, lid_geometry)
         camera_matrix = scaled_camera_matrix(
-            self.head_camera_matrix, image.shape, depth.shape
+            self.head_camera_matrix,
+            self.head_camera_reference_shape,
+            depth.shape,
         )
         self.last_depth = depth
         self.last_camera_matrix = camera_matrix
@@ -337,7 +351,9 @@ class LiveSamGrasp:
 
     def hold_measured(self):
         q = np.asarray(self.rpc.get_right_joint_positions(), dtype=float)
-        self.rpc.set_right_joint_target(q, gripper_target=1.0, preview_time=0.2)
+        self.rpc.set_right_joint_target(
+            q, gripper_target=None, preview_time=0.2
+        )
         self.joint_command = None
 
     def monitor_settle(self, duration_s: float):
@@ -366,7 +382,9 @@ class LiveSamGrasp:
         target = before.copy()
         target[4:7] += np.asarray(delta_xyz, dtype=float)
         self.rpc.set_right_ee_target(
-            mink.SE3(target), gripper_target=1.0, preview_time=preview_time
+            mink.SE3(target),
+            gripper_target=None,
+            preview_time=preview_time,
         )
         self.monitor_settle(preview_time + 0.15)
         after = np.asarray(self.rpc.get_right_ee_pose().parameters(), dtype=float)
@@ -407,7 +425,9 @@ class LiveSamGrasp:
             target = before.copy()
         target[:3] += np.asarray(delta_joints, dtype=float)
         self.rpc.set_right_joint_target(
-            target, gripper_target=1.0, preview_time=preview_time
+            target,
+            gripper_target=None,
+            preview_time=preview_time,
         )
         self.monitor_settle(preview_time + 0.15)
         if accumulate:

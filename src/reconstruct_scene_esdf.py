@@ -37,7 +37,7 @@ from rollout.scene_semantics import (
 )
 from src.reconstruct_head_pointcloud import (
     align_depth,
-    camera_matrix_from_profile,
+    camera_calibration_from_profile,
 )
 from rollout.scene_3d import (
     estimate_target_on_support_plane,
@@ -276,8 +276,12 @@ def main():
     if rgb_bgr is None:
         raise RuntimeError(f"could not read RGB image: {args.rgb}")
     depth = align_depth(np.load(args.depth), rgb_bgr.shape)
-    full_matrix = camera_matrix_from_profile(args.profile)
-    depth_matrix = scaled_camera_matrix(full_matrix, rgb_bgr.shape, depth.shape)
+    full_matrix, matrix_reference_shape = camera_calibration_from_profile(
+        args.profile
+    )
+    depth_matrix = scaled_camera_matrix(
+        full_matrix, matrix_reference_shape, depth.shape
+    )
 
     lid_mask = None
     robot_mask = None
