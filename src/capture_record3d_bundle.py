@@ -62,7 +62,7 @@ def write_json(path: Path, value: Any) -> None:
 
 
 def git_provenance() -> dict[str, Any]:
-    def run(*args: str) -> str | None:
+    def run(*args: str, strip_output: bool = True) -> str | None:
         result = subprocess.run(
             ["git", *args],
             cwd=REPO_ROOT,
@@ -71,9 +71,13 @@ def git_provenance() -> dict[str, Any]:
             stderr=subprocess.DEVNULL,
             check=False,
         )
-        return result.stdout.strip() if result.returncode == 0 else None
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() if strip_output else result.stdout
 
-    status = run("status", "--porcelain=v1") or ""
+    # Keep the leading XY status columns.  Stripping the whole output removes
+    # the first path's leading space when it is modified only in the worktree.
+    status = run("status", "--porcelain=v1", strip_output=False) or ""
     dirty_paths = []
     for line in status.splitlines():
         path = line[3:]
@@ -242,10 +246,12 @@ def write_preview(
     depth_color = np.zeros((*depth.shape, 3), dtype=np.uint8)
     if np.any(valid_mask):
         lo, hi = np.percentile(depth[valid_mask], [2, 98])
-        normalized = np.clip((depth - lo) / max(float(hi - lo), 1e-6), 0, 1)
-        depth_color = cv2.applyColorMap(
-            np.uint8(255 * (1.0 - normalized)), cv2.COLORMAP_TURBO
+        normalized_valid = np.clip(
+            (depth[valid_mask] - lo) / max(float(hi - lo), 1e-6), 0, 1
         )
+        depth_u8 = np.zeros(depth.shape, dtype=np.uint8)
+        depth_u8[valid_mask] = np.uint8(255 * (1.0 - normalized_valid))
+        depth_color = cv2.applyColorMap(depth_u8, cv2.COLORMAP_TURBO)
         depth_color[~valid_mask] = 0
     depth_color = cv2.rotate(depth_color, cv2.ROTATE_90_CLOCKWISE)
     depth_preview = derived / "head_depth_landscape.png"
@@ -515,7 +521,9 @@ def main() -> int:
         "Record3D stream stopped unexpectedly"
     )
     stream.connect(device)
-    device_type = int(stream.get_device_type())
+    # The native binding initializes this field to zero, which is also the
+    # enum value for TrueDepth.  It is not meaningful until a frame arrives.
+    device_type_at_connect = int(stream.get_device_type())
     completed = capture_done.wait(timeout=args.timeout_s)
     if not completed:
         errors.append(
@@ -526,6 +534,9 @@ def main() -> int:
     writer_thread.join(timeout=20.0)
     if writer_thread.is_alive():
         errors.append("writer did not finish within 20s")
+    device_type = (
+        int(stream.get_device_type()) if callback_count > 0 else None
+    )
 
     if args.robot_state:
         robot_after = robot_state_snapshot(args.robot_host, args.robot_port)
@@ -603,7 +614,15 @@ def main() -> int:
                 "record3d_device_type_name": {
                     0: "TrueDepth",
                     1: "LiDAR",
-                }.get(device_type, "unknown"),
+                }.get(device_type, "unavailable"),
+                "record3d_device_type_source": (
+                    "after_first_callback"
+                    if callback_count > 0
+                    else "unavailable_no_callbacks"
+                ),
+                "record3d_device_type_at_connect_uninitialized": (
+                    device_type_at_connect
+                ),
             },
             "clock": {
                 **manifest["clock"],
