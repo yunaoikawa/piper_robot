@@ -569,7 +569,7 @@ def _probe_context(runner, anchor_head_path, anchor_artifacts=None):
         "head_image_shape_hw": list(anchor_image.shape[:2]),
         "head_rotation": "clockwise_90",
         "feature_definition": (
-            "lid-left-ellipse/gripper-pca-terminal-roi-v3"
+            "lid-left-ellipse/gripper-sam-hsv-terminal-roi-v4"
         ),
         "placement_reference_capture_id": placement.get("capture_id"),
         "placement_reference_rgb_sha256": reference_hash,

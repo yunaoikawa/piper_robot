@@ -24,7 +24,7 @@ from rollout.scene_semantics import estimate_image_homography
 
 PROBE_SCHEMA = "sam_horizontal_probe/v2"
 CONTEXT_SCHEMA = "sam_probe_context/v2"
-FEATURE_DEFINITION = "lid-left-ellipse/gripper-pca-terminal-roi-v3"
+FEATURE_DEFINITION = "lid-left-ellipse/gripper-sam-hsv-terminal-roi-v4"
 MODEL_SCHEMA = "sam_local_xy_feature_model/v1"
 # Record3D gripper depth has shown 14--22 mm stationary drift in this setup.
 # Horizontal motion eligibility therefore uses UV by default.  Depth remains

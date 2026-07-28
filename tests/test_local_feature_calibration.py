@@ -175,7 +175,7 @@ def stable_context():
         "head_image_shape_hw": [360, 480],
         "head_rotation": "clockwise_90",
         "feature_definition": (
-            "lid-left-ellipse/gripper-pca-terminal-roi-v3"
+            "lid-left-ellipse/gripper-sam-hsv-terminal-roi-v4"
         ),
         "placement_reference_capture_id": "test-placement",
         "placement_reference_rgb_sha256": "3" * 64,

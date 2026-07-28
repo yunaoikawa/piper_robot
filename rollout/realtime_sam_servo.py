@@ -12,6 +12,10 @@ from rollout.sam_segmentation import LidMaskGeometry, MaskCandidate, mask_geomet
 
 
 DEPTH_SCALE = 1000.0  # metres -> millimetre-like feature units
+GRIPPER_CYAN_HSV_LOWER = (80, 80, 60)
+GRIPPER_CYAN_HSV_UPPER = (115, 255, 255)
+GRIPPER_COLOR_MINIMUM_PIXELS = 50
+GRIPPER_COLOR_MINIMUM_MASK_FRACTION = 0.10
 
 
 @dataclass(frozen=True)
@@ -21,6 +25,7 @@ class SamSceneFeature:
     gripper_candidate: MaskCandidate
     lid_grasp_feature: np.ndarray
     gripper_feature: np.ndarray
+    gripper_feature_support_mask: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -109,8 +114,117 @@ def gripper_mask_center(candidate: MaskCandidate) -> np.ndarray:
     return np.array([np.median(xs), np.median(ys)], dtype=float)
 
 
-def gripper_tip_px(candidate: MaskCandidate) -> np.ndarray:
-    ys, xs = np.where(np.asarray(candidate.mask, dtype=bool))
+def _dominant_mask_component(
+    mask: np.ndarray,
+    *,
+    minimum_pixels: int,
+    minimum_source_fraction: float,
+    label: str,
+) -> np.ndarray:
+    source = np.asarray(mask, dtype=bool)
+    if source.ndim != 2:
+        raise ValueError(f"{label} mask must be two-dimensional")
+    source_pixels = int(np.count_nonzero(source))
+    if source_pixels < minimum_pixels:
+        raise ValueError(f"{label} mask is too small")
+    component_count, labels, statistics, _ = cv2.connectedComponentsWithStats(
+        source.astype(np.uint8), connectivity=8
+    )
+    if component_count <= 1:
+        raise ValueError(f"{label} mask has no connected foreground")
+    component = 1 + int(
+        np.argmax(statistics[1:, cv2.CC_STAT_AREA])
+    )
+    component_pixels = int(statistics[component, cv2.CC_STAT_AREA])
+    required_pixels = max(
+        int(minimum_pixels),
+        int(np.ceil(float(minimum_source_fraction) * source_pixels)),
+    )
+    if component_pixels < required_pixels:
+        raise ValueError(
+            f"{label} support is fragmented: largest component has "
+            f"{component_pixels} pixels, need {required_pixels}"
+        )
+    return labels == component
+
+
+def gripper_cyan_support_mask(
+    candidate: MaskCandidate,
+    image_bgr: np.ndarray,
+    *,
+    hsv_lower: tuple[int, int, int] = GRIPPER_CYAN_HSV_LOWER,
+    hsv_upper: tuple[int, int, int] = GRIPPER_CYAN_HSV_UPPER,
+    minimum_pixels: int = GRIPPER_COLOR_MINIMUM_PIXELS,
+    minimum_mask_fraction: float = GRIPPER_COLOR_MINIMUM_MASK_FRACTION,
+) -> np.ndarray:
+    """Extract the observed cyan jaw inside a SAM semantic gripper mask.
+
+    SAM determines *which object* is the gripper.  The fixed tool colour then
+    determines *which pixels* define the jaw geometry.  Selecting one connected
+    colour component prevents an unrelated blue patch, or a disconnected piece
+    that SAM intermittently merges, from rotating the jaw's longitudinal axis.
+
+    This helper deliberately fails closed when colour support is absent or
+    fragmented.  Silently falling back to the full SAM mask would reintroduce
+    the image-space jump that the colour observation is intended to prevent.
+    """
+
+    semantic_mask = np.asarray(candidate.mask, dtype=bool)
+    image = np.asarray(image_bgr)
+    if (
+        image.ndim != 3
+        or image.shape[2] != 3
+        or image.shape[:2] != semantic_mask.shape
+        or image.dtype != np.uint8
+    ):
+        raise ValueError(
+            "gripper colour image must be uint8 BGR and match the SAM mask"
+        )
+    lower = np.asarray(hsv_lower, dtype=np.int16)
+    upper = np.asarray(hsv_upper, dtype=np.int16)
+    if (
+        lower.shape != (3,)
+        or upper.shape != (3,)
+        or np.any(lower < 0)
+        or np.any(upper > np.array([179, 255, 255]))
+        or np.any(lower > upper)
+    ):
+        raise ValueError("invalid gripper HSV limits")
+    if minimum_pixels < 1:
+        raise ValueError("minimum gripper colour pixels must be positive")
+    if not 0.0 < float(minimum_mask_fraction) <= 1.0:
+        raise ValueError("minimum gripper colour mask fraction must be in (0, 1]")
+
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    colour_support = (
+        cv2.inRange(
+            hsv,
+            lower.astype(np.uint8),
+            upper.astype(np.uint8),
+        )
+        > 0
+    ) & semantic_mask
+    semantic_pixels = int(np.count_nonzero(semantic_mask))
+    if semantic_pixels < minimum_pixels:
+        raise ValueError("gripper SAM mask is too small")
+    required_pixels = max(
+        int(minimum_pixels),
+        int(np.ceil(float(minimum_mask_fraction) * semantic_pixels)),
+    )
+    return _dominant_mask_component(
+        colour_support,
+        minimum_pixels=required_pixels,
+        minimum_source_fraction=0.0,
+        label="cyan gripper",
+    )
+
+
+def _longitudinal_tip_px(
+    mask: np.ndarray,
+    *,
+    terminal_percentile: float,
+) -> np.ndarray:
+    ys, xs = np.where(np.asarray(mask, dtype=bool))
     if xs.size < 50:
         raise ValueError("gripper mask is too small")
     points = np.column_stack((xs, ys)).astype(float)
@@ -134,10 +248,35 @@ def gripper_tip_px(candidate: MaskCandidate) -> np.ndarray:
     if axis[0] < 0.0:
         axis = -axis
     projection = centered @ axis
-    terminal = projection >= np.percentile(projection, 98.0)
+    terminal = projection >= np.percentile(
+        projection, float(terminal_percentile)
+    )
     if np.count_nonzero(terminal) < 10:
         raise ValueError("gripper tip band is too small")
     return np.median(points[terminal], axis=0)
+
+
+def gripper_tip_px(candidate: MaskCandidate) -> np.ndarray:
+    """Estimate the right jaw tip from the dominant SAM mask component."""
+
+    mask = np.asarray(candidate.mask, dtype=bool)
+    dominant = _dominant_mask_component(
+        mask,
+        minimum_pixels=50,
+        minimum_source_fraction=0.10,
+        label="gripper",
+    )
+    return _longitudinal_tip_px(dominant, terminal_percentile=98.0)
+
+
+def gripper_cyan_tip_px(
+    candidate: MaskCandidate,
+    image_bgr: np.ndarray,
+) -> np.ndarray:
+    """Estimate the jaw tip from fail-closed cyan support inside the SAM ROI."""
+
+    support = gripper_cyan_support_mask(candidate, image_bgr)
+    return _longitudinal_tip_px(support, terminal_percentile=99.0)
 
 
 def lid_left_grasp_px(candidate: MaskCandidate, geometry: LidMaskGeometry) -> np.ndarray:
@@ -181,6 +320,7 @@ def scene_feature(
     clearance_m: float = 0.040,
     lid_support_depth_m: float | None = None,
     selected_lid: tuple[MaskCandidate, LidMaskGeometry] | None = None,
+    image_bgr: np.ndarray | None = None,
 ) -> SamSceneFeature:
     if selected_lid is None:
         lid_candidate, lid_geometry = choose_lid(
@@ -194,13 +334,27 @@ def scene_feature(
         previous_center_px=previous_gripper_center_px,
     )
     lid_px = lid_left_grasp_px(lid_candidate, lid_geometry)
-    gripper_px = gripper_tip_px(gripper_candidate)
+    gripper_support = None
+    if image_bgr is None:
+        gripper_px = gripper_tip_px(gripper_candidate)
+    else:
+        gripper_support = gripper_cyan_support_mask(
+            gripper_candidate, image_bgr
+        )
+        gripper_px = _longitudinal_tip_px(
+            gripper_support, terminal_percentile=99.0
+        )
     lid_depth = (
         mask_depth_median(depth_m, lid_candidate.mask)
         if lid_support_depth_m is None
         else float(lid_support_depth_m)
     )
-    gripper_depth = mask_depth_median(depth_m, gripper_candidate.mask)
+    gripper_depth = mask_depth_median(
+        depth_m,
+        gripper_candidate.mask
+        if gripper_support is None
+        else gripper_support,
+    )
     lid_feature = np.array(
         [lid_px[0], lid_px[1], DEPTH_SCALE * (lid_depth - clearance_m)], dtype=float
     )
@@ -213,6 +367,7 @@ def scene_feature(
         gripper_candidate=gripper_candidate,
         lid_grasp_feature=lid_feature,
         gripper_feature=gripper_feature,
+        gripper_feature_support_mask=gripper_support,
     )
 
 

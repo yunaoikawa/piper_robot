@@ -28,6 +28,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from robot.rpc import RPCClient
 from rollout.camera import CameraFeedManager
 from rollout.realtime_sam_servo import (
+    GRIPPER_COLOR_MINIMUM_MASK_FRACTION,
+    GRIPPER_COLOR_MINIMUM_PIXELS,
+    GRIPPER_CYAN_HSV_LOWER,
+    GRIPPER_CYAN_HSV_UPPER,
     bounded_reachable_servo_step,
     choose_right_gripper,
     estimate_reachable_feature_model,
@@ -67,8 +71,8 @@ DEFAULT_MOTION_KP = np.array([7.0, 7.0, 7.0, 5.0, 5.0, 5.0])
 DEFAULT_MOTION_KD = np.array([0.4, 0.4, 0.4, 0.3, 0.3, 0.3])
 MINIMUM_SEGMENT_IMAGE_MARGIN_PX = 10
 SAM_REQUEST_JPEG_QUALITY = 90
-MAX_DEPTH_BURST_SPAN_S = 2.00
-MAX_DEPTH_BURST_COLLECTION_WAIT_S = 2.25
+MAX_DEPTH_BURST_SPAN_S = 2.50
+MAX_DEPTH_BURST_COLLECTION_WAIT_S = 2.75
 MAX_POST_SAM_ROI_MEAN_ABS_DIFF = 0.04
 MAX_POST_SAM_ROI_P95_ABS_DIFF = 0.12
 MIN_FINE_GRIPPER_COARSE_IOU = 0.10
@@ -1622,6 +1626,7 @@ class LiveSamGrasp:
                 target_3d.point_camera_xyz_m[2]
             ),
             selected_lid=selected_lid,
+            image_bgr=image,
         )
         if feature.gripper_candidate is not fine_gripper_candidate:
             raise RuntimeError("scene feature changed the associated gripper")
@@ -1636,6 +1641,30 @@ class LiveSamGrasp:
             np.asarray(feature.gripper_candidate.mask, dtype=np.uint8)
             * 255,
         )
+        gripper_feature_support_path = None
+        gripper_feature_support = getattr(
+            feature, "gripper_feature_support_mask", None
+        )
+        if gripper_feature_support is not None:
+            gripper_feature_support = np.asarray(
+                gripper_feature_support, dtype=bool
+            )
+            if (
+                gripper_feature_support.shape != image.shape[:2]
+                or np.count_nonzero(gripper_feature_support)
+                < GRIPPER_COLOR_MINIMUM_PIXELS
+            ):
+                raise RuntimeError(
+                    "cyan gripper feature support is malformed"
+                )
+            gripper_feature_support_path = artifacts.add_image(
+                "gripper_feature_support_mask",
+                (
+                    f"{self.sequence:03d}_head_"
+                    "gripper_feature_support_mask.png"
+                ),
+                gripper_feature_support.astype(np.uint8) * 255,
+            )
         depth_path = artifacts.add_npz(
             "depth_npz",
             f"{self.sequence:03d}_head_depth.npz",
@@ -1832,6 +1861,35 @@ class LiveSamGrasp:
                     feature.gripper_candidate.box_xyxy, dtype=float
                 ).tolist(),
                 "image_margin": gripper_image_margin,
+                "feature_extractor": {
+                    "schema": "sam_hsv_gripper_tip/v1",
+                    "semantic_source": "roi_refined_sam_mask",
+                    "colour_space": "HSV",
+                    "hsv_lower": list(GRIPPER_CYAN_HSV_LOWER),
+                    "hsv_upper": list(GRIPPER_CYAN_HSV_UPPER),
+                    "minimum_pixels": GRIPPER_COLOR_MINIMUM_PIXELS,
+                    "minimum_sam_mask_fraction": (
+                        GRIPPER_COLOR_MINIMUM_MASK_FRACTION
+                    ),
+                    "connected_component": "largest_8_connected",
+                    "tip": "longitudinal_right_terminal_percentile_99",
+                    "depth_support": "same_colour_component",
+                    "support_pixel_count": (
+                        int(np.count_nonzero(gripper_feature_support))
+                        if gripper_feature_support is not None
+                        else None
+                    ),
+                    "support_artifact_role": (
+                        "gripper_feature_support_mask"
+                        if gripper_feature_support_path is not None
+                        else None
+                    ),
+                    "support_artifact_path": (
+                        gripper_feature_support_path.name
+                        if gripper_feature_support_path is not None
+                        else None
+                    ),
+                },
             },
             "feature": {
                 "clearance_m": float(clearance_m),

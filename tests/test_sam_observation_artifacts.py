@@ -742,7 +742,7 @@ def test_pre_sam_depth_burst_tolerates_startup_polling_but_gates_scene():
         frames.append(
             (
                 source_rgb.copy(),
-                100.23 + index * 0.23,
+                100.38 + index * 0.38,
                 fresh_depth,
             )
         )
@@ -764,13 +764,14 @@ def test_pre_sam_depth_burst_tolerates_startup_polling_but_gates_scene():
         100.0,
         source_depth,
     )
-    assert len(depth_frames) == 8
-    assert 1.3 < timestamps[-1] - timestamps[0] < 2.0
-    assert timing["maximum_timestamp_span_s"] == 2.0
+    assert len(depth_frames) == 7
+    assert 2.2 < timestamps[-1] - timestamps[0] < 2.5
+    assert timing["maximum_timestamp_span_s"] == 2.5
     assert timing["rgb_consistency"]["accepted"] is True
-    assert timing["repeated_rgb_digest_count"] == 10
+    assert timing["repeated_rgb_digest_count"] == 9
     assert timing["repeated_depth_digest_count"] == 3
-    assert timing["timestamp_advanced_count"] == 10
+    assert timing["timestamp_advanced_count"] == 9
+    assert timing["timestamp_beyond_span_count"] == 1
     assert len(timing["source_depth_sha256"]) == len(depth_frames)
 
     changed_rgb = source_rgb.copy()
