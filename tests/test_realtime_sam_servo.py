@@ -202,6 +202,11 @@ class LateralOnlyMotionRPC(FakeMotionRPC):
         return True
 
 
+class InvalidJointMotionRPC(FakeMotionRPC):
+    def get_right_joint_positions(self):
+        return np.full(6, np.nan)
+
+
 def fake_motion_runner(rpc, *, torque_samples=5):
     runner = object.__new__(LiveSamGrasp)
     runner.args = SimpleNamespace(preview_time=0.06, minimum_progress=0.9)
@@ -402,6 +407,18 @@ assert not mode_failure_rpc.commands
 assert mode_failure_rpc.events[-2:] == ["hold", "gain"]
 assert np.allclose(mode_failure_rpc.gains[-1][0], DEFAULT_HOLDING_KP)
 assert np.allclose(mode_failure_rpc.gains[-1][1], DEFAULT_HOLDING_KD)
+
+invalid_joint_rpc = InvalidJointMotionRPC()
+try:
+    fake_motion_runner(invalid_joint_rpc).move_cartesian_delta(
+        [0.0, 0.0, 0.004], preview_time=0.06
+    )
+    raise AssertionError("invalid measured joints reached a move command")
+except RuntimeError as exc:
+    assert "invalid measured right-arm state" in str(exc)
+assert not invalid_joint_rpc.commands
+assert invalid_joint_rpc.gains
+assert np.allclose(invalid_joint_rpc.gains[-1][0], DEFAULT_HOLDING_KP)
 
 invalid_rpc = FakeMotionRPC()
 try:

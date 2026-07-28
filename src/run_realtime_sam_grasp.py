@@ -90,6 +90,16 @@ def _gain_vector(values, name: str, maximum) -> np.ndarray:
     return gain
 
 
+def _note_exception(error: BaseException, note: str):
+    """Attach cleanup context without replacing the primary failure."""
+
+    add_note = getattr(error, "add_note", None)
+    if add_note is not None:
+        add_note(note)
+    else:
+        print(f"{error!r}; NOTE: {note}", file=sys.stderr)
+
+
 class LiveSamGrasp:
     def __init__(self, args):
         self.args = args
@@ -434,6 +444,10 @@ class LiveSamGrasp:
 
     def hold_measured(self):
         q = np.asarray(self.rpc.get_right_joint_positions(), dtype=float)
+        if q.shape != (6,) or not np.all(np.isfinite(q)):
+            raise RuntimeError(
+                "refusing to hold invalid measured right joint state"
+            )
         self.rpc.set_right_joint_target(
             q, gripper_target=None, preview_time=0.2
         )
@@ -570,7 +584,8 @@ class LiveSamGrasp:
             self.rpc.set_right_gain(self.holding_kp, self.holding_kd)
         except BaseException as gain_error:
             if hold_error is not None:
-                hold_error.add_note(
+                _note_exception(
+                    hold_error,
                     f"holding-gain restoration also failed: {gain_error!r}"
                 )
             else:
@@ -632,6 +647,10 @@ class LiveSamGrasp:
             before = np.asarray(
                 self.rpc.get_right_ee_pose().parameters(), dtype=float
             )
+            if before.shape != (7,) or not np.all(np.isfinite(before)):
+                raise RuntimeError(
+                    "refusing to move from invalid measured right pose"
+                )
             # Preparation deliberately takes longer than a short probe.  Start
             # the streaming deadline only after the arm is stably in MIT mode
             # with the motion gains applied.
@@ -678,13 +697,16 @@ class LiveSamGrasp:
             except BaseException as cleanup_error:
                 if motion_error is None:
                     raise
-                motion_error.add_note(
+                _note_exception(
+                    motion_error,
                     f"right-arm cleanup also failed: {cleanup_error!r}"
                 )
 
         after = np.asarray(
             self.rpc.get_right_ee_pose().parameters(), dtype=float
         )
+        if after.shape != (7,) or not np.all(np.isfinite(after)):
+            raise RuntimeError("invalid right pose after Cartesian move")
         actual = after[4:7] - before[4:7]
         if np.linalg.norm(requested) > 0.001:
             progress = float(
