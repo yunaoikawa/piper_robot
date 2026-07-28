@@ -1,0 +1,49 @@
+{
+  "schema": "piper_robot.sam_lid_task/v1",
+  "object": {
+    "name": "transparent petri dish lid",
+    "runtime_apriltag_required": false,
+    "head_prompt": "transparent round petri dish lid with blue cross"
+  },
+  "demonstration_goal": {
+    "selection": "start of longest gripper-closed run",
+    "frame_index": 82,
+    "right_image_path": "src/configs/task_goals/pasteur_lid_grip_start_right_0082_q90.jpg",
+    "right_image_sha256": "81fe0362647d567b3765252ed82135f806241a20c7e21e8817c90bd7d3256b8a",
+    "source_png_sha256": "829d465a4972cbd3e2b3fcefc194e00a56d90ef354a4f86d18e0ad9cd8441ea5",
+    "right_image_shape_hw": [480, 640],
+    "user_confirmed_lid_ellipse": {
+      "center_px": [182, 322],
+      "axes_px": [121, 66],
+      "angle_deg": -8
+    }
+  },
+  "head_coarse_alignment": {
+    "lid_feature": "left endpoint of SAM lid ellipse",
+    "gripper_feature": "right terminal of dominant cyan component inside the SAM gripper mask",
+    "desired_gripper_minus_lid_uv_px": [0.0, 0.0],
+    "tolerance_px": 6.0,
+    "purpose": "pregrasp only; the right-camera demonstration goal controls final alignment"
+  },
+  "right_fine_alignment": {
+    "feature": "blue lid marker center",
+    "goal_px": [189.7, 296.8],
+    "tolerance_px": 8.0,
+    "require_lid_visible": true,
+    "reference_image_role": "demonstration_goal.right_image_path"
+  },
+  "descent": {
+    "separate_operator_approval_required": true,
+    "maximum_head_view_angle_deg": 40.0,
+    "require_right_lid_visible": true,
+    "require_torque_monitor": true
+  },
+  "grasp": {
+    "separate_operator_approval_required": true,
+    "empty_close_ratio": 0.01,
+    "success_requires": [
+      "gripper remains blocked above empty_close_ratio",
+      "blue lid marker remains visible in the right camera"
+    ]
+  }
+}
