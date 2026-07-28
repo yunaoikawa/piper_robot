@@ -6,13 +6,18 @@ import threading
 import numpy as np
 from robot.camera_id import load_camera_map
 from record3d import Record3DStream
+from .head_stream import HeadCameraStreamServer
 
 
 class CameraFeedManager:
     """Manages iPhone camera feed and live display."""
 
-    def __init__(self, stop_event: threading.Event):
+    def __init__(self, stop_event: threading.Event, *, display=True,
+                 head_stream=True, head_stream_host="0.0.0.0",
+                 head_stream_port=8080, head_stream_token=None,
+                 head_stream_fps=15.0):
         self.stop_event = stop_event
+        self.display = display
         self.latest_rgb_frame = None
         self.latest_depth_frame = None
         self.latest_rgb_timestamp = None
@@ -29,18 +34,42 @@ class CameraFeedManager:
         self.wrist_camera = None
         self.left_wrist_camera = None
 
+        self.head_stream = None
+        if head_stream:
+            self.head_stream = HeadCameraStreamServer(
+                self._head_frame_for_stream,
+                host=head_stream_host,
+                port=head_stream_port,
+                token=head_stream_token,
+                fps=head_stream_fps,
+                status_provider=lambda: " / ".join(self._build_status_text()),
+            )
+
     def _on_new_frame(self):
         self.frame_event.set()
 
     def start(self):
         self.iphone_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.iphone_thread.start()
-        self.display_thread = threading.Thread(target=self._display_loop, daemon=True)
-        self.display_thread.start()
+        self.display_thread = None
+        if self.display:
+            self.display_thread = threading.Thread(target=self._display_loop, daemon=True)
+            self.display_thread.start()
+        if self.head_stream:
+            self.head_stream.start()
 
     def stop(self):
+        if self.head_stream:
+            self.head_stream.stop()
         self.iphone_thread.join(timeout=2.0)
-        self.display_thread.join(timeout=2.0)
+        if self.display_thread:
+            self.display_thread.join(timeout=2.0)
+
+    def _head_frame_for_stream(self):
+        with self.rgb_frame_lock:
+            if self.latest_rgb_frame is None:
+                return None
+            return self.latest_rgb_frame.copy()
 
     def get_latest_frame(self):
         with self.rgb_frame_lock:
