@@ -4,12 +4,19 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
+import io
 import json
+import os
+import re
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import cv2
@@ -22,6 +29,7 @@ from robot.rpc import RPCClient
 from rollout.camera import CameraFeedManager
 from rollout.realtime_sam_servo import (
     bounded_reachable_servo_step,
+    choose_right_gripper,
     estimate_reachable_feature_model,
     gripper_mask_center,
     lid_left_grasp_px,
@@ -31,7 +39,10 @@ from rollout.realtime_sam_servo import (
 from rollout.sam_segmentation import SamSegmentationClient
 from rollout.sam_segmentation import (
     choose_lid_candidate,
+    compute_candidate_roi,
     enhance_low_light,
+    extract_enlarged_roi,
+    remap_segmentation_result_from_roi,
 )
 from rollout.scene_3d import (
     assess_target_geometry,
@@ -54,6 +65,574 @@ DEFAULT_HOLDING_KP = np.full(6, 2.5)
 DEFAULT_HOLDING_KD = np.full(6, 0.2)
 DEFAULT_MOTION_KP = np.array([7.0, 7.0, 7.0, 5.0, 5.0, 5.0])
 DEFAULT_MOTION_KD = np.array([0.4, 0.4, 0.4, 0.3, 0.3, 0.3])
+MINIMUM_SEGMENT_IMAGE_MARGIN_PX = 10
+SAM_REQUEST_JPEG_QUALITY = 90
+MAX_DEPTH_BURST_SPAN_S = 0.50
+MAX_POST_SAM_ROI_MEAN_ABS_DIFF = 0.04
+MAX_POST_SAM_ROI_P95_ABS_DIFF = 0.12
+MIN_FINE_GRIPPER_COARSE_IOU = 0.10
+MAX_FINE_GRIPPER_CENTER_DISTANCE_PX = 100.0
+
+
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _rgb_frame_sha256(rgb) -> str:
+    frame = np.ascontiguousarray(np.asarray(rgb))
+    if frame.ndim != 3 or frame.shape[2] not in (3, 4) or frame.size == 0:
+        raise RuntimeError("head RGB frame has an invalid shape")
+    return _sha256_bytes(memoryview(frame).cast("B"))
+
+
+def _canonical_json_bytes(value) -> bytes:
+    return (
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        + b"\n"
+    )
+
+
+def _fsync_directory(directory):
+    descriptor = os.open(Path(directory), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_all(descriptor: int, payload: bytes):
+    view = memoryview(payload)
+    offset = 0
+    while offset < len(view):
+        written = os.write(descriptor, view[offset:])
+        if written <= 0:
+            raise OSError(
+                f"short write: {offset}/{len(payload)} bytes"
+            )
+        offset += written
+
+
+def _reserve_new_file(path, payload: bytes):
+    """Create a durable reservation with O_EXCL."""
+
+    path = Path(path)
+    payload = bytes(payload)
+    descriptor = None
+    created = False
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        created = True
+        _write_all(descriptor, payload)
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
+        _fsync_directory(path.parent)
+    except FileExistsError:
+        raise
+    except OSError as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        if created:
+            try:
+                path.unlink(missing_ok=True)
+                _fsync_directory(path.parent)
+            except OSError:
+                pass
+        raise RuntimeError(
+            f"could not reserve artifact prefix {path}: {exc}"
+        ) from exc
+
+
+def _publish_new_bytes(path, payload: bytes):
+    """Atomically publish bytes without ever replacing an existing target."""
+
+    path = Path(path)
+    payload = bytes(payload)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as output:
+            temporary_path = Path(output.name)
+            written = output.write(payload)
+            if written != len(payload):
+                raise OSError(
+                    f"short write: {written}/{len(payload)} bytes"
+                )
+            output.flush()
+            os.fsync(output.fileno())
+        # A same-filesystem hard link is an atomic no-replace publication.
+        os.link(temporary_path, path)
+        _fsync_directory(path.parent)
+    except FileExistsError:
+        raise
+    except OSError as exc:
+        raise RuntimeError(f"could not save artifact {path}: {exc}") from exc
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+                _fsync_directory(path.parent)
+            except OSError:
+                pass
+
+
+def _encode_image(extension: str, image, parameters=()) -> bytes:
+    ok, encoded = cv2.imencode(
+        str(extension),
+        np.asarray(image),
+        list(parameters),
+    )
+    if not ok:
+        raise RuntimeError(f"could not encode {extension} artifact")
+    return encoded.tobytes()
+
+
+def _npz_bytes(**arrays) -> bytes:
+    output = io.BytesIO()
+    try:
+        np.savez_compressed(output, **arrays)
+    except (OSError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"could not encode depth artifact: {exc}") from exc
+    return output.getvalue()
+
+
+_OBSERVATION_PREFIX = re.compile(r"^([0-9]+)(?:[_.]|$)")
+
+
+class _ObservationArtifactWriter:
+    """Write one immutable observation or an explicit failure journal."""
+
+    def __init__(
+        self,
+        output_dir,
+        sequence: int,
+        *,
+        run_id: str,
+        attempt_id: str,
+        reservation_path,
+    ):
+        self.output_dir = Path(output_dir)
+        self.sequence = int(sequence)
+        self.run_id = str(run_id)
+        self.attempt_id = str(attempt_id)
+        self.reservation_path = Path(reservation_path)
+        self.files = {}
+        self.paths = {}
+        self.failure_context = {}
+        self.finished = False
+        self.failed = False
+
+    @classmethod
+    def reserve(
+        cls,
+        output_dir,
+        run_id: str,
+        *,
+        attempt_id: str | None = None,
+    ):
+        """Reserve a collision-free numeric prefix across concurrent writers."""
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        existing = []
+        for path in output_dir.iterdir():
+            match = _OBSERVATION_PREFIX.match(path.name)
+            if match is not None:
+                existing.append(int(match.group(1)))
+        sequence = max(existing, default=-1) + 1
+        while True:
+            current_attempt_id = (
+                uuid.uuid4().hex
+                if attempt_id is None
+                else str(attempt_id)
+            )
+            reservation_path = (
+                output_dir
+                / f"{sequence:03d}_head_observation.reserved.json"
+            )
+            reservation = {
+                "schema": "sam_head_observation_reservation/v1",
+                "sequence": sequence,
+                "run_id": str(run_id),
+                "attempt_id": current_attempt_id,
+                "reserved_at_unix_s": time.time(),
+            }
+            try:
+                _reserve_new_file(
+                    reservation_path,
+                    _canonical_json_bytes(reservation),
+                )
+            except FileExistsError:
+                sequence += 1
+                continue
+            return cls(
+                output_dir,
+                sequence,
+                run_id=str(run_id),
+                attempt_id=current_attempt_id,
+                reservation_path=reservation_path,
+            )
+
+    def _artifact_path(self, filename: str) -> Path:
+        filename = str(filename)
+        if Path(filename).name != filename:
+            raise ValueError("observation artifact filename must be local")
+        if _OBSERVATION_PREFIX.match(filename) is None:
+            raise ValueError("observation artifact filename lacks a prefix")
+        prefix = int(_OBSERVATION_PREFIX.match(filename).group(1))
+        if prefix != self.sequence:
+            raise ValueError(
+                "observation artifact filename does not use its reservation"
+            )
+        return self.output_dir / filename
+
+    def _release_reservation(self):
+        try:
+            self.reservation_path.unlink(missing_ok=True)
+            _fsync_directory(self.output_dir)
+        except OSError as exc:
+            print(
+                "WARNING: could not remove observation reservation "
+                f"{self.reservation_path}: {exc}",
+                file=sys.stderr,
+            )
+
+    def add_bytes(
+        self,
+        role: str,
+        filename: str,
+        payload: bytes,
+        *,
+        media_type: str,
+    ) -> Path:
+        if role in self.files:
+            raise ValueError(f"duplicate observation artifact role {role}")
+        if self.finished or self.failed:
+            raise RuntimeError("observation artifact set is already closed")
+        path = self._artifact_path(filename)
+        payload = bytes(payload)
+        _publish_new_bytes(path, payload)
+        self.paths[role] = path
+        self.files[role] = {
+            "path": path.name,
+            "sha256": _sha256_bytes(payload),
+            "bytes": len(payload),
+            "media_type": str(media_type),
+        }
+        return path
+
+    def add_image(
+        self,
+        role: str,
+        filename: str,
+        image,
+        *,
+        extension: str = ".png",
+        parameters=(),
+    ) -> Path:
+        payload = _encode_image(extension, image, parameters)
+        media_type = (
+            "image/jpeg"
+            if extension.lower() in (".jpg", ".jpeg")
+            else "image/png"
+        )
+        return self.add_bytes(
+            role,
+            filename,
+            payload,
+            media_type=media_type,
+        )
+
+    def add_npz(self, role: str, filename: str, **arrays) -> Path:
+        return self.add_bytes(
+            role,
+            filename,
+            _npz_bytes(**arrays),
+            media_type="application/x-npz",
+        )
+
+    def finish(self, metadata: dict):
+        if self.finished or self.failed:
+            raise RuntimeError("observation artifact set is already closed")
+        document = {
+            **metadata,
+            "schema": "sam_head_observation/v2",
+            "sequence": self.sequence,
+            "run_id": self.run_id,
+            "attempt_id": self.attempt_id,
+            "files": self.files,
+        }
+        payload = _canonical_json_bytes(document)
+        manifest_path = (
+            self.output_dir
+            / f"{self.sequence:03d}_head_observation.json"
+        )
+        _publish_new_bytes(manifest_path, payload)
+        self.finished = True
+        self._release_reservation()
+        return document, manifest_path, _sha256_bytes(payload)
+
+    def fail(self, error: BaseException):
+        """Publish a failure journal; never publish a success manifest."""
+
+        if self.finished or self.failed:
+            return None
+        document = {
+            "schema": "sam_head_observation_failure/v1",
+            "status": "failed",
+            "sequence": self.sequence,
+            "run_id": self.run_id,
+            "attempt_id": self.attempt_id,
+            "files": self.files,
+            "context": self.failure_context,
+            "error": {
+                "type": type(error).__name__,
+                "message": str(error),
+            },
+        }
+        path = (
+            self.output_dir
+            / f"{self.sequence:03d}_head_observation.failed.json"
+        )
+        _publish_new_bytes(path, _canonical_json_bytes(document))
+        self.failed = True
+        self._release_reservation()
+        return path
+
+
+def _require_candidate_image_margin(
+    candidate,
+    image_shape,
+    *,
+    label: str,
+    minimum_margin_px: int = MINIMUM_SEGMENT_IMAGE_MARGIN_PX,
+):
+    """Reject a selected mask whose contour may continue outside the image."""
+
+    height, width = (int(image_shape[0]), int(image_shape[1]))
+    label = str(label).strip()
+    if not label:
+        raise ValueError("candidate label must not be empty")
+    minimum_margin_px = int(minimum_margin_px)
+    if height <= 0 or width <= 0 or minimum_margin_px < 0:
+        raise ValueError("invalid image shape or lid image margin")
+    mask = np.asarray(candidate.mask, dtype=bool)
+    if mask.shape != (height, width):
+        raise RuntimeError(
+            f"selected {label} mask shape does not match the SAM input"
+        )
+    yy, xx = np.nonzero(mask)
+    if not len(xx):
+        raise RuntimeError(f"selected {label} mask is empty")
+    mask_margin = int(
+        min(
+            int(xx.min()),
+            int(yy.min()),
+            width - 1 - int(xx.max()),
+            height - 1 - int(yy.max()),
+        )
+    )
+    box = np.asarray(candidate.box_xyxy, dtype=float).reshape(-1)
+    if box.shape != (4,) or not np.all(np.isfinite(box)):
+        raise RuntimeError(f"selected {label} bounding box is invalid")
+    x1, y1, x2, y2 = box
+    bbox_margin = float(min(x1, y1, width - x2, height - y2))
+    if (
+        mask_margin < minimum_margin_px
+        or bbox_margin < float(minimum_margin_px)
+    ):
+        raise RuntimeError(
+            f"selected {label} is clipped by the head image boundary: "
+            f"mask_margin={mask_margin}px, "
+            f"bbox_margin={bbox_margin:.1f}px, "
+            f"required={minimum_margin_px}px"
+        )
+    return {
+        "required_margin_px": minimum_margin_px,
+        "mask_margin_px": mask_margin,
+        "bbox_margin_px": bbox_margin,
+    }
+
+
+def _require_candidate_roi_margin(
+    candidate,
+    roi,
+    *,
+    label: str,
+    minimum_margin_px: int = MINIMUM_SEGMENT_IMAGE_MARGIN_PX,
+):
+    """Reject a remapped fine mask that may have been truncated by its ROI."""
+
+    minimum_margin_px = int(minimum_margin_px)
+    if minimum_margin_px < 0:
+        raise ValueError("ROI margin must be non-negative")
+    mask = np.asarray(candidate.mask, dtype=bool)
+    if mask.shape != tuple(roi.full_shape_hw):
+        raise RuntimeError(
+            f"selected {label} mask shape does not match the ROI full frame"
+        )
+    yy, xx = np.nonzero(mask)
+    if not len(xx):
+        raise RuntimeError(f"selected {label} mask is empty")
+    x0, y0, x1, y1 = (float(value) for value in roi.crop_xyxy)
+    mask_margin = float(
+        min(
+            float(xx.min()) - x0,
+            float(yy.min()) - y0,
+            (x1 - 1.0) - float(xx.max()),
+            (y1 - 1.0) - float(yy.max()),
+        )
+    )
+    box = np.asarray(candidate.box_xyxy, dtype=float).reshape(-1)
+    if box.shape != (4,) or not np.all(np.isfinite(box)):
+        raise RuntimeError(f"selected {label} bounding box is invalid")
+    bbox_margin = float(
+        min(
+            box[0] - x0,
+            box[1] - y0,
+            x1 - box[2],
+            y1 - box[3],
+        )
+    )
+    if (
+        mask_margin < float(minimum_margin_px)
+        or bbox_margin < float(minimum_margin_px)
+    ):
+        raise RuntimeError(
+            f"selected {label} is clipped by the SAM ROI boundary: "
+            f"mask_margin={mask_margin:.1f}px, "
+            f"bbox_margin={bbox_margin:.1f}px, "
+            f"required={minimum_margin_px}px"
+        )
+    return {
+        "required_margin_px": minimum_margin_px,
+        "mask_margin_px": mask_margin,
+        "bbox_margin_px": bbox_margin,
+    }
+
+
+def _candidate_mask_center(candidate) -> np.ndarray:
+    yy, xx = np.nonzero(np.asarray(candidate.mask, dtype=bool))
+    if len(xx) < 50:
+        raise ValueError("candidate mask is too small for stable association")
+    return np.array([np.median(xx), np.median(yy)], dtype=float)
+
+
+def _identity_index(candidates, selected) -> int:
+    for index, candidate in enumerate(candidates):
+        if candidate is selected:
+            return index
+    raise RuntimeError("selected SAM candidate is not in its response")
+
+
+def _associate_fine_gripper(
+    coarse_candidate,
+    fine_candidates,
+    *,
+    minimum_iou: float = MIN_FINE_GRIPPER_COARSE_IOU,
+    maximum_center_distance_px: float = MAX_FINE_GRIPPER_CENTER_DISTANCE_PX,
+):
+    """Associate a fine mask to the coarse gripper instead of reselecting it."""
+
+    coarse_mask = np.asarray(coarse_candidate.mask, dtype=bool)
+    coarse_center = _candidate_mask_center(coarse_candidate)
+    minimum_iou = float(minimum_iou)
+    maximum_center_distance_px = float(maximum_center_distance_px)
+    if (
+        not np.isfinite(minimum_iou)
+        or not 0.0 <= minimum_iou <= 1.0
+        or not np.isfinite(maximum_center_distance_px)
+        or maximum_center_distance_px < 0.0
+    ):
+        raise ValueError("invalid coarse/fine gripper association limits")
+    ranked = []
+    for index, candidate in enumerate(tuple(fine_candidates)):
+        fine_mask = np.asarray(candidate.mask, dtype=bool)
+        if fine_mask.shape != coarse_mask.shape:
+            raise ValueError("coarse and fine gripper masks have different shapes")
+        try:
+            fine_center = _candidate_mask_center(candidate)
+        except ValueError:
+            continue
+        intersection = int(np.count_nonzero(coarse_mask & fine_mask))
+        union = int(np.count_nonzero(coarse_mask | fine_mask))
+        iou = 0.0 if union == 0 else intersection / float(union)
+        center_distance = float(np.linalg.norm(fine_center - coarse_center))
+        if (
+            iou < minimum_iou
+            or center_distance > maximum_center_distance_px
+        ):
+            continue
+        rank = (
+            -iou,
+            center_distance,
+            -float(candidate.score),
+        )
+        ranked.append((rank, index, candidate, iou, center_distance))
+    if not ranked:
+        raise RuntimeError(
+            "ROI-refined SAM did not preserve the coarse gripper instance"
+        )
+    _, index, candidate, iou, center_distance = min(
+        ranked, key=lambda item: item[0]
+    )
+    return candidate, {
+        "schema": "sam_coarse_fine_association/v1",
+        "fine_candidate_index": int(index),
+        "mask_iou": float(iou),
+        "center_distance_px": center_distance,
+        "minimum_iou": minimum_iou,
+        "maximum_center_distance_px": maximum_center_distance_px,
+    }
+
+
+def _compare_roi_images(before, after):
+    """Return fail-closed normalized change metrics for equal-size ROI images."""
+
+    before_array = np.asarray(before)
+    after_array = np.asarray(after)
+    if (
+        before_array.shape != after_array.shape
+        or before_array.ndim not in (2, 3)
+        or before_array.size == 0
+    ):
+        raise RuntimeError("post-SAM ROI image shape does not match its source")
+    difference = cv2.absdiff(
+        before_array.astype(np.uint8, copy=False),
+        after_array.astype(np.uint8, copy=False),
+    ).astype(np.float32)
+    normalized = difference / 255.0
+    mean_abs = float(np.mean(normalized))
+    p95_abs = float(np.percentile(normalized, 95.0))
+    accepted = (
+        np.isfinite(mean_abs)
+        and np.isfinite(p95_abs)
+        and mean_abs <= MAX_POST_SAM_ROI_MEAN_ABS_DIFF
+        and p95_abs <= MAX_POST_SAM_ROI_P95_ABS_DIFF
+    )
+    return {
+        "schema": "sam_post_inference_roi_consistency/v1",
+        "mean_abs_difference": mean_abs,
+        "p95_abs_difference": p95_abs,
+        "maximum_mean_abs_difference": MAX_POST_SAM_ROI_MEAN_ABS_DIFF,
+        "maximum_p95_abs_difference": MAX_POST_SAM_ROI_P95_ABS_DIFF,
+        "accepted": bool(accepted),
+    }
 
 
 def refresh_right_mit_mode(
@@ -103,12 +682,10 @@ def _note_exception(error: BaseException, note: str):
 class LiveSamGrasp:
     def __init__(self, args):
         self.args = args
-        self.rpc = RPCClient("localhost", 8081, timeout_ms=10000)
         self.stop_event = threading.Event()
-        self.camera = CameraFeedManager(
-            self.stop_event, display=False, head_stream=False
-        )
-        self.sam = SamSegmentationClient(args.sam_endpoint, timeout_ms=20000)
+        self.rpc = None
+        self.camera = None
+        self.sam = None
         torque_cfg = json.loads(Path(args.torque_config).read_text())
         self.torque_limit = np.asarray(
             torque_cfg["thresholds"]["right"], dtype=float
@@ -153,6 +730,7 @@ class LiveSamGrasp:
         self.motion_mode_refresher = lambda: refresh_right_mit_mode(
             right_can_interface
         )
+        self.run_id = uuid.uuid4().hex
         self.frame_id = 1000
         self.sequence = 0
         self.previous_lid_center = None
@@ -188,55 +766,447 @@ class LiveSamGrasp:
         self.last_depth = None
         self.last_camera_matrix = None
         self.last_proximity_m = None
+        self.last_observation_artifacts = None
+        self.last_head_timestamp = None
+        self.last_head_rgb_sha256 = None
+        try:
+            self.rpc = RPCClient("localhost", 8081, timeout_ms=10000)
+            self.camera = CameraFeedManager(
+                self.stop_event, display=False, head_stream=False
+            )
+            self.sam = SamSegmentationClient(
+                args.sam_endpoint, timeout_ms=20000
+            )
+        except BaseException as init_error:
+            try:
+                self.stop()
+            except BaseException as cleanup_error:
+                _note_exception(
+                    init_error,
+                    "partially initialized runner cleanup also failed: "
+                    f"{cleanup_error!r}",
+                )
+            raise
 
     def start(self):
         self.camera.start()
-        deadline = time.time() + 15.0
-        while time.time() < deadline:
-            rgb, _, depth = self.camera.get_latest_frame()
-            if rgb is not None and depth is not None and np.asarray(depth).size:
-                return
-            time.sleep(0.05)
-        raise RuntimeError("head RGB/depth stream unavailable")
+        self._await_fresh_head_frame(timeout_s=15.0)
+
+    def _await_fresh_head_frame(self, *, timeout_s=3.0):
+        """Return an RGB-D callback received after this observation began.
+
+        Record3D's capture loop can expose an old buffer with a newly assigned
+        wall-clock timestamp.  Requiring both a post-barrier timestamp and new
+        RGB bytes prevents a pre-motion image from being used as post-motion
+        feedback.
+        """
+
+        not_before = time.time()
+        deadline = time.monotonic() + float(timeout_s)
+        newest_timestamp = None
+        repeated_digest = False
+        while time.monotonic() < deadline:
+            rgb, timestamp, depth = self.camera.get_latest_frame()
+            if rgb is None or timestamp is None or depth is None:
+                time.sleep(0.01)
+                continue
+            timestamp = float(timestamp)
+            if not np.isfinite(timestamp):
+                raise RuntimeError("head frame timestamp is not finite")
+            newest_timestamp = timestamp
+            if timestamp + 1e-6 < not_before:
+                time.sleep(0.01)
+                continue
+            digest = _rgb_frame_sha256(rgb)
+            if (
+                self.last_head_timestamp is not None
+                and timestamp <= self.last_head_timestamp
+            ):
+                time.sleep(0.01)
+                continue
+            if (
+                self.last_head_rgb_sha256 is not None
+                and digest == self.last_head_rgb_sha256
+            ):
+                repeated_digest = True
+                time.sleep(0.01)
+                continue
+            depth_array = np.asarray(depth)
+            if depth_array.ndim != 2 or depth_array.size == 0:
+                time.sleep(0.01)
+                continue
+            self.last_head_timestamp = timestamp
+            self.last_head_rgb_sha256 = digest
+            return np.asarray(rgb), timestamp, depth_array
+        reason = (
+            "head RGB bytes repeated despite newer timestamps"
+            if repeated_digest
+            else "no post-barrier RGB-D callback arrived"
+        )
+        raise RuntimeError(
+            f"fresh head RGB-D frame unavailable: {reason}; "
+            f"latest_timestamp={newest_timestamp}"
+        )
+
+    def _collect_depth_burst(self, rgb, timestamp, depth_raw):
+        """Collect a short RGB-D burst before any SAM network round trip."""
+
+        requested = int(self.args.depth_frames)
+        if not 3 <= requested <= 120:
+            raise ValueError("depth frame count must be between 3 and 120")
+        timestamp = float(timestamp)
+        maximum_timestamp = timestamp + MAX_DEPTH_BURST_SPAN_S
+        depth_frames = [np.asarray(depth_raw)]
+        depth_timestamps = [timestamp]
+        depth_rgb_sha256 = [_rgb_frame_sha256(rgb)]
+        native_shape = depth_frames[0].shape
+        deadline = time.monotonic() + MAX_DEPTH_BURST_SPAN_S
+        while len(depth_frames) < requested and time.monotonic() < deadline:
+            next_rgb, next_timestamp, next_depth = self.camera.get_latest_frame()
+            try:
+                next_timestamp = float(next_timestamp)
+            except (TypeError, ValueError):
+                next_timestamp = float("nan")
+            if np.isfinite(next_timestamp) and next_timestamp > maximum_timestamp:
+                break
+            next_digest = (
+                _rgb_frame_sha256(next_rgb)
+                if next_rgb is not None
+                else None
+            )
+            next_depth_array = (
+                None if next_depth is None else np.asarray(next_depth)
+            )
+            if (
+                next_depth_array is not None
+                and next_depth_array.shape == native_shape
+                and np.isfinite(next_timestamp)
+                and next_timestamp > depth_timestamps[-1]
+                and next_digest is not None
+                and next_digest not in depth_rgb_sha256
+            ):
+                depth_frames.append(next_depth_array)
+                depth_timestamps.append(next_timestamp)
+                depth_rgb_sha256.append(next_digest)
+            else:
+                time.sleep(0.01)
+        if len(depth_frames) < max(3, requested // 2):
+            raise RuntimeError("insufficient fresh pre-SAM depth frames")
+        timestamp_span = depth_timestamps[-1] - depth_timestamps[0]
+        if (
+            not np.isfinite(timestamp_span)
+            or timestamp_span < 0.0
+            or timestamp_span > MAX_DEPTH_BURST_SPAN_S
+        ):
+            raise RuntimeError(
+                "pre-SAM depth burst exceeded its timestamp span limit"
+            )
+        return (
+            depth_frames,
+            depth_timestamps,
+            depth_rgb_sha256,
+            {
+                "timestamp_span_s": float(timestamp_span),
+                "maximum_timestamp_span_s": MAX_DEPTH_BURST_SPAN_S,
+                "captured_before_sam": True,
+            },
+        )
+
+    def _verify_post_sam_roi_consistency(
+        self,
+        *,
+        roi,
+        reference_roi_image,
+        enhanced: bool,
+    ):
+        """Require a new post-inference frame whose ROI still matches."""
+
+        post_rgb, post_timestamp, _ = self._await_fresh_head_frame()
+        post_image = cv2.cvtColor(
+            np.rot90(post_rgb, k=3), cv2.COLOR_RGB2BGR
+        )
+        post_sam_image = (
+            enhance_low_light(post_image) if enhanced else post_image
+        )
+        post_roi_image = extract_enlarged_roi(post_sam_image, roi)
+        report = _compare_roi_images(reference_roi_image, post_roi_image)
+        report.update(
+            {
+                "source_timestamp": float(post_timestamp),
+                "source_rgb_sha256": _rgb_frame_sha256(post_rgb),
+            }
+        )
+        if not report["accepted"]:
+            raise RuntimeError(
+                "head-camera ROI changed during SAM inference: "
+                f"mean={report['mean_abs_difference']:.4f}, "
+                f"p95={report['p95_abs_difference']:.4f}"
+            )
+        return post_roi_image, report
 
     def stop(self):
-        self.sam.close()
-        self.stop_event.set()
-        self.camera.stop()
+        failures = []
+
+        def attempt(label, callback):
+            try:
+                callback()
+            except BaseException as exc:
+                failures.append((str(label), exc))
+
+        stop_event = getattr(self, "stop_event", None)
+        if stop_event is not None:
+            attempt("stop event", stop_event.set)
+        camera = getattr(self, "camera", None)
+        if camera is not None:
+            attempt("head camera", camera.stop)
+        sam = getattr(self, "sam", None)
+        if sam is not None:
+            attempt("SAM client", sam.close)
+        rpc = getattr(self, "rpc", None)
+        rpc_state = vars(rpc) if rpc is not None else {}
+        rpc_socket = rpc_state.get("socket")
+        rpc_context = rpc_state.get("context")
+        if rpc_socket is not None:
+            attempt(
+                "RPC socket",
+                lambda: rpc_socket.close(linger=0),
+            )
+        if rpc_context is not None:
+            attempt("RPC context", rpc_context.term)
+        if failures:
+            primary_label, primary = failures[0]
+            for label, error in failures[1:]:
+                _note_exception(
+                    primary,
+                    f"{label} cleanup also failed: {error!r}",
+                )
+            _note_exception(
+                primary,
+                f"cleanup failure originated in {primary_label}",
+            )
+            raise primary
 
     def observe(self, clearance_m: float):
-        rgb, timestamp, depth_raw = self.camera.get_latest_frame()
-        if rgb is None or depth_raw is None:
-            raise RuntimeError("head RGB/depth frame disappeared")
-        age = time.time() - float(timestamp)
-        if age > 0.5:
-            raise RuntimeError(f"stale head frame: {age:.2f}s")
+        self.last_observation_artifacts = None
+        artifacts = _ObservationArtifactWriter.reserve(
+            self.output_dir, self.run_id
+        )
+        self.sequence = artifacts.sequence
+        try:
+            return self._observe_reserved(clearance_m, artifacts)
+        except BaseException as exc:
+            try:
+                artifacts.fail(exc)
+            except BaseException as journal_error:
+                _note_exception(
+                    exc,
+                    "observation failure journal also failed: "
+                    f"{journal_error!r}",
+                )
+            raise
+        finally:
+            self.sequence = max(
+                self.sequence, artifacts.sequence + 1
+            )
+
+    def _observe_reserved(
+        self,
+        clearance_m: float,
+        artifacts: _ObservationArtifactWriter,
+    ):
+        rgb, timestamp, depth_raw = self._await_fresh_head_frame()
         image = cv2.cvtColor(np.rot90(rgb, k=3), cv2.COLOR_RGB2BGR)
-        raw_path = self.output_dir / f"{self.sequence:03d}_head_raw.png"
-        cv2.imwrite(str(raw_path), image)
+        artifacts.failure_context.update(
+            {
+                "source_timestamp": float(timestamp),
+                "image_shape_hw": list(image.shape[:2]),
+            }
+        )
+        raw_path = artifacts.add_image(
+            "raw_image",
+            f"{self.sequence:03d}_head_raw.png",
+            image,
+        )
         sam_image = (
             enhance_low_light(image) if float(image.mean()) < 35.0 else image
         )
-        enhanced_path = (
-            self.output_dir / f"{self.sequence:03d}_head_sam_input.png"
+        enhanced = sam_image is not image
+        enhanced_path = artifacts.add_image(
+            "sam_input_png",
+            f"{self.sequence:03d}_head_sam_input.png",
+            sam_image,
         )
-        cv2.imwrite(str(enhanced_path), sam_image)
+        (
+            depth_frames,
+            depth_timestamps,
+            depth_rgb_sha256,
+            depth_timing,
+        ) = self._collect_depth_burst(rgb, timestamp, depth_raw)
+        artifacts.failure_context["depth"] = {
+            **depth_timing,
+            "frames_requested": int(self.args.depth_frames),
+            "frames_used": len(depth_frames),
+            "source_timestamps": list(depth_timestamps),
+            "source_rgb_sha256": list(depth_rgb_sha256),
+        }
+        request_path = None
+        request_jpeg = None
+        request_groups = {}
+        sam_requests = []
+        artifacts.failure_context["sam_transport"] = {
+            "request_image_format": "jpeg",
+            "jpeg_quality": SAM_REQUEST_JPEG_QUALITY,
+            "requests": sam_requests,
+        }
+
+        def segment_and_record(
+            role,
+            prompt,
+            confidence_threshold,
+            *,
+            request_image=None,
+            request_group="full_frame",
+            input_artifact_role="sam_input_png",
+            roi_metadata=None,
+        ):
+            nonlocal request_path, request_jpeg
+            if request_image is None:
+                request_image = sam_image
+            description = None
+
+            def observe_request(wire_request):
+                nonlocal request_path, request_jpeg, description
+                if len(wire_request) != 2:
+                    raise RuntimeError(
+                        "SAM request observer expected two multipart frames"
+                    )
+                wire_metadata, wire_jpeg = (
+                    bytes(part) for part in wire_request
+                )
+                captured = request_groups.get(request_group)
+                if captured is None:
+                    artifact_role = (
+                        "sam_request_jpeg_q90"
+                        if request_group == "full_frame"
+                        else f"sam_{request_group}_request_jpeg_q90"
+                    )
+                    captured_path = artifacts.add_bytes(
+                        artifact_role,
+                        (
+                            f"{self.sequence:03d}_head_"
+                            f"{request_group}_request_q90.jpg"
+                        ),
+                        wire_jpeg,
+                        media_type="image/jpeg",
+                    )
+                    request_groups[request_group] = (
+                        wire_jpeg,
+                        captured_path,
+                        artifact_role,
+                    )
+                    if request_group == "full_frame":
+                        request_jpeg = wire_jpeg
+                        request_path = captured_path
+                elif wire_jpeg != captured[0]:
+                    raise RuntimeError(
+                        f"SAM {request_group} request JPEG changed within "
+                        "one observation"
+                    )
+                _, captured_path, artifact_role = request_groups[
+                    request_group
+                ]
+                request_index = len(sam_requests)
+                metadata_artifact_role = (
+                    f"sam_request_{request_index:03d}_wire_metadata"
+                )
+                metadata_path = artifacts.add_bytes(
+                    metadata_artifact_role,
+                    (
+                        f"{self.sequence:03d}_head_sam_request_"
+                        f"{request_index:03d}_metadata.json"
+                    ),
+                    wire_metadata,
+                    media_type="application/json",
+                )
+                description = {
+                    "role": str(role),
+                    "request_group": str(request_group),
+                    "input_artifact_role": str(input_artifact_role),
+                    "request_artifact_role": artifact_role,
+                    "request_artifact_path": captured_path.name,
+                    "wire_metadata_artifact_role": metadata_artifact_role,
+                    "wire_metadata_artifact_path": metadata_path.name,
+                    "wire_metadata": json.loads(wire_metadata),
+                    "wire_metadata_sha256": _sha256_bytes(
+                        wire_metadata
+                    ),
+                    "jpeg_sha256": _sha256_bytes(wire_jpeg),
+                    "outcome": "prepared_before_send",
+                    "response": None,
+                }
+                if roi_metadata is not None:
+                    description["roi"] = copy.deepcopy(roi_metadata)
+                sam_requests.append(description)
+
+            try:
+                result = self.sam.segment(
+                    request_image,
+                    frame_id=self.frame_id,
+                    timestamp=timestamp,
+                    prompt=prompt,
+                    confidence_threshold=confidence_threshold,
+                    jpeg_quality=SAM_REQUEST_JPEG_QUALITY,
+                    request_observer=observe_request,
+                )
+                if (
+                    not np.isfinite(result.source_timestamp)
+                    or abs(
+                        float(result.source_timestamp) - timestamp
+                    )
+                    > 1e-6
+                ):
+                    raise RuntimeError(
+                        "segmentation response source timestamp does not "
+                        "match request"
+                    )
+            except BaseException as exc:
+                if description is not None:
+                    self.frame_id += 1
+                    description["outcome"] = "segment_failed"
+                    description["error"] = {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                    }
+                raise
+            if description is None:
+                raise RuntimeError(
+                    "SAM client returned without observing its request"
+                )
+            self.frame_id += 1
+            description["outcome"] = "response_ok"
+            description["response"] = {
+                "frame_id": int(result.frame_id),
+                "source_timestamp": float(result.source_timestamp),
+                "model": str(result.model),
+                "inference_ms": float(result.inference_ms),
+                "candidate_count": len(result.candidates),
+            }
+            return result
+
         lid = None
         selected_lid = None
+        selected_lid_prompt = None
         lid_attempts = []
         for prompt in (
             "transparent round petri dish lid with blue cross",
             "petri dish lid",
             "round transparent plastic dish",
         ):
-            lid = self.sam.segment(
-                sam_image,
-                frame_id=self.frame_id,
-                timestamp=timestamp,
-                prompt=prompt,
-                confidence_threshold=0.05,
+            lid = segment_and_record(
+                "lid",
+                prompt,
+                0.05,
             )
-            self.frame_id += 1
             lid_attempts.append((prompt, len(lid.candidates)))
             selected_lid = choose_lid_candidate(
                 lid.candidates,
@@ -245,6 +1215,7 @@ class LiveSamGrasp:
                 require_blue_cross=True,
             )
             if selected_lid is not None:
+                selected_lid_prompt = prompt
                 break
         if selected_lid is None:
             raise ValueError(
@@ -252,35 +1223,204 @@ class LiveSamGrasp:
                 f"attempts={lid_attempts}, raw={raw_path}, "
                 f"input={enhanced_path}"
             )
-        gripper = self.sam.segment(
-            sam_image,
-            frame_id=self.frame_id,
-            timestamp=timestamp,
-            prompt="blue clamp",
-            confidence_threshold=0.10,
+        lid_candidate, lid_geometry = selected_lid
+        coarse_lid_image_margin = _require_candidate_image_margin(
+            lid_candidate,
+            image.shape,
+            label="lid",
         )
-        self.frame_id += 1
-        # Record3D's per-pixel depth is visibly noisy on the transparent lid
-        # and reflective gripper.  Aggregate a short live burst while the arm
-        # is stationary; no previously collected scene data is used.
-        depth_frames = [np.asarray(depth_raw)]
-        last_timestamp = float(timestamp)
-        deadline = time.time() + 0.5
-        while (
-            len(depth_frames) < self.args.depth_frames
-            and time.time() < deadline
-        ):
-            _, depth_timestamp, next_depth = self.camera.get_latest_frame()
-            if (
-                next_depth is not None
-                and float(depth_timestamp) > last_timestamp
-            ):
-                depth_frames.append(np.asarray(next_depth))
-                last_timestamp = float(depth_timestamp)
-            else:
-                time.sleep(0.01)
-        if len(depth_frames) < max(3, self.args.depth_frames // 2):
-            raise RuntimeError("insufficient fresh depth frames")
+        gripper = segment_and_record(
+            "gripper",
+            "blue clamp",
+            0.10,
+        )
+        coarse_gripper_candidate = choose_right_gripper(
+            gripper.candidates,
+            image_width=image.shape[1],
+            previous_center_px=self.previous_gripper_center,
+        )
+        coarse_gripper_image_margin = _require_candidate_image_margin(
+            coarse_gripper_candidate,
+            image.shape,
+            label="coarse gripper",
+        )
+        roi = compute_candidate_roi(
+            (lid_candidate, coarse_gripper_candidate),
+            full_shape_hw=image.shape[:2],
+            padding_px=72.0,
+            scale=1.0,
+        )
+        roi_scale = min(
+            4.0,
+            1536.0 / float(max(roi.crop_shape_hw)),
+        )
+        if roi_scale < 1.5:
+            raise RuntimeError(
+                "coarse SAM instances span too much of the frame for "
+                "meaningful ROI refinement"
+            )
+        roi = compute_candidate_roi(
+            (lid_candidate, coarse_gripper_candidate),
+            full_shape_hw=image.shape[:2],
+            padding_px=72.0,
+            scale=roi_scale,
+        )
+        roi_image = extract_enlarged_roi(sam_image, roi)
+        roi_input_path = artifacts.add_image(
+            "sam_roi_input_png",
+            f"{self.sequence:03d}_head_sam_roi_input.png",
+            roi_image,
+        )
+        roi_request_metadata = roi.metadata()
+        fine_lid = segment_and_record(
+            "lid_roi_refined",
+            selected_lid_prompt,
+            0.05,
+            request_image=roi_image,
+            request_group="roi",
+            input_artifact_role="sam_roi_input_png",
+            roi_metadata=roi_request_metadata,
+        )
+        lid, fine_lid_remap = remap_segmentation_result_from_roi(
+            fine_lid, roi
+        )
+        selected_lid = choose_lid_candidate(
+            lid.candidates,
+            image_bgr=sam_image,
+            previous_center_px=self.previous_lid_center,
+            require_blue_cross=True,
+        )
+        if selected_lid is None:
+            raise RuntimeError(
+                "ROI-refined SAM did not preserve the blue-cross lid"
+            )
+        lid_candidate, lid_geometry = selected_lid
+        fine_lid_candidate_index = _identity_index(
+            lid.candidates, lid_candidate
+        )
+        lid_image_margin = _require_candidate_image_margin(
+            lid_candidate,
+            image.shape,
+            label="ROI-refined lid",
+        )
+        lid_roi_margin = _require_candidate_roi_margin(
+            lid_candidate,
+            roi,
+            label="ROI-refined lid",
+        )
+        fine_lid_raw_mask_path = artifacts.add_image(
+            "sam_lid_roi_selected_raw_mask",
+            f"{self.sequence:03d}_head_sam_lid_roi_selected_raw_mask.png",
+            np.asarray(
+                fine_lid.candidates[fine_lid_candidate_index].mask,
+                dtype=np.uint8,
+            )
+            * 255,
+        )
+        fine_gripper = segment_and_record(
+            "gripper_roi_refined",
+            "blue clamp",
+            0.10,
+            request_image=roi_image,
+            request_group="roi",
+            input_artifact_role="sam_roi_input_png",
+            roi_metadata=roi_request_metadata,
+        )
+        gripper, fine_gripper_remap = remap_segmentation_result_from_roi(
+            fine_gripper, roi
+        )
+        (
+            fine_gripper_candidate,
+            gripper_association,
+        ) = _associate_fine_gripper(
+            coarse_gripper_candidate,
+            gripper.candidates,
+        )
+        selected_fine_gripper = choose_right_gripper(
+            (fine_gripper_candidate,),
+            image_width=image.shape[1],
+            previous_center_px=self.previous_gripper_center,
+        )
+        if selected_fine_gripper is not fine_gripper_candidate:
+            raise RuntimeError("fine gripper association changed unexpectedly")
+        fine_gripper_candidate_index = int(
+            gripper_association["fine_candidate_index"]
+        )
+        gripper_image_margin = _require_candidate_image_margin(
+            fine_gripper_candidate,
+            image.shape,
+            label="ROI-refined gripper",
+        )
+        gripper_roi_margin = _require_candidate_roi_margin(
+            fine_gripper_candidate,
+            roi,
+            label="ROI-refined gripper",
+        )
+        fine_gripper_raw_mask_path = artifacts.add_image(
+            "sam_gripper_roi_selected_raw_mask",
+            (
+                f"{self.sequence:03d}_head_"
+                "sam_gripper_roi_selected_raw_mask.png"
+            ),
+            np.asarray(
+                fine_gripper.candidates[fine_gripper_candidate_index].mask,
+                dtype=np.uint8,
+            )
+            * 255,
+        )
+        post_sam_roi_image, scene_consistency = (
+            self._verify_post_sam_roi_consistency(
+                roi=roi,
+                reference_roi_image=roi_image,
+                enhanced=enhanced,
+            )
+        )
+        post_sam_roi_path = artifacts.add_image(
+            "sam_post_inference_roi_input_png",
+            f"{self.sequence:03d}_head_sam_post_inference_roi_input.png",
+            post_sam_roi_image,
+        )
+        roi_refinement = {
+            "schema": "sam_roi_refinement/v1",
+            "input_artifact_role": "sam_roi_input_png",
+            "input_artifact_path": roi_input_path.name,
+            "coarse_lid_image_margin": coarse_lid_image_margin,
+            "coarse_gripper_image_margin": coarse_gripper_image_margin,
+            "transform": roi_request_metadata,
+            "lid_remap": fine_lid_remap,
+            "gripper_remap": fine_gripper_remap,
+            "lid_selected_candidate": {
+                "response_frame_id": int(fine_lid.frame_id),
+                "candidate_index": fine_lid_candidate_index,
+                "raw_roi_mask_artifact_role": (
+                    "sam_lid_roi_selected_raw_mask"
+                ),
+                "raw_roi_mask_artifact_path": fine_lid_raw_mask_path.name,
+                "remapped_mask_artifact_role": "lid_mask",
+                "roi_margin": lid_roi_margin,
+            },
+            "gripper_selected_candidate": {
+                "response_frame_id": int(fine_gripper.frame_id),
+                "candidate_index": fine_gripper_candidate_index,
+                "raw_roi_mask_artifact_role": (
+                    "sam_gripper_roi_selected_raw_mask"
+                ),
+                "raw_roi_mask_artifact_path": (
+                    fine_gripper_raw_mask_path.name
+                ),
+                "remapped_mask_artifact_role": "gripper_mask",
+                "roi_margin": gripper_roi_margin,
+                "coarse_association": gripper_association,
+            },
+            "post_inference_scene_consistency": {
+                **scene_consistency,
+                "artifact_role": "sam_post_inference_roi_input_png",
+                "artifact_path": post_sam_roi_path.name,
+            },
+        }
+        # The temporal depth burst was captured around the source RGB timestamp
+        # before any network inference.  The post-SAM RGB gate above ensures
+        # that the ROI did not change while those requests were in flight.
         depth = temporal_median_depth(
             depth_frames, rotate_clockwise=True
         )
@@ -288,7 +1428,6 @@ class LiveSamGrasp:
         depth = cv2.resize(
             depth, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST
         )
-        lid_candidate, lid_geometry = selected_lid
         grasp_px = lid_left_grasp_px(lid_candidate, lid_geometry)
         camera_matrix = scaled_camera_matrix(
             self.head_camera_matrix,
@@ -340,7 +1479,7 @@ class LiveSamGrasp:
         )
         feature = scene_feature(
             lid_candidates=lid.candidates,
-            gripper_candidates=gripper.candidates,
+            gripper_candidates=(fine_gripper_candidate,),
             depth_m=depth,
             previous_lid_center_px=self.previous_lid_center,
             previous_gripper_center_px=self.previous_gripper_center,
@@ -349,6 +1488,38 @@ class LiveSamGrasp:
                 target_3d.point_camera_xyz_m[2]
             ),
             selected_lid=selected_lid,
+        )
+        if feature.gripper_candidate is not fine_gripper_candidate:
+            raise RuntimeError("scene feature changed the associated gripper")
+        lid_mask_path = artifacts.add_image(
+            "lid_mask",
+            f"{self.sequence:03d}_head_lid_mask.png",
+            np.asarray(feature.lid_candidate.mask, dtype=np.uint8) * 255,
+        )
+        gripper_mask_path = artifacts.add_image(
+            "gripper_mask",
+            f"{self.sequence:03d}_head_gripper_mask.png",
+            np.asarray(feature.gripper_candidate.mask, dtype=np.uint8)
+            * 255,
+        )
+        depth_path = artifacts.add_npz(
+            "depth_npz",
+            f"{self.sequence:03d}_head_depth.npz",
+            depth_m=np.asarray(depth).copy(),
+            camera_matrix=np.asarray(camera_matrix, dtype=np.float64),
+            source_timestamps=np.asarray(depth_timestamps, dtype=np.float64),
+            source_rgb_sha256=np.asarray(depth_rgb_sha256),
+            image_timestamp=np.asarray(timestamp, dtype=np.float64),
+            timestamp_span_s=np.asarray(
+                depth_timing["timestamp_span_s"], dtype=np.float64
+            ),
+            maximum_timestamp_span_s=np.asarray(
+                depth_timing["maximum_timestamp_span_s"],
+                dtype=np.float64,
+            ),
+            native_depth_shape_hw=np.asarray(
+                native_depth_shape, dtype=np.int64
+            ),
         )
         self.previous_lid_center = feature.lid_geometry.center_px.copy()
         self.previous_gripper_center = gripper_mask_center(
@@ -394,9 +1565,103 @@ class LiveSamGrasp:
             f"near={self.last_proximity_m*1000:.0f}mm({proximity_label})"
         )
         overlay = render_scene(image, feature, label)
-        path = self.output_dir / f"{self.sequence:03d}.png"
-        cv2.imwrite(str(path), overlay)
-        self.sequence += 1
+        path = artifacts.add_image(
+            "overlay_image",
+            f"{self.sequence:03d}.png",
+            overlay,
+        )
+        if request_path is None or request_jpeg is None:
+            raise RuntimeError("observation has no captured SAM request")
+        metadata = {
+            "source_timestamp": timestamp,
+            "image_shape_hw": list(image.shape[:2]),
+            "image_dtype": str(image.dtype),
+            "image_color_order": "BGR",
+            "head_rotation": "clockwise_90",
+            "preprocess": (
+                "enhance_low_light" if enhanced else "identity"
+            ),
+            "sam_transport": {
+                "request_image_format": "jpeg",
+                "jpeg_quality": SAM_REQUEST_JPEG_QUALITY,
+                "requests": sam_requests,
+            },
+            "roi_refinement": roi_refinement,
+            "depth": {
+                "representation": (
+                    "temporal_median_rotate_clockwise_aligned_nearest"
+                ),
+                "frames_requested": int(self.args.depth_frames),
+                "frames_used": len(depth_frames),
+                "source_timestamps": depth_timestamps,
+                "source_rgb_sha256": depth_rgb_sha256,
+                **depth_timing,
+                "native_shape_hw": list(native_depth_shape),
+                "aligned_shape_hw": list(depth.shape),
+                "dtype": str(depth.dtype),
+                "camera_matrix_dtype": "float64",
+                "camera_matrix": np.asarray(
+                    camera_matrix, dtype=float
+                ).tolist(),
+            },
+            "lid_attempts": [
+                {"prompt": prompt, "candidate_count": int(count)}
+                for prompt, count in lid_attempts
+            ],
+            "lid": {
+                "prompt": selected_lid_prompt,
+                "confidence_threshold": 0.05,
+                "model": lid.model,
+                "frame_id": int(lid.frame_id),
+                "score": float(feature.lid_candidate.score),
+                "box_xyxy": np.asarray(
+                    feature.lid_candidate.box_xyxy, dtype=float
+                ).tolist(),
+                "image_margin": lid_image_margin,
+            },
+            "gripper": {
+                "prompt": "blue clamp",
+                "confidence_threshold": 0.10,
+                "model": gripper.model,
+                "frame_id": int(gripper.frame_id),
+                "score": float(feature.gripper_candidate.score),
+                "box_xyxy": np.asarray(
+                    feature.gripper_candidate.box_xyxy, dtype=float
+                ).tolist(),
+                "image_margin": gripper_image_margin,
+            },
+            "feature": {
+                "clearance_m": float(clearance_m),
+                "lid_center_px": np.asarray(
+                    feature.lid_geometry.center_px, dtype=float
+                ).tolist(),
+                "lid_grasp_feature": np.asarray(
+                    feature.lid_grasp_feature, dtype=float
+                ).tolist(),
+                "gripper_feature": np.asarray(
+                    feature.gripper_feature, dtype=float
+                ).tolist(),
+                "error": np.asarray(error, dtype=float).tolist(),
+            },
+        }
+        (
+            artifact_document,
+            manifest_path,
+            manifest_sha256,
+        ) = artifacts.finish(metadata)
+        self.last_observation_artifacts = {
+            **artifact_document,
+            "manifest": str(manifest_path),
+            "manifest_sha256": manifest_sha256,
+            # Absolute compatibility paths for probe-record writers.
+            "raw_image": str(raw_path),
+            "sam_input_png": str(enhanced_path),
+            "sam_request_jpeg_q90": str(request_path),
+            "overlay_image": str(path),
+            "lid_mask": str(lid_mask_path),
+            "gripper_mask": str(gripper_mask_path),
+            "depth_npz": str(depth_path),
+        }
         return feature, error, str(path), float(timestamp)
 
     def check_scene_registration(self, reference_points_path: str | None):
@@ -962,7 +2227,23 @@ class LiveSamGrasp:
         raise RuntimeError("real-time SAM pregrasp did not converge")
 
 
-def main():
+def _stop_runner_without_masking(runner, primary_error):
+    """Stop a runner while preserving an exception already in flight."""
+
+    if runner is None:
+        return
+    try:
+        runner.stop()
+    except BaseException as cleanup_error:
+        if primary_error is None:
+            raise
+        _note_exception(
+            primary_error,
+            f"runner cleanup also failed: {cleanup_error!r}",
+        )
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--sam-endpoint", default="tcp://127.0.0.1:15563")
     parser.add_argument("--output-dir", default="/tmp/realtime_sam_grasp")
@@ -1017,10 +2298,18 @@ def main():
     parser.add_argument("--mode-settle-s", type=float, default=0.5)
     parser.add_argument("--hold-settle-s", type=float, default=0.25)
     parser.add_argument("--execute-pregrasp", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.execute_pregrasp:
+        parser.error(
+            "standalone 3D pregrasp execution is disabled; use "
+            "run_staged_sam_pregrasp.py with --execute-horizontal and a "
+            "new one-shot --motion-token"
+        )
 
-    runner = LiveSamGrasp(args)
+    runner = None
+    primary_error = None
     try:
+        runner = LiveSamGrasp(args)
         runner.start()
         # The first Record3D depth burst after stream startup is often an
         # outlier; warm the live temporal filter before reporting or moving.
@@ -1030,7 +2319,7 @@ def main():
             args.reference_points
         )
         initial = {
-            "mode": "execute" if args.execute_pregrasp else "dry_run",
+            "mode": "dry_run",
             "error": error.round(2).tolist(),
             "image": path,
             "timestamp": timestamp,
@@ -1054,36 +2343,16 @@ def main():
             "registration": registration,
         }
         print(json.dumps(initial), flush=True)
-        if not args.execute_pregrasp:
-            return
-        if not runner.last_geometry_quality.accepted:
-            raise RuntimeError(
-                "camera geometry is too oblique for autonomous motion: "
-                + "; ".join(runner.last_geometry_quality.reasons)
-            )
-        robot_deltas, feature_deltas, origin = runner.calibrate(
-            args.clearance_m
-        )
-        _, final_path = runner.approach(
-            robot_deltas, feature_deltas, origin, args.clearance_m
-        )
-        print(
-            json.dumps(
-                {
-                    "status": "CONTACT_CONFIRMATION_REQUIRED",
-                    "image": final_path,
-                }
-            ),
-            flush=True,
-        )
-    except Exception:
-        try:
-            runner.hold_measured()
-        except Exception:
-            pass
+        return
+    except BaseException as exc:
+        primary_error = exc
+        # This entry point is camera-only.  An observation failure must not
+        # turn a dry run into a right-arm hold command.  Physical horizontal
+        # execution lives in run_staged_sam_pregrasp.py, which tracks whether
+        # a one-shot motion was actually attempted before emergency holding.
         raise
     finally:
-        runner.stop()
+        _stop_runner_without_masking(runner, primary_error)
 
 
 if __name__ == "__main__":
