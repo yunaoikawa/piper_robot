@@ -1604,6 +1604,72 @@ class LiveSamGrasp:
                     camera_matrix, dtype=float
                 ).tolist(),
             },
+            "target_3d": {
+                "pixel_xy": np.asarray(
+                    target_3d.pixel_xy, dtype=float
+                ).tolist(),
+                "point_camera_xyz_m": np.asarray(
+                    target_3d.point_camera_xyz_m, dtype=float
+                ).tolist(),
+                "support_plane": {
+                    "normal_camera_xyz": np.asarray(
+                        target_3d.plane.normal, dtype=float
+                    ).tolist(),
+                    "offset_m": float(target_3d.plane.offset),
+                    "inlier_fraction": float(
+                        target_3d.plane.inlier_fraction
+                    ),
+                    "rms_m": float(target_3d.plane.rms_m),
+                },
+                "support_sample_count": int(
+                    target_3d.support_sample_count
+                ),
+                "confidence": float(target_3d.confidence),
+                "minimum_confidence": minimum_plane_confidence,
+            },
+            "geometry_quality": {
+                "accepted": bool(self.last_geometry_quality.accepted),
+                "view_angle_deg": float(
+                    self.last_geometry_quality.view_angle_deg
+                ),
+                "native_depth_pixel_footprint_m": [
+                    float(
+                        self.last_geometry_quality
+                        .native_pixel_footprint_x_m
+                    ),
+                    float(
+                        self.last_geometry_quality
+                        .native_pixel_footprint_y_m
+                    ),
+                ],
+                "maximum_view_angle_deg": float(
+                    self.geometry_quality_config.get(
+                        "maximum_view_angle_deg", 40.0
+                    )
+                ),
+                "maximum_native_depth_pixel_footprint_m": float(
+                    self.geometry_quality_config.get(
+                        "maximum_native_depth_pixel_footprint_m", 0.007
+                    )
+                ),
+                "reasons": list(self.last_geometry_quality.reasons),
+            },
+            "proximity": {
+                "nearest_scene_distance_m": (
+                    float(self.last_proximity_m)
+                    if np.isfinite(self.last_proximity_m)
+                    else None
+                ),
+                "distance_is_finite": bool(
+                    np.isfinite(self.last_proximity_m)
+                ),
+                "warning_threshold_m": float(self.proximity_warning_m),
+                "warning": bool(
+                    np.isfinite(self.last_proximity_m)
+                    and self.last_proximity_m < self.proximity_warning_m
+                ),
+                "policy": "warning_only",
+            },
             "lid_attempts": [
                 {"prompt": prompt, "candidate_count": int(count)}
                 for prompt, count in lid_attempts
