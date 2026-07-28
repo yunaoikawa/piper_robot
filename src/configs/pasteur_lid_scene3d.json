@@ -13,6 +13,13 @@
     "capture_id": "20260727T034333.072580Z_head_front_oblique_lidar_baseline_verified_f0fb6378",
     "record3d_device_type": 1
   },
+  "head_camera_placement_reference": {
+    "capture_id": "20260728T041637.600930Z_head_front_oblique_recalibration_20260728_d765f402",
+    "record3d_udid": "00008101-0015486E1412001E",
+    "rgb_path": "data/captures/pasteur/2026-07-28/20260728T041637.600930Z_head_front_oblique_recalibration_20260728_d765f402/derived/head_rgb_landscape.png",
+    "rgb_sha256": "7be3e65567e5c650d0661305c0c28b79a02ef07278c27a8b8bea3051d3987b36",
+    "registration_gate": "orb_identity_v1"
+  },
   "temporal_depth_frames": 15,
   "support_plane": {
     "ring_margin_px": 70,

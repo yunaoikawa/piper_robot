@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,7 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.run_realtime_sam_grasp import LiveSamGrasp
 from robot.camera_id import load_camera_map
 from rollout.camera import USBWristCameraFeedManager
+from rollout.local_feature_calibration import register_fixed_camera_view
 from rollout.sam_segmentation import (
+    PROTOCOL_VERSION,
     choose_lid_candidate,
     enhance_low_light,
 )
@@ -32,7 +36,9 @@ def _atomic_write_json(path: Path, payload):
     temporary = path.with_name(
         f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp"
     )
-    encoded = (json.dumps(payload, indent=2) + "\n").encode()
+    encoded = (
+        json.dumps(payload, indent=2, allow_nan=False) + "\n"
+    ).encode()
     descriptor = os.open(
         temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
     )
@@ -55,6 +61,26 @@ def _atomic_write_json(path: Path, payload):
         raise
 
 
+def _exclusive_write_json(path: Path, payload):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = (
+        json.dumps(payload, indent=2, allow_nan=False) + "\n"
+    ).encode()
+    descriptor = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(encoded)
+        stream.flush()
+        os.fsync(stream.fileno())
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 class MotionExecutionClaim:
     """One-shot, process-independent authorization for physical motion."""
 
@@ -66,6 +92,19 @@ class MotionExecutionClaim:
 
     def set_result(self, result):
         self.result = result
+
+    def mark_motion_attempt(self):
+        if self.payload.get("motion_attempted") is True:
+            return
+        previous = copy.deepcopy(self.payload)
+        attempted = datetime.now(timezone.utc).isoformat()
+        self.payload["motion_attempted"] = True
+        self.payload["motion_attempted_at_utc"] = attempted
+        try:
+            _atomic_write_json(self.path, self.payload)
+        except BaseException:
+            self.payload = previous
+            raise
 
     def finalize(self, error: BaseException | None = None):
         if self.finalized:
@@ -80,6 +119,11 @@ class MotionExecutionClaim:
                 self.payload["result"] = self.result
         else:
             self.payload["status"] = "failed"
+            self.payload["failure_timing"] = (
+                "during_or_after_motion_attempt"
+                if self.payload.get("motion_attempted") is True
+                else "before_motion_attempt"
+            )
             self.payload["error"] = {
                 "type": type(error).__name__,
                 "message": str(error),
@@ -110,6 +154,7 @@ def claim_motion_execution(
         "pid": os.getpid(),
         "output_dir": str(Path(output_dir).resolve()),
         "intent": intent,
+        "motion_attempted": False,
     }
     encoded = (json.dumps(payload, indent=2) + "\n").encode()
     try:
@@ -139,6 +184,151 @@ def claim_motion_execution(
             "physical-run output directory already exists; refusing overwrite"
         ) from exc
     return claim
+
+
+class ProbeExecutionJournal:
+    """Durable phase journal written before a single physical probe."""
+
+    def __init__(
+        self,
+        path,
+        *,
+        axis,
+        requested_xyz_m,
+        motion_token_sha256=None,
+    ):
+        self.path = Path(path).resolve() if path is not None else None
+        self.axis = str(axis)
+        started = datetime.now(timezone.utc).isoformat()
+        self.payload = {
+            "schema": "sam_horizontal_probe/v2",
+            "record_id": uuid.uuid4().hex,
+            "created_at_utc": started,
+            "status": f"SINGLE_{axis.upper()}_PROBE_PREPARING",
+            "execution": {
+                "stage": "capturing_pre_motion_observation",
+                "motion_attempted": False,
+                "motion_command_completed": False,
+                "immediate_motion_validated": False,
+                "settled_motion_validated": False,
+                "failure_timing": None,
+                "started_at_utc": started,
+                "updated_at_utc": started,
+            },
+            "motion": {
+                "requested_xyz_m": np.asarray(
+                    requested_xyz_m, dtype=float
+                ).tolist(),
+            },
+        }
+        if motion_token_sha256 is not None:
+            token_hash = str(motion_token_sha256)
+            if (
+                len(token_hash) != 64
+                or any(char not in "0123456789abcdef" for char in token_hash)
+            ):
+                raise ValueError(
+                    "motion token SHA-256 must be a lowercase hex digest"
+                )
+            self.payload["authorization"] = {
+                "motion_token_sha256": token_hash
+            }
+        if self.path is not None:
+            _exclusive_write_json(self.path, self.payload)
+
+    @property
+    def motion_attempted(self):
+        return bool(self.payload["execution"]["motion_attempted"])
+
+    def update(self, stage, **sections):
+        self.payload["execution"]["stage"] = str(stage)
+        self.payload["execution"]["updated_at_utc"] = datetime.now(
+            timezone.utc
+        ).isoformat()
+        self.payload.update(copy.deepcopy(sections))
+        if self.path is not None:
+            _atomic_write_json(self.path, self.payload)
+
+    def mark_motion_attempt(self):
+        execution = self.payload["execution"]
+        previous = copy.deepcopy(execution)
+        execution["motion_attempted"] = True
+        execution["motion_attempted_at_utc"] = datetime.now(
+            timezone.utc
+        ).isoformat()
+        try:
+            self.update("motion_command_in_progress")
+        except BaseException:
+            self.payload["execution"] = previous
+            raise
+
+    def mark_motion_command_completed(self, motion):
+        execution = self.payload["execution"]
+        execution["motion_command_completed"] = True
+        execution["motion_command_completed_at_utc"] = datetime.now(
+            timezone.utc
+        ).isoformat()
+        self.update("validating_immediate_motion", motion=motion)
+
+    def mark_immediate_motion_validated(self, motion):
+        self.payload["execution"]["immediate_motion_validated"] = True
+        self.update("post_motion_settle", motion=motion)
+
+    def mark_settled_motion_validated(self, motion):
+        self.payload["execution"]["settled_motion_validated"] = True
+        self.update("validating_post_motion_observation", motion=motion)
+
+    def fail(self, error):
+        finished = datetime.now(timezone.utc).isoformat()
+        execution = self.payload["execution"]
+        execution["failure_timing"] = (
+            "during_or_after_motion_attempt"
+            if execution["motion_attempted"]
+            else "before_motion_attempt"
+        )
+        execution["failed_stage"] = execution["stage"]
+        execution["finished_at_utc"] = finished
+        execution["updated_at_utc"] = finished
+        self.payload["status"] = (
+            f"SINGLE_{self.axis.upper()}_PROBE_FAILED"
+        )
+        self.payload["error"] = {
+            "type": type(error).__name__,
+            "message": str(error),
+        }
+        if self.path is not None:
+            _atomic_write_json(self.path, self.payload)
+
+    def commit(self, report):
+        finished = datetime.now(timezone.utc).isoformat()
+        execution = self.payload["execution"]
+        execution["stage"] = "committed"
+        execution["failure_timing"] = None
+        execution["finished_at_utc"] = finished
+        execution["updated_at_utc"] = finished
+        if (
+            not execution["motion_attempted"]
+            or not execution["motion_command_completed"]
+            or not execution["immediate_motion_validated"]
+            or not execution["settled_motion_validated"]
+        ):
+            raise RuntimeError(
+                "cannot commit a probe without validated measured motion"
+            )
+        committed = copy.deepcopy(report)
+        committed["schema"] = self.payload["schema"]
+        committed["record_id"] = self.payload["record_id"]
+        committed["created_at_utc"] = self.payload["created_at_utc"]
+        committed["execution"] = copy.deepcopy(execution)
+        if "authorization" in self.payload:
+            committed["authorization"] = copy.deepcopy(
+                self.payload["authorization"]
+            )
+        if self.path is not None:
+            committed["record_path"] = str(self.path)
+            _atomic_write_json(self.path, committed)
+        self.payload = committed
+        return committed
 
 
 def _right_state(rpc):
@@ -207,6 +397,9 @@ def verify_right_stationary(
         "xyz_span_m": xyz_span.tolist(),
         "joint_span_rad": joint_span.tolist(),
         "max_abs_torque_nm": max_abs_torque.tolist(),
+        "torque_limit_nm": (
+            None if torque_limit is None else torque_limit.tolist()
+        ),
         "torque_within_limit": torque_ok,
         "verified": bool(
             np.max(xyz_span) <= 0.0005
@@ -226,6 +419,252 @@ def _image_sha256(path):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _required_sha256(path, description):
+    digest = _image_sha256(path)
+    if digest is None:
+        raise RuntimeError(f"{description} is missing: {Path(path)}")
+    return digest
+
+
+def _head_raw_path(overlay_path):
+    overlay = Path(overlay_path)
+    return overlay.with_name(f"{overlay.stem}_head_raw.png")
+
+
+_HEAD_OBSERVATION_ARTIFACT_FIELDS = (
+    "raw_image",
+    "sam_input_png",
+    "sam_request_jpeg_q90",
+    "overlay_image",
+    "lid_mask",
+    "gripper_mask",
+    "depth_npz",
+    "manifest",
+)
+
+
+def _snapshot_artifacts(source, *, schema, fields, run_root, overlay_path):
+    artifacts = copy.deepcopy(source)
+    if (
+        not isinstance(artifacts, dict)
+        or artifacts.get("schema") != schema
+    ):
+        raise RuntimeError(f"invalid {schema} observation provenance")
+    root = Path(run_root).resolve()
+    hashes = {}
+    byte_counts = {}
+    image_shapes = {}
+    for field in fields:
+        value = artifacts.get(field)
+        if not isinstance(value, str):
+            raise RuntimeError(f"missing observation artifact: {field}")
+        path = Path(value).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"observation artifact escapes run directory: {path}"
+            ) from exc
+        hashes[field] = _required_sha256(path, f"observation artifact {field}")
+        byte_counts[field] = path.stat().st_size
+        if path.suffix.lower() in (".png", ".jpg", ".jpeg"):
+            image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+            if image is None or image.ndim not in (2, 3):
+                raise RuntimeError(f"unreadable image artifact: {path}")
+            image_shapes[field] = list(image.shape)
+        artifacts[field] = str(path)
+    if Path(artifacts["overlay_image"]) != Path(overlay_path).resolve():
+        raise RuntimeError("observation artifact metadata/overlay mismatch")
+    artifacts["sha256"] = hashes
+    artifacts["byte_count"] = byte_counts
+    artifacts["image_shape"] = image_shapes
+    return artifacts
+
+
+def _snapshot_head_observation_artifacts(runner, overlay_path):
+    """Freeze the exact SAM/depth inputs before the next observation."""
+
+    artifacts = _snapshot_artifacts(
+        getattr(runner, "last_observation_artifacts", None),
+        schema="sam_head_observation/v2",
+        fields=_HEAD_OBSERVATION_ARTIFACT_FIELDS,
+        run_root=runner.output_dir,
+        overlay_path=overlay_path,
+    )
+    if (
+        artifacts.get("manifest_sha256")
+        != artifacts["sha256"]["manifest"]
+    ):
+        raise RuntimeError("head observation manifest hash mismatch")
+    return artifacts
+
+
+def _snapshot_right_observation_artifacts(observer, overlay_path):
+    source = getattr(observer, "last_observation_artifacts", None)
+    fields = [
+        "raw_image",
+        "sam_input_png",
+        "sam_request_jpeg_q90",
+        "overlay_image",
+    ]
+    if isinstance(source, dict) and source.get("lid_mask") is not None:
+        fields.append("lid_mask")
+    return _snapshot_artifacts(
+        source,
+        schema="sam_right_observation/v1",
+        fields=tuple(fields),
+        run_root=observer.output_dir,
+        overlay_path=overlay_path,
+    )
+
+
+def _probe_context(runner, anchor_head_path, anchor_artifacts=None):
+    anchor_raw = (
+        _head_raw_path(anchor_head_path)
+        if anchor_artifacts is None
+        else Path(anchor_artifacts["raw_image"])
+    )
+    anchor_image = cv2.imread(str(anchor_raw), cv2.IMREAD_COLOR)
+    if anchor_image is None:
+        raise RuntimeError(f"probe anchor image is unreadable: {anchor_raw}")
+    scene_path = Path(runner.args.scene_config).resolve()
+    scene_profile = json.loads(scene_path.read_text())
+    placement = scene_profile.get("head_camera_placement_reference")
+    if not isinstance(placement, dict):
+        raise RuntimeError("scene profile lacks head camera placement reference")
+    reference_path = Path(placement.get("rgb_path", ""))
+    if not reference_path.is_absolute():
+        reference_path = scene_path.parents[2] / reference_path
+    reference_hash = _required_sha256(
+        reference_path, "head camera placement reference"
+    )
+    if reference_hash != placement.get("rgb_sha256"):
+        raise RuntimeError("head camera placement reference hash mismatch")
+    registration = register_fixed_camera_view(reference_path, anchor_image)
+    if not registration.accepted:
+        raise RuntimeError(
+            "head camera placement no longer matches its reference: "
+            + registration.reason
+        )
+
+    stable = {
+        "schema": "sam_probe_context/v2",
+        "scene_config_sha256": _required_sha256(
+            runner.args.scene_config, "scene config"
+        ),
+        "torque_config_sha256": _required_sha256(
+            runner.args.torque_config, "torque config"
+        ),
+        "head_camera_udid": placement.get("record3d_udid"),
+        "head_camera_matrix_rotated": np.asarray(
+            runner.head_camera_matrix, dtype=float
+        ).tolist(),
+        "head_camera_reference_shape_hw": list(
+            runner.head_camera_reference_shape
+        ),
+        "head_image_shape_hw": list(anchor_image.shape[:2]),
+        "head_rotation": "clockwise_90",
+        "feature_definition": (
+            "lid-left-ellipse/gripper-pca-terminal-roi-v3"
+        ),
+        "placement_reference_capture_id": placement.get("capture_id"),
+        "placement_reference_rgb_sha256": reference_hash,
+        "registration_gate": placement.get("registration_gate"),
+        "sam_protocol_version": PROTOCOL_VERSION,
+        "sam_models": {
+            role: (
+                anchor_artifacts.get(role, {}).get("model")
+                if anchor_artifacts is not None
+                else None
+            )
+            for role in ("lid", "gripper")
+        },
+        "sam_prompts": {
+            role: (
+                anchor_artifacts.get(role, {}).get("prompt")
+                if anchor_artifacts is not None
+                else None
+            )
+            for role in ("lid", "gripper")
+        },
+        "sam_policy": {
+            "lid_prompt_sequence": [
+                "transparent round petri dish lid with blue cross",
+                "petri dish lid",
+                "round transparent plastic dish",
+            ],
+            "lid_confidence_threshold": 0.05,
+            "gripper_prompt": "blue clamp",
+            "gripper_confidence_threshold": 0.10,
+            "jpeg_quality": 90,
+            "preprocess": (
+                anchor_artifacts.get("preprocess")
+                if anchor_artifacts is not None
+                else None
+            ),
+        },
+        "depth_frames_requested": int(
+            (
+                anchor_artifacts.get("depth", {}).get(
+                    "frames_requested"
+                )
+                if anchor_artifacts is not None
+                else None
+            )
+            or runner.args.depth_frames
+        ),
+        "feature_layout": ["image_u_px", "image_v_px", "camera_depth_mm"],
+        "temporal_depth_method": (
+            "fresh-frame-median/rotate-clockwise/nearest-resize-v1"
+        ),
+        "control_frame": "piper_right_base_xyz_m",
+        "observation_pipeline_sha256": _required_sha256(
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "run_realtime_sam_grasp.py",
+            "SAM observation pipeline source",
+        ),
+        "feature_extractor_sha256": _required_sha256(
+            Path(__file__).resolve().parents[1]
+            / "rollout"
+            / "realtime_sam_servo.py",
+            "feature extractor source",
+        ),
+        "segmentation_selector_sha256": _required_sha256(
+            Path(__file__).resolve().parents[1]
+            / "rollout"
+            / "sam_segmentation.py",
+            "segmentation selector source",
+        ),
+    }
+    canonical = json.dumps(
+        stable, sort_keys=True, separators=(",", ":")
+    ).encode()
+    context = {
+        "stable": stable,
+        "context_id_sha256": hashlib.sha256(canonical).hexdigest(),
+    }
+    context["anchor_head_raw_image"] = str(anchor_raw.resolve())
+    context["anchor_head_raw_sha256"] = _required_sha256(
+        anchor_raw, "probe anchor image"
+    )
+    context["placement_registration"] = {
+        "accepted": registration.accepted,
+        "matches": registration.matches,
+        "inliers": registration.inliers,
+        "inlier_fraction": registration.inlier_fraction,
+        "median_inlier_error_px": registration.median_inlier_error_px,
+        "maximum_corner_motion_px": registration.maximum_corner_motion_px,
+    }
+    try:
+        context["host_boot_id"] = (
+            Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        )
+    except OSError:
+        context["host_boot_id"] = None
+    return context
 
 
 def fit_horizontal_jacobian(robot_deltas, feature_deltas, rcond=0.12):
@@ -272,6 +711,108 @@ def bound_horizontal_step(displacement, max_norm_m, max_axis_m):
     return step
 
 
+def _probe_motion_quality(actual_xyz, requested_xyz):
+    actual = np.asarray(actual_xyz, dtype=float)
+    requested = np.asarray(requested_xyz, dtype=float)
+    if actual.shape != (3,) or requested.shape != (3,):
+        raise ValueError("probe motion vectors must have shape (3,)")
+    if not np.all(np.isfinite(actual)) or not np.all(np.isfinite(requested)):
+        raise ValueError("probe motion vectors must be finite")
+    actual_norm = float(np.linalg.norm(actual[:2]))
+    requested_norm = float(np.linalg.norm(requested[:2]))
+    if requested_norm <= 0.0:
+        raise ValueError("probe request must contain horizontal motion")
+    direction_cosine = (
+        float(np.dot(actual[:2], requested[:2]))
+        / (actual_norm * requested_norm)
+        if actual_norm > 0.0
+        else None
+    )
+    progress_ratio = float(
+        np.dot(actual[:2], requested[:2])
+        / np.dot(requested[:2], requested[:2])
+    )
+    minimum_norm = 0.0005
+    minimum_direction_cosine = 0.80
+    accepted = bool(
+        actual_norm >= minimum_norm
+        and direction_cosine is not None
+        and direction_cosine >= minimum_direction_cosine
+    )
+    return actual, {
+        "horizontal_norm_m": actual_norm,
+        "direction_cosine": direction_cosine,
+        "signed_progress_ratio": progress_ratio,
+        "minimum_horizontal_norm_m": minimum_norm,
+        "minimum_direction_cosine": minimum_direction_cosine,
+        "accepted": accepted,
+    }
+
+
+def _require_valid_probe_motion(quality, stage):
+    if (
+        float(quality["horizontal_norm_m"])
+        < float(quality["minimum_horizontal_norm_m"])
+    ):
+        raise RuntimeError(
+            f"{stage} horizontal motion was below 0.5 mm"
+        )
+    direction_cosine = quality["direction_cosine"]
+    if (
+        direction_cosine is None
+        or float(direction_cosine)
+        < float(quality["minimum_direction_cosine"])
+    ):
+        raise RuntimeError(
+            f"{stage} motion opposed or diverged from signed request: "
+            f"direction cosine={direction_cosine}"
+        )
+
+
+def _probe_observation_record(
+    feature,
+    error,
+    head_timestamp,
+    right_geometry,
+    right_candidate,
+    right_timestamp,
+    head_artifacts,
+    right_artifacts,
+):
+    head_overlay = head_artifacts["overlay_image"]
+    head_raw = head_artifacts["raw_image"]
+    right_overlay = right_artifacts["overlay_image"]
+    return {
+        "feature_error": np.asarray(error, dtype=float).tolist(),
+        "gripper_feature": np.asarray(
+            feature.gripper_feature, dtype=float
+        ).tolist(),
+        "lid_grasp_feature": np.asarray(
+            feature.lid_grasp_feature, dtype=float
+        ).tolist(),
+        "head_image": head_overlay,
+        "head_image_sha256": head_artifacts["sha256"]["overlay_image"],
+        "head_raw_image": head_raw,
+        "head_raw_image_sha256": head_artifacts["sha256"]["raw_image"],
+        "head_timestamp": float(head_timestamp),
+        "right_lid_center_px": (
+            right_geometry.center_px.tolist()
+            if right_geometry is not None
+            else None
+        ),
+        "right_lid_score": (
+            float(right_candidate.score)
+            if right_candidate is not None
+            else None
+        ),
+        "right_image": right_overlay,
+        "right_image_sha256": right_artifacts["sha256"]["overlay_image"],
+        "right_timestamp": float(right_timestamp),
+        "head_artifacts": head_artifacts,
+        "right_artifacts": right_artifacts,
+    }
+
+
 def execute_single_horizontal_probe(
     runner,
     right_observer,
@@ -279,42 +820,163 @@ def execute_single_horizontal_probe(
     distance_m: float,
     *,
     hold_window_s: float = 0.5,
+    probe_context=None,
+    journal_path=None,
+    motion_token_sha256=None,
+    motion_attempt_callback=None,
 ):
     """Execute one horizontal probe and return an auditable atomic sample."""
 
     if axis not in ("x", "y"):
         raise ValueError("single probe axis must be x or y")
     distance_m = float(distance_m)
-    if not np.isfinite(distance_m) or not 0.0 < distance_m <= 0.008:
-        raise ValueError("single probe distance must be within (0, 0.008] m")
+    if (
+        not np.isfinite(distance_m)
+        or not 0.0 < abs(distance_m) <= 0.008
+    ):
+        raise ValueError(
+            "single probe distance magnitude must be within (0, 0.008] m"
+        )
     request = np.zeros(3, dtype=float)
     request[0 if axis == "x" else 1] = distance_m
+    journal = ProbeExecutionJournal(
+        journal_path,
+        axis=axis,
+        requested_xyz_m=request,
+        motion_token_sha256=motion_token_sha256,
+    )
+    try:
+        return _execute_single_horizontal_probe_body(
+            runner,
+            right_observer,
+            axis,
+            request,
+            hold_window_s=hold_window_s,
+            probe_context=probe_context,
+            journal=journal,
+            motion_attempt_callback=motion_attempt_callback,
+        )
+    except BaseException as error:
+        try:
+            setattr(
+                error,
+                "probe_motion_attempted",
+                journal.motion_attempted,
+            )
+        except Exception:
+            pass
+        try:
+            journal.fail(error)
+        except BaseException as journal_error:
+            add_note = getattr(error, "add_note", None)
+            if add_note is not None:
+                add_note(
+                    "probe failure journal update also failed: "
+                    f"{journal_error!r}"
+                )
+        raise
+
+
+def _execute_single_horizontal_probe_body(
+    runner,
+    right_observer,
+    axis,
+    request,
+    *,
+    hold_window_s,
+    probe_context,
+    journal,
+    motion_attempt_callback,
+):
+    torque_limit = np.asarray(
+        getattr(runner, "torque_limit", None), dtype=float
+    )
+    if (
+        torque_limit.shape != (6,)
+        or not np.all(np.isfinite(torque_limit))
+        or np.any(torque_limit <= 0.0)
+    ):
+        raise RuntimeError(
+            "single probe requires a valid right-arm torque limit"
+        )
 
     before_feature, before_error, before_head_path, before_head_timestamp = (
         runner.observe(0.0)
     )
+    before_head_artifacts = _snapshot_head_observation_artifacts(
+        runner, before_head_path
+    )
+    context = (
+        _probe_context(
+            runner, before_head_path, before_head_artifacts
+        )
+        if probe_context is None
+        else dict(probe_context)
+    )
+    if not context.get("context_id_sha256"):
+        raise ValueError("probe context requires context_id_sha256")
     (
         before_right_geometry,
         before_right_candidate,
         before_right_path,
         before_right_timestamp,
     ) = right_observer.observe(require_lid=False)
+    before_right_artifacts = _snapshot_right_observation_artifacts(
+        right_observer, before_right_path
+    )
     before_state = _right_state(runner.rpc)
+    before_observation = _probe_observation_record(
+        before_feature,
+        before_error,
+        before_head_timestamp,
+        before_right_geometry,
+        before_right_candidate,
+        before_right_timestamp,
+        before_head_artifacts,
+        before_right_artifacts,
+    )
+    journal.update(
+        "pre_motion_ready",
+        context=context,
+        motion={
+            "requested_xyz_m": request.tolist(),
+            "before_state": before_state,
+        },
+        observation={"before": before_observation},
+    )
+    journal.mark_motion_attempt()
+    if motion_attempt_callback is not None:
+        motion_attempt_callback()
     actual_immediate = runner.move_cartesian_delta(
         request, minimum_progress=0.0
     )
     post_motion_state = _right_state(runner.rpc)
+    actual_immediate, immediate_motion_quality = _probe_motion_quality(
+        actual_immediate, request
+    )
+    motion = {
+        "requested_xyz_m": request.tolist(),
+        "actual_immediate_xyz_m": actual_immediate.tolist(),
+        "actual_immediate_quality": immediate_motion_quality,
+        "before_state": before_state,
+        "post_motion_state": post_motion_state,
+    }
+    journal.mark_motion_command_completed(motion)
+    _require_valid_probe_motion(
+        immediate_motion_quality, "immediate"
+    )
+    journal.mark_immediate_motion_validated(motion)
     initial_hold = verify_right_stationary(
         runner.rpc,
         duration_s=hold_window_s,
-        torque_limit=getattr(runner, "torque_limit", None),
+        torque_limit=torque_limit,
     )
     if not initial_hold["verified"]:
         runner.hold_measured()
         initial_hold = verify_right_stationary(
             runner.rpc,
             duration_s=hold_window_s,
-            torque_limit=getattr(runner, "torque_limit", None),
+            torque_limit=torque_limit,
         )
         if not initial_hold["verified"]:
             raise RuntimeError(
@@ -323,23 +985,29 @@ def execute_single_horizontal_probe(
     after_feature, after_error, after_head_path, after_head_timestamp = (
         runner.observe(0.0)
     )
+    after_head_artifacts = _snapshot_head_observation_artifacts(
+        runner, after_head_path
+    )
     (
         after_right_geometry,
         after_right_candidate,
         after_right_path,
         after_right_timestamp,
     ) = right_observer.observe(require_lid=False)
+    after_right_artifacts = _snapshot_right_observation_artifacts(
+        right_observer, after_right_path
+    )
     hold = verify_right_stationary(
         runner.rpc,
         duration_s=hold_window_s,
-        torque_limit=getattr(runner, "torque_limit", None),
+        torque_limit=torque_limit,
     )
     if not hold["verified"]:
         runner.hold_measured()
         hold = verify_right_stationary(
             runner.rpc,
             duration_s=hold_window_s,
-            torque_limit=getattr(runner, "torque_limit", None),
+            torque_limit=torque_limit,
         )
         if not hold["verified"]:
             raise RuntimeError(
@@ -373,95 +1041,95 @@ def execute_single_horizontal_probe(
     )
     before_pose = np.asarray(before_state["pose_wxyz_xyz"], dtype=float)
     actual_settled = final_pose[4:7] - before_pose[4:7]
-    gripper_delta = (
-        after_feature.gripper_feature - before_feature.gripper_feature
+    actual_settled, settled_motion_quality = _probe_motion_quality(
+        actual_settled, request
     )
-    lid_delta = (
-        after_feature.lid_grasp_feature - before_feature.lid_grasp_feature
-    )
-    pixel_signal = float(np.linalg.norm(gripper_delta[:2]))
-    usable_for_fit = bool(pixel_signal >= 2.0)
-
-    def observation(
-        feature,
-        error,
-        head_path,
-        head_timestamp,
-        right_geometry,
-        right_candidate,
-        right_path,
-        right_timestamp,
-    ):
-        return {
-            "feature_error": np.asarray(error, dtype=float).tolist(),
-            "gripper_feature": np.asarray(
-                feature.gripper_feature, dtype=float
-            ).tolist(),
-            "lid_grasp_feature": np.asarray(
-                feature.lid_grasp_feature, dtype=float
-            ).tolist(),
-            "head_image": head_path,
-            "head_image_sha256": _image_sha256(head_path),
-            "head_timestamp": float(head_timestamp),
-            "right_lid_center_px": (
-                right_geometry.center_px.tolist()
-                if right_geometry is not None
-                else None
-            ),
-            "right_lid_score": (
-                float(right_candidate.score)
-                if right_candidate is not None
-                else None
-            ),
-            "right_image": right_path,
-            "right_image_sha256": _image_sha256(right_path),
-            "right_timestamp": float(right_timestamp),
-        }
-
-    return {
-        "schema": "sam_horizontal_probe/v1",
-        "status": f"SINGLE_{axis.upper()}_PROBE_COMMITTED",
-        "motion": {
-            "requested_xyz_m": request.tolist(),
-            "actual_immediate_xyz_m": np.asarray(
-                actual_immediate, dtype=float
-            ).tolist(),
+    motion.update(
+        {
             "actual_settled_xyz_m": actual_settled.tolist(),
-            "before_state": before_state,
-            "post_motion_state": post_motion_state,
+            "actual_settled_quality": settled_motion_quality,
             "initial_hold": initial_hold,
             "hold": hold,
             "observation_xyz_shift_m": observation_xyz_shift.tolist(),
             "observation_joint_shift_rad": (
                 observation_joint_shift.tolist()
             ),
+        }
+    )
+    journal.update("validating_settled_motion", motion=motion)
+    _require_valid_probe_motion(settled_motion_quality, "settled")
+    journal.mark_settled_motion_validated(motion)
+    gripper_delta = (
+        after_feature.gripper_feature - before_feature.gripper_feature
+    )
+    lid_delta = (
+        after_feature.lid_grasp_feature - before_feature.lid_grasp_feature
+    )
+    relative_delta = gripper_delta - lid_delta
+    pixel_signal = float(np.linalg.norm(relative_delta[:2]))
+    pixel_noise = max(0.5, float(np.linalg.norm(lid_delta[:2])))
+    signal_to_noise = pixel_signal / pixel_noise
+    usable_for_fit = bool(
+        pixel_signal >= 2.0 and signal_to_noise >= 3.0
+    )
+    after_observation = _probe_observation_record(
+        after_feature,
+        after_error,
+        after_head_timestamp,
+        after_right_geometry,
+        after_right_candidate,
+        after_right_timestamp,
+        after_head_artifacts,
+        after_right_artifacts,
+    )
+    fixed_view = register_fixed_camera_view(
+        before_observation["head_raw_image"],
+        after_observation["head_raw_image"],
+    )
+    if not fixed_view.accepted:
+        raise RuntimeError(
+            "head camera moved during the probe: " + fixed_view.reason
+        )
+    stable = context.get("stable", {})
+    expected_models = stable.get("sam_models")
+    if isinstance(expected_models, dict):
+        after_models = {
+            role: after_head_artifacts.get(role, {}).get("model")
+            for role in ("lid", "gripper")
+        }
+        if after_models != expected_models:
+            raise RuntimeError("SAM model changed during the probe")
+
+    observation = {
+        "before": before_observation,
+        "after": after_observation,
+        "gripper_feature_delta": gripper_delta.tolist(),
+        "lid_feature_delta": lid_delta.tolist(),
+        "relative_feature_delta": relative_delta.tolist(),
+        "fixed_camera_during_probe": {
+            "accepted": fixed_view.accepted,
+            "matches": fixed_view.matches,
+            "inliers": fixed_view.inliers,
+            "inlier_fraction": fixed_view.inlier_fraction,
+            "median_inlier_error_px": fixed_view.median_inlier_error_px,
+            "maximum_corner_motion_px": fixed_view.maximum_corner_motion_px,
         },
-        "observation": {
-            "before": observation(
-                before_feature,
-                before_error,
-                before_head_path,
-                before_head_timestamp,
-                before_right_geometry,
-                before_right_candidate,
-                before_right_path,
-                before_right_timestamp,
-            ),
-            "after": observation(
-                after_feature,
-                after_error,
-                after_head_path,
-                after_head_timestamp,
-                after_right_geometry,
-                after_right_candidate,
-                after_right_path,
-                after_right_timestamp,
-            ),
-            "gripper_feature_delta": gripper_delta.tolist(),
-            "lid_feature_delta": lid_delta.tolist(),
-        },
+    }
+    journal.update(
+        "validating_post_motion_observation",
+        context=context,
+        motion=motion,
+        observation=observation,
+    )
+    report = {
+        "context": context,
+        "status": f"SINGLE_{axis.upper()}_PROBE_COMMITTED",
+        "motion": motion,
+        "observation": observation,
         "quality": {
             "pixel_signal_norm": pixel_signal,
+            "pixel_noise_norm": pixel_noise,
+            "signal_to_noise": signal_to_noise,
             "usable_for_fit": usable_for_fit,
             "reasons": (
                 []
@@ -470,12 +1138,17 @@ def execute_single_horizontal_probe(
                     reason
                     for reason, rejected in (
                         ("image motion was below 2 px", pixel_signal < 2.0),
+                        (
+                            "relative image motion SNR was below 3",
+                            signal_to_noise < 3.0,
+                        ),
                     )
                     if rejected
                 ]
             ),
         },
     }
+    return journal.commit(report)
 
 
 class RightLidObserver:
@@ -493,39 +1166,94 @@ class RightLidObserver:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.previous_center = None
         self.sequence = 0
+        self.last_observation_artifacts = None
+        self.last_timestamp = None
+        self.last_rgb_sha256 = None
 
     def start(self):
         self.camera.start()
-        deadline = time.time() + 12.0
-        while time.time() < deadline:
-            rgb, timestamp, _ = self.camera.get_latest_frame()
-            if rgb is not None and timestamp is not None:
-                return
-            time.sleep(0.05)
-        raise RuntimeError("right wrist camera frame unavailable")
+        self._await_fresh_frame(timeout_s=12.0)
 
     def stop(self):
         self.camera.stop()
 
+    def _await_fresh_frame(self, *, timeout_s=3.0):
+        not_before = time.time()
+        deadline = time.monotonic() + float(timeout_s)
+        repeated_digest = False
+        while time.monotonic() < deadline:
+            rgb, timestamp, _ = self.camera.get_latest_frame()
+            if rgb is None or timestamp is None:
+                time.sleep(0.01)
+                continue
+            timestamp = float(timestamp)
+            if not np.isfinite(timestamp):
+                raise RuntimeError(
+                    "right wrist frame timestamp is not finite"
+                )
+            if timestamp + 1e-6 < not_before:
+                time.sleep(0.01)
+                continue
+            frame = np.ascontiguousarray(np.asarray(rgb))
+            if frame.ndim != 3 or frame.shape[2] not in (3, 4):
+                raise RuntimeError("right wrist RGB frame shape is invalid")
+            digest = hashlib.sha256(
+                memoryview(frame).cast("B")
+            ).hexdigest()
+            if (
+                self.last_timestamp is not None
+                and timestamp <= self.last_timestamp
+            ):
+                time.sleep(0.01)
+                continue
+            if (
+                self.last_rgb_sha256 is not None
+                and digest == self.last_rgb_sha256
+            ):
+                repeated_digest = True
+                time.sleep(0.01)
+                continue
+            self.last_timestamp = timestamp
+            self.last_rgb_sha256 = digest
+            return frame, timestamp
+        reason = (
+            "RGB bytes repeated despite newer timestamps"
+            if repeated_digest
+            else "no post-barrier frame arrived"
+        )
+        raise RuntimeError(
+            f"fresh right wrist frame unavailable: {reason}"
+        )
+
     def observe(self, *, require_lid=True):
-        rgb, timestamp, _ = self.camera.get_latest_frame()
-        if rgb is None or timestamp is None:
-            raise RuntimeError("right wrist camera frame disappeared")
-        if time.time() - float(timestamp) > 0.5:
-            raise RuntimeError("stale right wrist camera frame")
+        rgb, timestamp = self._await_fresh_frame()
         image = cv2.rotate(rgb, cv2.ROTATE_90_CLOCKWISE)
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         sequence = self.sequence
         self.sequence += 1
         raw_path = self.output_dir / f"{sequence:03d}_raw.png"
-        cv2.imwrite(str(raw_path), image)
+        if not cv2.imwrite(str(raw_path), image):
+            raise RuntimeError(f"could not save right raw image {raw_path}")
         sam_image = (
             enhance_low_light(image) if float(image.mean()) < 35.0 else image
         )
+        enhanced = sam_image is not image
         input_path = self.output_dir / f"{sequence:03d}_sam_input.png"
-        cv2.imwrite(str(input_path), sam_image)
+        if not cv2.imwrite(str(input_path), sam_image):
+            raise RuntimeError(f"could not save right SAM input {input_path}")
+        request_path = (
+            self.output_dir / f"{sequence:03d}_sam_request_q90.jpg"
+        )
+        if not cv2.imwrite(
+            str(request_path),
+            sam_image,
+            [cv2.IMWRITE_JPEG_QUALITY, 90],
+        ):
+            raise RuntimeError(f"could not save right SAM request {request_path}")
         selected = None
         attempts = []
+        selected_prompt = None
+        result = None
         for prompt in (
             "transparent round petri dish lid with blue cross",
             "petri dish lid",
@@ -547,6 +1275,7 @@ class RightLidObserver:
                 require_blue_cross=True,
             )
             if selected is not None:
+                selected_prompt = prompt
                 break
         if selected is None:
             if require_lid:
@@ -575,7 +1304,23 @@ class RightLidObserver:
                 1,
             )
             path = self.output_dir / f"{sequence:03d}.png"
-            cv2.imwrite(str(path), overlay)
+            if not cv2.imwrite(str(path), overlay):
+                raise RuntimeError(f"could not save right overlay {path}")
+            self.last_observation_artifacts = {
+                "schema": "sam_right_observation/v1",
+                "sequence": int(sequence),
+                "raw_image": str(raw_path),
+                "sam_input_png": str(input_path),
+                "sam_request_jpeg_q90": str(request_path),
+                "overlay_image": str(path),
+                "lid_mask": None,
+                "image_shape_hw": list(image.shape[:2]),
+                "preprocess": (
+                    "enhance_low_light" if enhanced else "identity"
+                ),
+                "attempts": attempts,
+                "lid": None,
+            }
             return None, None, str(path), float(timestamp)
         candidate, geometry = selected
         self.previous_center = geometry.center_px.copy()
@@ -613,11 +1358,41 @@ class RightLidObserver:
             1,
         )
         path = self.output_dir / f"{sequence:03d}.png"
-        cv2.imwrite(str(path), overlay)
+        if not cv2.imwrite(str(path), overlay):
+            raise RuntimeError(f"could not save right overlay {path}")
+        mask_path = self.output_dir / f"{sequence:03d}_lid_mask.png"
+        if not cv2.imwrite(
+            str(mask_path), np.asarray(candidate.mask, dtype=np.uint8) * 255
+        ):
+            raise RuntimeError(f"could not save right lid mask {mask_path}")
+        self.last_observation_artifacts = {
+            "schema": "sam_right_observation/v1",
+            "sequence": int(sequence),
+            "raw_image": str(raw_path),
+            "sam_input_png": str(input_path),
+            "sam_request_jpeg_q90": str(request_path),
+            "overlay_image": str(path),
+            "lid_mask": str(mask_path),
+            "image_shape_hw": list(image.shape[:2]),
+            "preprocess": (
+                "enhance_low_light" if enhanced else "identity"
+            ),
+            "attempts": attempts,
+            "lid": {
+                "prompt": selected_prompt,
+                "confidence_threshold": 0.05,
+                "model": result.model,
+                "frame_id": int(result.frame_id),
+                "score": float(candidate.score),
+                "box_xyxy": np.asarray(
+                    candidate.box_xyxy, dtype=float
+                ).tolist(),
+            },
+        }
         return geometry, candidate, str(path), float(timestamp)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--sam-endpoint", default="tcp://127.0.0.1:15563")
     parser.add_argument(
@@ -633,11 +1408,6 @@ def main():
     )
     parser.add_argument("--depth-frames", type=int, default=15)
     parser.add_argument("--preview-time", type=float, default=2.0)
-    parser.add_argument("--probe-m", type=float, default=0.006)
-    parser.add_argument("--max-step-m", type=float, default=0.008)
-    parser.add_argument("--max-axis-m", type=float, default=0.006)
-    parser.add_argument("--horizontal-tolerance-m", type=float, default=0.006)
-    parser.add_argument("--max-iters", type=int, default=16)
     parser.add_argument(
         "--single-probe-axis",
         choices=("x", "y"),
@@ -657,9 +1427,14 @@ def main():
         action="store_true",
         help="allow right-arm horizontal motion; default is camera-only dry-run",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.single_probe_axis and not args.execute_horizontal:
         parser.error("--single-probe-axis requires --execute-horizontal")
+    if args.execute_horizontal and not args.single_probe_axis:
+        parser.error(
+            "--execute-horizontal requires --single-probe-axis; "
+            "legacy multi-command alignment is disabled"
+        )
     if args.execute_horizontal and not args.motion_token:
         parser.error("--execute-horizontal requires --motion-token")
 
@@ -670,17 +1445,9 @@ def main():
             args.motion_claim_dir,
             args.output_dir,
             {
-                "mode": (
-                    f"single_probe_{args.single_probe_axis}"
-                    if args.single_probe_axis
-                    else "horizontal_alignment"
-                ),
+                "mode": f"single_probe_{args.single_probe_axis}",
                 "axis": args.single_probe_axis,
-                "distance_m": (
-                    args.single_probe_m
-                    if args.single_probe_axis
-                    else None
-                ),
+                "distance_m": args.single_probe_m,
                 "left_arm": False,
                 "gripper": False,
                 "descent": False,
@@ -701,8 +1468,6 @@ def main():
         if execution_claim is not None:
             execution_claim.finalize(exc)
         raise
-    samples_robot = []
-    samples_feature = []
     moved = False
     execution_error = None
     try:
@@ -779,198 +1544,35 @@ def main():
                 "camera geometry is too oblique for horizontal execution: "
                 + "; ".join(runner.last_geometry_quality.reasons)
             )
-        if args.single_probe_axis:
-            moved = True
-            report = execute_single_horizontal_probe(
-                runner,
-                right,
-                args.single_probe_axis,
-                args.single_probe_m,
-            )
-            record_path = Path(args.output_dir) / "probe_record.json"
-            report["record_path"] = str(record_path)
-            _atomic_write_json(record_path, report)
-            execution_claim.set_result(
-                {
-                    "status": report["status"],
-                    "record_path": str(record_path),
-                    "usable_for_fit": report["quality"]["usable_for_fit"],
-                }
-            )
-            print(json.dumps(report), flush=True)
-            return
-        origin = np.asarray(
-            runner.rpc.get_right_ee_pose().parameters(), dtype=float
+        record_path = (
+            Path(args.output_dir) / "probe_record.json"
+        ).resolve()
+        report = execute_single_horizontal_probe(
+            runner,
+            right,
+            args.single_probe_axis,
+            args.single_probe_m,
+            journal_path=record_path,
+            motion_token_sha256=execution_claim.payload["token_sha256"],
+            motion_attempt_callback=execution_claim.mark_motion_attempt,
         )
-
-        # Horizontal calibration only.  The old version probed Z here, which
-        # violated the required align-first/descend-later state ordering.
-        for axis in range(2):
-            before, _, _, _ = runner.observe(0.0)
-            current = np.asarray(
-                runner.rpc.get_right_ee_pose().parameters(), dtype=float
-            )
-            request = np.zeros(3, dtype=float)
-            request[axis] = args.probe_m
-            if axis < 2:
-                # Horizontal probes may experience a little IK sag. Ask the
-                # controller to restore, never lower, the starting height.
-                request[2] = max(0.0, float(origin[6] - current[6]))
-            moved = True
-            actual = runner.move_cartesian_delta(
-                request, minimum_progress=0.0
-            )
-            after, _, path, _ = runner.observe(0.0)
-            delta_feature = (
-                after.gripper_feature - before.gripper_feature
-            )
-            if np.linalg.norm(actual) < 5e-4:
-                raise RuntimeError(
-                    f"Cartesian probe {axis} produced no motion"
-                )
-            samples_robot.append(actual)
-            samples_feature.append(delta_feature)
-            print(
-                json.dumps(
-                    {
-                        "probe_axis": axis,
-                        "actual_xyz_m": actual.round(5).tolist(),
-                        "feature_delta": delta_feature.round(2).tolist(),
-                        "image": path,
-                    }
+        execution_claim.set_result(
+            {
+                "status": report["status"],
+                "record_path": str(record_path),
+                "record_sha256": _required_sha256(
+                    record_path, "probe record"
                 ),
-                flush=True,
-            )
-
-        worse = 0
-        previous_horizontal = None
-        final_path = None
-        for iteration in range(args.max_iters):
-            feature, raw_error, path, timestamp = runner.observe(0.0)
-            (
-                right_geometry,
-                right_candidate,
-                right_path,
-                right_timestamp,
-            ) = right.observe(require_lid=False)
-            jacobian = fit_horizontal_jacobian(
-                samples_robot, samples_feature
-            )
-            displacement = estimate_horizontal_displacement(
-                jacobian, raw_error
-            )
-            horizontal_norm = float(
-                np.linalg.norm(displacement[:2])
-            )
-            report = {
-                "stage": "HORIZONTAL_ONLY",
-                "iteration": iteration,
-                "feature_error": raw_error.round(2).tolist(),
-                "estimated_robot_displacement_m": (
-                    displacement.round(4).tolist()
-                ),
-                "horizontal_norm_m": horizontal_norm,
-                "descent_not_executed_m": float(displacement[2]),
-                "image": path,
-                "timestamp": timestamp,
-                "right_lid_center_px": (
-                    right_geometry.center_px.round(2).tolist()
-                    if right_geometry is not None
-                    else None
-                ),
-                "right_lid_score": (
-                    float(right_candidate.score)
-                    if right_candidate is not None
-                    else None
-                ),
-                "right_image": right_path,
-                "right_timestamp": right_timestamp,
+                "usable_for_fit": report["quality"]["usable_for_fit"],
             }
-            print(json.dumps(report), flush=True)
-            final_path = path
-            if horizontal_norm <= args.horizontal_tolerance_m:
-                runner.hold_measured()
-                if right_candidate is None:
-                    print(
-                        json.dumps(
-                            {
-                                "status": (
-                                    "HORIZONTAL_ALIGNED_"
-                                    "RIGHT_CONFIRMATION_MISSING"
-                                ),
-                                "image": path,
-                                "right_image": right_path,
-                                "estimated_descent_m": float(
-                                    displacement[2]
-                                ),
-                            }
-                        ),
-                        flush=True,
-                    )
-                    return
-                print(
-                    json.dumps(
-                        {
-                            "status": "HORIZONTAL_ALIGNED_DESCENT_PAUSED",
-                            "image": path,
-                            "estimated_descent_m": float(
-                                displacement[2]
-                            ),
-                        }
-                    ),
-                    flush=True,
-                )
-                return
-
-            if (
-                previous_horizontal is not None
-                and horizontal_norm > 1.25 * previous_horizontal
-            ):
-                worse += 1
-                if worse >= 2:
-                    runner.hold_measured()
-                    raise RuntimeError(
-                        "horizontal-only SAM estimate diverged"
-                    )
-            else:
-                worse = 0
-
-            step = bound_horizontal_step(
-                displacement,
-                max_norm_m=args.max_step_m,
-                max_axis_m=args.max_axis_m,
-            )
-            current = np.asarray(
-                runner.rpc.get_right_ee_pose().parameters(), dtype=float
-            )
-            # Correct only upward for any IK sag; this stage never requests
-            # descent below its starting height.
-            step[2] = np.clip(
-                max(0.0, float(origin[6] - current[6])),
-                0.0,
-                0.002,
-            )
-            before_gripper = feature.gripper_feature.copy()
-            moved = True
-            actual = runner.move_cartesian_delta(
-                step, minimum_progress=0.0
-            )
-            after, _, _, _ = runner.observe(0.0)
-            if np.linalg.norm(actual) >= 5e-4:
-                samples_robot.append(actual)
-                samples_feature.append(
-                    after.gripper_feature - before_gripper
-                )
-                samples_robot[:] = samples_robot[-8:]
-                samples_feature[:] = samples_feature[-8:]
-            previous_horizontal = horizontal_norm
-
-        runner.hold_measured()
-        raise RuntimeError(
-            f"horizontal-only alignment did not converge; image={final_path}"
         )
+        print(json.dumps(report), flush=True)
+        return
     except BaseException as exc:
         execution_error = exc
+        moved = moved or bool(
+            getattr(exc, "probe_motion_attempted", False)
+        )
         if moved:
             try:
                 runner.hold_measured()
