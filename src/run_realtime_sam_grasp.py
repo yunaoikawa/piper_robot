@@ -67,7 +67,8 @@ DEFAULT_MOTION_KP = np.array([7.0, 7.0, 7.0, 5.0, 5.0, 5.0])
 DEFAULT_MOTION_KD = np.array([0.4, 0.4, 0.4, 0.3, 0.3, 0.3])
 MINIMUM_SEGMENT_IMAGE_MARGIN_PX = 10
 SAM_REQUEST_JPEG_QUALITY = 90
-MAX_DEPTH_BURST_SPAN_S = 0.50
+MAX_DEPTH_BURST_SPAN_S = 2.00
+MAX_DEPTH_BURST_COLLECTION_WAIT_S = 2.25
 MAX_POST_SAM_ROI_MEAN_ABS_DIFF = 0.04
 MAX_POST_SAM_ROI_P95_ABS_DIFF = 0.12
 MIN_FINE_GRIPPER_COARSE_IOU = 0.10
@@ -82,6 +83,13 @@ def _rgb_frame_sha256(rgb) -> str:
     frame = np.ascontiguousarray(np.asarray(rgb))
     if frame.ndim != 3 or frame.shape[2] not in (3, 4) or frame.size == 0:
         raise RuntimeError("head RGB frame has an invalid shape")
+    return _sha256_bytes(memoryview(frame).cast("B"))
+
+
+def _depth_frame_sha256(depth) -> str:
+    frame = np.ascontiguousarray(np.asarray(depth))
+    if frame.ndim != 2 or frame.size == 0:
+        raise RuntimeError("head depth frame has an invalid shape")
     return _sha256_bytes(memoryview(frame).cast("B"))
 
 
@@ -848,50 +856,153 @@ class LiveSamGrasp:
             f"latest_timestamp={newest_timestamp}"
         )
 
-    def _collect_depth_burst(self, rgb, timestamp, depth_raw):
+    def _collect_depth_burst(
+        self,
+        rgb,
+        timestamp,
+        depth_raw,
+        *,
+        diagnostics=None,
+    ):
         """Collect a short RGB-D burst before any SAM network round trip."""
 
+        if diagnostics is None:
+            diagnostics = {}
+        else:
+            diagnostics.clear()
         requested = int(self.args.depth_frames)
         if not 3 <= requested <= 120:
             raise ValueError("depth frame count must be between 3 and 120")
+        minimum_required = max(3, requested // 2)
         timestamp = float(timestamp)
         maximum_timestamp = timestamp + MAX_DEPTH_BURST_SPAN_S
         depth_frames = [np.asarray(depth_raw)]
         depth_timestamps = [timestamp]
         depth_rgb_sha256 = [_rgb_frame_sha256(rgb)]
+        depth_frame_sha256 = [_depth_frame_sha256(depth_raw)]
+        maximum_rgb_mean_abs_difference = 0.0
+        maximum_rgb_p95_abs_difference = 0.0
         native_shape = depth_frames[0].shape
-        deadline = time.monotonic() + MAX_DEPTH_BURST_SPAN_S
+        diagnostics.update(
+            {
+                "schema": "sam_pre_sam_depth_burst/v1",
+                "frames_requested": requested,
+                "minimum_frames_required": minimum_required,
+                "frames_accepted": 1,
+                "poll_count": 0,
+                "timestamp_advanced_count": 0,
+                "timestamp_not_advanced_count": 0,
+                "timestamp_beyond_span_count": 0,
+                "invalid_timestamp_count": 0,
+                "missing_rgb_count": 0,
+                "missing_depth_count": 0,
+                "depth_shape_mismatch_count": 0,
+                "repeated_rgb_digest_count": 0,
+                "repeated_depth_digest_count": 0,
+                "scene_change_rejection_count": 0,
+                "source_timestamp": timestamp,
+                "latest_observed_timestamp": timestamp,
+                "accepted_timestamps": list(depth_timestamps),
+                "accepted_rgb_sha256": list(depth_rgb_sha256),
+                "accepted_depth_sha256": list(depth_frame_sha256),
+                "maximum_timestamp_span_s": MAX_DEPTH_BURST_SPAN_S,
+                "collection_wait_limit_s": (
+                    MAX_DEPTH_BURST_COLLECTION_WAIT_S
+                ),
+            }
+        )
+        started = time.monotonic()
+        deadline = (
+            started + MAX_DEPTH_BURST_COLLECTION_WAIT_S
+        )
         while len(depth_frames) < requested and time.monotonic() < deadline:
             next_rgb, next_timestamp, next_depth = self.camera.get_latest_frame()
+            diagnostics["poll_count"] += 1
             try:
                 next_timestamp = float(next_timestamp)
             except (TypeError, ValueError):
                 next_timestamp = float("nan")
-            if np.isfinite(next_timestamp) and next_timestamp > maximum_timestamp:
-                break
-            next_digest = (
-                _rgb_frame_sha256(next_rgb)
-                if next_rgb is not None
-                else None
-            )
-            next_depth_array = (
-                None if next_depth is None else np.asarray(next_depth)
-            )
-            if (
-                next_depth_array is not None
-                and next_depth_array.shape == native_shape
-                and np.isfinite(next_timestamp)
-                and next_timestamp > depth_timestamps[-1]
-                and next_digest is not None
-                and next_digest not in depth_rgb_sha256
-            ):
-                depth_frames.append(next_depth_array)
-                depth_timestamps.append(next_timestamp)
-                depth_rgb_sha256.append(next_digest)
+            if np.isfinite(next_timestamp):
+                diagnostics["latest_observed_timestamp"] = next_timestamp
             else:
+                diagnostics["invalid_timestamp_count"] += 1
                 time.sleep(0.01)
-        if len(depth_frames) < max(3, requested // 2):
-            raise RuntimeError("insufficient fresh pre-SAM depth frames")
+                continue
+            if np.isfinite(next_timestamp) and next_timestamp > maximum_timestamp:
+                diagnostics["timestamp_beyond_span_count"] += 1
+                break
+            if next_timestamp <= depth_timestamps[-1]:
+                diagnostics["timestamp_not_advanced_count"] += 1
+                time.sleep(0.01)
+                continue
+            diagnostics["timestamp_advanced_count"] += 1
+            if next_rgb is None:
+                diagnostics["missing_rgb_count"] += 1
+                time.sleep(0.01)
+                continue
+            if next_depth is None:
+                diagnostics["missing_depth_count"] += 1
+                time.sleep(0.01)
+                continue
+            next_depth_array = np.asarray(next_depth)
+            if next_depth_array.shape != native_shape:
+                diagnostics["depth_shape_mismatch_count"] += 1
+                time.sleep(0.01)
+                continue
+            next_rgb_digest = _rgb_frame_sha256(next_rgb)
+            if next_rgb_digest in depth_rgb_sha256:
+                diagnostics["repeated_rgb_digest_count"] += 1
+            next_depth_digest = _depth_frame_sha256(next_depth_array)
+            if next_depth_digest in depth_frame_sha256:
+                diagnostics["repeated_depth_digest_count"] += 1
+                time.sleep(0.01)
+                continue
+            consistency = _compare_roi_images(rgb, next_rgb)
+            if not consistency["accepted"]:
+                diagnostics["scene_change_rejection_count"] += 1
+                diagnostics["wall_elapsed_s"] = (
+                    time.monotonic() - started
+                )
+                raise RuntimeError(
+                    "head-camera scene changed during pre-SAM depth "
+                    "burst: "
+                    f"mean={consistency['mean_abs_difference']:.4f}, "
+                    f"p95={consistency['p95_abs_difference']:.4f}"
+                )
+            maximum_rgb_mean_abs_difference = max(
+                maximum_rgb_mean_abs_difference,
+                consistency["mean_abs_difference"],
+            )
+            maximum_rgb_p95_abs_difference = max(
+                maximum_rgb_p95_abs_difference,
+                consistency["p95_abs_difference"],
+            )
+            depth_frames.append(next_depth_array)
+            depth_timestamps.append(next_timestamp)
+            depth_rgb_sha256.append(next_rgb_digest)
+            depth_frame_sha256.append(next_depth_digest)
+            diagnostics["frames_accepted"] = len(depth_frames)
+            diagnostics["accepted_timestamps"] = list(depth_timestamps)
+            diagnostics["accepted_rgb_sha256"] = list(depth_rgb_sha256)
+            diagnostics["accepted_depth_sha256"] = list(
+                depth_frame_sha256
+            )
+        diagnostics["wall_elapsed_s"] = time.monotonic() - started
+        if len(depth_frames) < minimum_required:
+            raise RuntimeError(
+                "insufficient fresh pre-SAM depth frames: "
+                f"accepted={len(depth_frames)}/{minimum_required}, "
+                f"requested={requested}, polls={diagnostics['poll_count']}, "
+                "timestamp_advanced="
+                f"{diagnostics['timestamp_advanced_count']}, "
+                "timestamp_not_advanced="
+                f"{diagnostics['timestamp_not_advanced_count']}, "
+                "repeated_rgb="
+                f"{diagnostics['repeated_rgb_digest_count']}, "
+                "repeated_depth="
+                f"{diagnostics['repeated_depth_digest_count']}, "
+                f"accepted_timestamps={depth_timestamps}"
+            )
         timestamp_span = depth_timestamps[-1] - depth_timestamps[0]
         if (
             not np.isfinite(timestamp_span)
@@ -906,9 +1017,25 @@ class LiveSamGrasp:
             depth_timestamps,
             depth_rgb_sha256,
             {
+                **diagnostics,
                 "timestamp_span_s": float(timestamp_span),
-                "maximum_timestamp_span_s": MAX_DEPTH_BURST_SPAN_S,
                 "captured_before_sam": True,
+                "source_depth_sha256": list(depth_frame_sha256),
+                "rgb_consistency": {
+                    "maximum_mean_abs_difference": (
+                        maximum_rgb_mean_abs_difference
+                    ),
+                    "maximum_p95_abs_difference": (
+                        maximum_rgb_p95_abs_difference
+                    ),
+                    "allowed_mean_abs_difference": (
+                        MAX_POST_SAM_ROI_MEAN_ABS_DIFF
+                    ),
+                    "allowed_p95_abs_difference": (
+                        MAX_POST_SAM_ROI_P95_ABS_DIFF
+                    ),
+                    "accepted": True,
+                },
             },
         )
 
@@ -1036,12 +1163,19 @@ class LiveSamGrasp:
             f"{self.sequence:03d}_head_sam_input.png",
             sam_image,
         )
+        depth_burst_diagnostics = {}
+        artifacts.failure_context["depth_burst"] = depth_burst_diagnostics
         (
             depth_frames,
             depth_timestamps,
             depth_rgb_sha256,
             depth_timing,
-        ) = self._collect_depth_burst(rgb, timestamp, depth_raw)
+        ) = self._collect_depth_burst(
+            rgb,
+            timestamp,
+            depth_raw,
+            diagnostics=depth_burst_diagnostics,
+        )
         artifacts.failure_context["depth"] = {
             **depth_timing,
             "frames_requested": int(self.args.depth_frames),
@@ -1509,6 +1643,9 @@ class LiveSamGrasp:
             camera_matrix=np.asarray(camera_matrix, dtype=np.float64),
             source_timestamps=np.asarray(depth_timestamps, dtype=np.float64),
             source_rgb_sha256=np.asarray(depth_rgb_sha256),
+            source_depth_sha256=np.asarray(
+                depth_timing["source_depth_sha256"]
+            ),
             image_timestamp=np.asarray(timestamp, dtype=np.float64),
             timestamp_span_s=np.asarray(
                 depth_timing["timestamp_span_s"], dtype=np.float64
