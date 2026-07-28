@@ -16,6 +16,10 @@ from record3d import Record3DStream
 from robot.camera_id import load_camera_map
 
 
+RECORD3D_SHUTDOWN_TIMEOUT_S = 5.0
+RECORD3D_SHUTDOWN_GRACE_S = 0.10
+
+
 def _note_exception(error: BaseException, note: str) -> None:
     add_note = getattr(error, "add_note", None)
     if add_note is not None:
@@ -40,6 +44,9 @@ class SamHeadlessRecord3DManager:
         self._latest_depth = None
         self._latest_timestamp = None
         self._capture_error = None
+        self._native_stop_lock = threading.Lock()
+        self._native_stop_count = 0
+        self._native_stopped = threading.Event()
 
     def start(self) -> None:
         """Connect to the configured Record3D head camera.
@@ -136,6 +143,10 @@ class SamHeadlessRecord3DManager:
                 self._capture_error = None
 
     def _on_stream_stopped(self) -> None:
+        with self._native_stop_lock:
+            self._native_stop_count += 1
+            if self._native_stop_count >= 2:
+                self._native_stopped.set()
         with self._lifecycle_lock:
             if not self._started:
                 return
@@ -167,18 +178,27 @@ class SamHeadlessRecord3DManager:
             )
 
     def stop(self) -> None:
-        """Disconnect once; remain safe after partial start or repeated stop."""
+        """Wait for Record3D's detached native thread before releasing it."""
 
         with self._lifecycle_lock:
             session = self.session
             self._started = False
-            self.session = None
             if session is None:
                 return
-            # Detach bound-method callbacks before disconnecting so the native
-            # stream cannot retain this manager or publish during teardown.
-            session.on_new_frame = lambda: None
-            session.on_stream_stopped = lambda: None
+            self.stop_event.set()
 
-        # Do not hold the lifecycle lock across a native teardown call.
+        # Record3D 1.4 invokes the stopped callback once synchronously here,
+        # then a second time immediately before its detached receive thread
+        # returns. Releasing the session before that second callback can
+        # segfault the interpreter.
         session.disconnect()
+        if not self._native_stopped.wait(RECORD3D_SHUTDOWN_TIMEOUT_S):
+            raise RuntimeError(
+                "head camera Record3D native thread did not stop"
+            )
+        time.sleep(RECORD3D_SHUTDOWN_GRACE_S)
+        session.on_new_frame = lambda: None
+        session.on_stream_stopped = lambda: None
+        with self._lifecycle_lock:
+            if self.session is session:
+                self.session = None

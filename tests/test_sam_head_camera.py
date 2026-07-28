@@ -44,6 +44,8 @@ class FakeRecord3DStream:
         self.disconnect_calls += 1
         if type(self).fail_disconnect:
             raise RuntimeError("synthetic disconnect failure")
+        self.on_stream_stopped()
+        self.on_stream_stopped()
 
     def get_rgb_frame(self):
         return self.rgb
@@ -212,10 +214,11 @@ class SamHeadCameraTest(unittest.TestCase):
         ):
             manager.stop()
 
-        self.assertIsNone(manager.session)
+        self.assertIs(manager.session, session)
         FakeRecord3DStream.fail_disconnect = False
         manager.stop()
-        self.assertEqual(session.disconnect_calls, 1)
+        self.assertIsNone(manager.session)
+        self.assertEqual(session.disconnect_calls, 2)
 
     def test_live_sam_uses_manager_with_clean_constructor(self):
         from src import run_realtime_sam_grasp as grasp
