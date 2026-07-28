@@ -795,19 +795,51 @@ def _probe_motion_quality(actual_xyz, requested_xyz):
         / np.dot(requested[:2], requested[:2])
     )
     minimum_norm = 0.0005
+    maximum_norm = 0.010
+    maximum_abs_vertical_drift = 0.0005
     minimum_direction_cosine = 0.80
     accepted = bool(
         actual_norm >= minimum_norm
+        and actual_norm <= maximum_norm
+        and abs(float(actual[2])) <= maximum_abs_vertical_drift
         and direction_cosine is not None
         and direction_cosine >= minimum_direction_cosine
     )
     return actual, {
         "horizontal_norm_m": actual_norm,
+        "vertical_drift_m": float(actual[2]),
         "direction_cosine": direction_cosine,
         "signed_progress_ratio": progress_ratio,
         "minimum_horizontal_norm_m": minimum_norm,
+        "maximum_horizontal_norm_m": maximum_norm,
+        "maximum_abs_vertical_drift_m": maximum_abs_vertical_drift,
         "minimum_direction_cosine": minimum_direction_cosine,
         "accepted": accepted,
+    }
+
+
+def _probe_orientation_quality(before_pose, after_pose):
+    before = np.asarray(before_pose, dtype=float)
+    after = np.asarray(after_pose, dtype=float)
+    if before.shape != (7,) or after.shape != (7,):
+        raise ValueError("probe poses must have shape (7,)")
+    if not np.all(np.isfinite(before)) or not np.all(np.isfinite(after)):
+        raise ValueError("probe poses must be finite")
+    before_norm = float(np.linalg.norm(before[:4]))
+    after_norm = float(np.linalg.norm(after[:4]))
+    if not 0.9 <= before_norm <= 1.1:
+        raise RuntimeError("pre-probe tool orientation is not a unit quaternion")
+    if not 0.9 <= after_norm <= 1.1:
+        raise RuntimeError("post-probe tool orientation is not a unit quaternion")
+    before_q = before[:4] / before_norm
+    after_q = after[:4] / after_norm
+    cosine = float(np.clip(abs(before_q @ after_q), 0.0, 1.0))
+    change_deg = float(np.degrees(2.0 * np.arccos(cosine)))
+    maximum_change_deg = 0.5
+    return {
+        "change_deg": change_deg,
+        "maximum_change_deg": maximum_change_deg,
+        "accepted": bool(change_deg <= maximum_change_deg),
     }
 
 
@@ -819,6 +851,20 @@ def _require_valid_probe_motion(quality, stage):
         raise RuntimeError(
             f"{stage} horizontal motion was below 0.5 mm"
         )
+    if (
+        float(quality["horizontal_norm_m"])
+        > float(quality["maximum_horizontal_norm_m"])
+    ):
+        raise RuntimeError(
+            f"{stage} horizontal motion exceeded 10 mm"
+        )
+    if (
+        abs(float(quality["vertical_drift_m"]))
+        > float(quality["maximum_abs_vertical_drift_m"])
+    ):
+        raise RuntimeError(
+            f"{stage} vertical drift exceeded 0.5 mm"
+        )
     direction_cosine = quality["direction_cosine"]
     if (
         direction_cosine is None
@@ -828,6 +874,16 @@ def _require_valid_probe_motion(quality, stage):
         raise RuntimeError(
             f"{stage} motion opposed or diverged from signed request: "
             f"direction cosine={direction_cosine}"
+        )
+
+
+def _require_valid_probe_orientation(quality, stage):
+    if float(quality["change_deg"]) > float(
+        quality["maximum_change_deg"]
+    ):
+        raise RuntimeError(
+            f"{stage} tool orientation changed by "
+            f"{float(quality['change_deg']):.6g} deg, exceeding 0.5 deg"
         )
 
 
@@ -987,6 +1043,10 @@ def _execute_single_horizontal_probe_body(
         right_observer, before_right_path
     )
     before_state = _right_state(runner.rpc)
+    before_pose = np.asarray(
+        before_state["pose_wxyz_xyz"], dtype=float
+    )
+    _probe_orientation_quality(before_pose, before_pose)
     before_observation = _probe_observation_record(
         before_feature,
         before_error,
@@ -1016,16 +1076,26 @@ def _execute_single_horizontal_probe_body(
     actual_immediate, immediate_motion_quality = _probe_motion_quality(
         actual_immediate, request
     )
+    post_motion_pose = np.asarray(
+        post_motion_state["pose_wxyz_xyz"], dtype=float
+    )
+    immediate_orientation_quality = _probe_orientation_quality(
+        before_pose, post_motion_pose
+    )
     motion = {
         "requested_xyz_m": request.tolist(),
         "actual_immediate_xyz_m": actual_immediate.tolist(),
         "actual_immediate_quality": immediate_motion_quality,
+        "immediate_orientation_quality": immediate_orientation_quality,
         "before_state": before_state,
         "post_motion_state": post_motion_state,
     }
     journal.mark_motion_command_completed(motion)
     _require_valid_probe_motion(
         immediate_motion_quality, "immediate"
+    )
+    _require_valid_probe_orientation(
+        immediate_orientation_quality, "immediate"
     )
     journal.mark_immediate_motion_validated(motion)
     initial_hold = verify_right_stationary(
@@ -1101,15 +1171,18 @@ def _execute_single_horizontal_probe_body(
     final_pose = np.asarray(
         hold["final_state"]["pose_wxyz_xyz"], dtype=float
     )
-    before_pose = np.asarray(before_state["pose_wxyz_xyz"], dtype=float)
     actual_settled = final_pose[4:7] - before_pose[4:7]
     actual_settled, settled_motion_quality = _probe_motion_quality(
         actual_settled, request
+    )
+    settled_orientation_quality = _probe_orientation_quality(
+        before_pose, final_pose
     )
     motion.update(
         {
             "actual_settled_xyz_m": actual_settled.tolist(),
             "actual_settled_quality": settled_motion_quality,
+            "settled_orientation_quality": settled_orientation_quality,
             "initial_hold": initial_hold,
             "hold": hold,
             "observation_xyz_shift_m": observation_xyz_shift.tolist(),
@@ -1120,6 +1193,9 @@ def _execute_single_horizontal_probe_body(
     )
     journal.update("validating_settled_motion", motion=motion)
     _require_valid_probe_motion(settled_motion_quality, "settled")
+    _require_valid_probe_orientation(
+        settled_orientation_quality, "settled"
+    )
     journal.mark_settled_motion_validated(motion)
     gripper_delta = (
         after_feature.gripper_feature - before_feature.gripper_feature

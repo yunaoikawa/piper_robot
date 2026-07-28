@@ -15,6 +15,12 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rollout.local_feature_calibration import load_probe_record
+from rollout.realtime_sam_servo import (
+    GRIPPER_COLOR_MINIMUM_MASK_FRACTION,
+    GRIPPER_COLOR_MINIMUM_PIXELS,
+    GRIPPER_CYAN_HSV_LOWER,
+    GRIPPER_CYAN_HSV_UPPER,
+)
 import src.run_staged_sam_pregrasp as staged_pregrasp
 from src.run_staged_sam_pregrasp import (
     _cleanup_staged_runtime,
@@ -289,33 +295,61 @@ def _sha256(path):
 def _head_artifacts(output_dir, sequence, *, feature):
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"{sequence:03d}_head"
+    observation_image = _artifact_image.copy()
+    gripper_mask = np.zeros(observation_image.shape[:2], dtype=np.uint8)
+    gripper_left = 50 + 4 * sequence
+    cv2.rectangle(
+        observation_image,
+        (gripper_left, 75),
+        (gripper_left + 50, 85),
+        (255, 255, 0),
+        -1,
+    )
+    cv2.rectangle(
+        gripper_mask,
+        (gripper_left, 75),
+        (gripper_left + 50, 85),
+        255,
+        -1,
+    )
     image_paths = {
         "raw_image": output_dir / f"{prefix}_raw.png",
         "sam_input_png": output_dir / f"{prefix}_sam_input.png",
         "overlay_image": output_dir / f"{sequence:03d}.png",
         "lid_mask": output_dir / f"{prefix}_lid_mask.png",
         "gripper_mask": output_dir / f"{prefix}_gripper_mask.png",
+        "gripper_feature_support_mask": (
+            output_dir / f"{prefix}_gripper_feature_support_mask.png"
+        ),
     }
-    for path in image_paths.values():
-        assert cv2.imwrite(str(path), _artifact_image)
+    for role in ("raw_image", "sam_input_png", "overlay_image"):
+        assert cv2.imwrite(
+            str(image_paths[role]), observation_image
+        )
+    assert cv2.imwrite(str(image_paths["lid_mask"]), np.zeros_like(gripper_mask))
+    assert cv2.imwrite(str(image_paths["gripper_mask"]), gripper_mask)
+    assert cv2.imwrite(
+        str(image_paths["gripper_feature_support_mask"]),
+        gripper_mask,
+    )
     request_path = output_dir / f"{prefix}_sam_request_q90.jpg"
     assert cv2.imwrite(
         str(request_path),
-        _artifact_image,
+        observation_image,
         [cv2.IMWRITE_JPEG_QUALITY, 90],
     )
     roi_input_path = output_dir / f"{prefix}_sam_roi_input.png"
-    assert cv2.imwrite(str(roi_input_path), _artifact_image)
+    assert cv2.imwrite(str(roi_input_path), observation_image)
     roi_request_path = output_dir / f"{prefix}_sam_roi_request_q90.jpg"
     assert cv2.imwrite(
         str(roi_request_path),
-        _artifact_image,
+        observation_image,
         [cv2.IMWRITE_JPEG_QUALITY, 90],
     )
     depth_path = output_dir / f"{prefix}_depth.npz"
     np.savez_compressed(
         depth_path,
-        depth_m=np.ones((240, 320), dtype=np.float32),
+        depth_m=np.full((240, 320), 0.9, dtype=np.float64),
         camera_matrix=np.eye(3),
         source_timestamps=np.array([123.0 + sequence]),
     )
@@ -361,7 +395,29 @@ def _head_artifacts(output_dir, sequence, *, feature):
             "prompt": "transparent round petri dish lid with blue cross",
             "model": "fake-sam",
         },
-        "gripper": {"prompt": "blue clamp", "model": "fake-sam"},
+        "gripper": {
+            "prompt": "blue clamp",
+            "model": "fake-sam",
+            "feature_extractor": {
+                "schema": "sam_hsv_gripper_tip/v1",
+                "semantic_source": "roi_refined_sam_mask",
+                "colour_space": "HSV",
+                "hsv_lower": list(GRIPPER_CYAN_HSV_LOWER),
+                "hsv_upper": list(GRIPPER_CYAN_HSV_UPPER),
+                "minimum_pixels": GRIPPER_COLOR_MINIMUM_PIXELS,
+                "minimum_sam_mask_fraction": (
+                    GRIPPER_COLOR_MINIMUM_MASK_FRACTION
+                ),
+                "connected_component": "largest_8_connected",
+                "tip": "longitudinal_right_terminal_percentile_99",
+                "depth_support": "same_colour_component",
+                "support_pixel_count": int(np.count_nonzero(gripper_mask)),
+                "support_artifact_role": "gripper_feature_support_mask",
+                "support_artifact_path": Path(
+                    image_paths["gripper_feature_support_mask"]
+                ).name,
+            },
+        },
         "feature": feature,
     }
     manifest = output_dir / f"{prefix}_observation.json"
@@ -538,6 +594,69 @@ class ReverseMotionRunner(FakeSingleProbeRunner):
         actual = -0.5 * np.asarray(request, dtype=float)
         self.pose[4:7] += actual
         return actual
+
+
+def _orientation_wxyz(angle_deg):
+    half_angle = np.radians(float(angle_deg)) / 2.0
+    return np.array(
+        [np.cos(half_angle), np.sin(half_angle), 0.0, 0.0]
+    )
+
+
+class ExcessImmediateHorizontalRunner(FakeSingleProbeRunner):
+    def move_cartesian_delta(self, request, minimum_progress):
+        self.moves.append(
+            (np.asarray(request, dtype=float).copy(), minimum_progress)
+        )
+        actual = np.array([0.0101, 0.0, 0.0])
+        self.pose[4:7] += actual
+        return actual
+
+
+class ImmediateVerticalDriftRunner(FakeSingleProbeRunner):
+    def move_cartesian_delta(self, request, minimum_progress):
+        self.moves.append(
+            (np.asarray(request, dtype=float).copy(), minimum_progress)
+        )
+        actual = np.asarray(request, dtype=float).copy()
+        actual[2] = 0.00051
+        self.pose[4:7] += actual
+        return actual
+
+
+class ImmediateOrientationDriftRunner(FakeSingleProbeRunner):
+    def move_cartesian_delta(self, request, minimum_progress):
+        actual = super().move_cartesian_delta(request, minimum_progress)
+        self.pose[:4] = _orientation_wxyz(0.51)
+        return actual
+
+
+class SettledPoseDriftRunner(FakeSingleProbeRunner):
+    def __init__(self, *, translation_xyz=None, orientation_deg=None):
+        super().__init__()
+        self._settled_translation = np.asarray(
+            (
+                np.zeros(3)
+                if translation_xyz is None
+                else translation_xyz
+            ),
+            dtype=float,
+        )
+        self._settled_orientation_deg = orientation_deg
+        self._pose_read_count = 0
+        self._settled_drift_applied = False
+        self.rpc.get_right_ee_pose = self._get_right_ee_pose
+
+    def _get_right_ee_pose(self):
+        self._pose_read_count += 1
+        if self._pose_read_count == 3 and not self._settled_drift_applied:
+            self.pose[4:7] += self._settled_translation
+            if self._settled_orientation_deg is not None:
+                self.pose[:4] = _orientation_wxyz(
+                    self._settled_orientation_deg
+                )
+            self._settled_drift_applied = True
+        return SimpleNamespace(parameters=lambda: self.pose.copy())
 
 
 single_runner = FakeSingleProbeRunner()
@@ -785,6 +904,126 @@ assert (
         "direction_cosine"
     ]
     == -1.0
+)
+
+
+def _assert_probe_quality_failure(
+    runner,
+    record_name,
+    expected_message,
+    *,
+    immediate_validated,
+):
+    record = _artifact_root / record_name
+    try:
+        execute_single_horizontal_probe(
+            runner,
+            FakeSingleProbeRight(),
+            "x",
+            0.006,
+            hold_window_s=0.0,
+            probe_context={"context_id_sha256": "test-context"},
+            journal_path=record,
+        )
+        raise AssertionError("unsafe probe was committed")
+    except RuntimeError as exc:
+        assert expected_message in str(exc)
+    assert len(runner.moves) == 1
+    assert np.array_equal(runner.moves[0][0], [0.006, 0.0, 0.0])
+    payload = json.loads(record.read_text())
+    assert payload["status"] == "SINGLE_X_PROBE_FAILED"
+    assert "COMMITTED" not in payload["status"]
+    assert payload["execution"]["motion_attempted"] is True
+    assert payload["execution"]["motion_command_completed"] is True
+    assert (
+        payload["execution"]["immediate_motion_validated"]
+        is immediate_validated
+    )
+    assert payload["execution"]["settled_motion_validated"] is False
+    assert payload["execution"]["failure_timing"] == (
+        "during_or_after_motion_attempt"
+    )
+    return payload
+
+
+excess_immediate_payload = _assert_probe_quality_failure(
+    ExcessImmediateHorizontalRunner(),
+    "excess_immediate_horizontal_failure.json",
+    "immediate horizontal motion exceeded 10 mm",
+    immediate_validated=False,
+)
+assert (
+    excess_immediate_payload["motion"]["actual_immediate_quality"][
+        "maximum_horizontal_norm_m"
+    ]
+    == 0.010
+)
+
+vertical_immediate_payload = _assert_probe_quality_failure(
+    ImmediateVerticalDriftRunner(),
+    "immediate_vertical_drift_failure.json",
+    "immediate vertical drift exceeded 0.5 mm",
+    immediate_validated=False,
+)
+assert (
+    vertical_immediate_payload["motion"]["actual_immediate_quality"][
+        "maximum_abs_vertical_drift_m"
+    ]
+    == 0.0005
+)
+
+orientation_immediate_payload = _assert_probe_quality_failure(
+    ImmediateOrientationDriftRunner(),
+    "immediate_orientation_drift_failure.json",
+    "immediate tool orientation changed",
+    immediate_validated=False,
+)
+assert (
+    orientation_immediate_payload["motion"][
+        "immediate_orientation_quality"
+    ]["maximum_change_deg"]
+    == 0.5
+)
+
+excess_settled_payload = _assert_probe_quality_failure(
+    SettledPoseDriftRunner(translation_xyz=[0.0043, 0.0, 0.0]),
+    "excess_settled_horizontal_failure.json",
+    "settled horizontal motion exceeded 10 mm",
+    immediate_validated=True,
+)
+assert (
+    excess_settled_payload["motion"]["actual_settled_quality"][
+        "horizontal_norm_m"
+    ]
+    > 0.010
+)
+
+vertical_settled_payload = _assert_probe_quality_failure(
+    SettledPoseDriftRunner(translation_xyz=[0.0, 0.0, 0.00051]),
+    "settled_vertical_drift_failure.json",
+    "settled vertical drift exceeded 0.5 mm",
+    immediate_validated=True,
+)
+assert (
+    abs(
+        vertical_settled_payload["motion"]["actual_settled_quality"][
+            "vertical_drift_m"
+        ]
+    )
+    > 0.0005
+)
+
+orientation_settled_payload = _assert_probe_quality_failure(
+    SettledPoseDriftRunner(orientation_deg=0.51),
+    "settled_orientation_drift_failure.json",
+    "settled tool orientation changed",
+    immediate_validated=True,
+)
+assert (
+    orientation_settled_payload["motion"][
+        "settled_orientation_quality"
+    ]["change_deg"]
+    > 0.5
 )
 
 try:
