@@ -20,6 +20,8 @@ from rollout.local_feature_calibration import (
     register_fixed_camera_view,
     verify_probe_records,
 )
+from rollout.realtime_sam_servo import gripper_cyan_tip_px
+from rollout.sam_segmentation import MaskCandidate
 
 
 def sha256(path):
@@ -45,14 +47,14 @@ assert not moved_registration.accepted
 assert "camera pose changed" in moved_registration.reason
 
 
-true_matrix = np.array([[500.0, -100.0], [80.0, 400.0]])
+true_matrix = np.array([[500.0, 0.0], [0.0, 1000.0]])
 true_uvd_matrix = np.vstack((true_matrix, [300.0, -250.0]))
 robot = np.array(
     [
-        [0.0058, 0.0001, 0.0002],
-        [-0.0001, 0.0057, -0.0001],
-        [0.0030, 0.0040, 0.0001],
-        [0.0030, -0.0040, -0.0002],
+        [0.0060, 0.0000, 0.0002],
+        [0.0000, 0.0060, -0.0001],
+        [0.0040, 0.0030, 0.0001],
+        [0.0040, -0.0030, -0.0002],
     ]
 )
 feature = robot[:, :2] @ true_matrix.T
@@ -236,27 +238,88 @@ def make_record(
         cv2.convertScaleAbs(image, alpha=0.98, beta=2),
     )
 
-    def observation_artifacts(prefix, image_path, feature_metadata):
+    def observation_artifacts(
+        prefix,
+        image_path,
+        *,
+        gripper_shift_uv,
+        gripper_depth_mm,
+        lid_feature,
+    ):
+        raw_bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        assert raw_bgr is not None
+        shift_uv = np.asarray(gripper_shift_uv, dtype=float)
+        assert shift_uv.shape == (2,)
+        assert np.allclose(shift_uv, np.rint(shift_uv), atol=1e-12)
+        shift_u, shift_v = np.rint(shift_uv).astype(int)
+        support = np.zeros(raw_bgr.shape[:2], dtype=np.uint8)
+        support[
+            120 + shift_v : 150 + shift_v,
+            90 + shift_u : 180 + shift_u,
+        ] = 255
+        gripper_mask = support.copy()
+        raw_bgr[support != 0] = (255, 190, 15)
+        assert cv2.imwrite(str(image_path), raw_bgr)
+
+        candidate = MaskCandidate(
+            mask=gripper_mask != 0,
+            box_xyxy=np.array(
+                [
+                    90 + shift_u,
+                    120 + shift_v,
+                    180 + shift_u,
+                    150 + shift_v,
+                ],
+                dtype=float,
+            ),
+            score=0.95,
+        )
+        tip_px = gripper_cyan_tip_px(candidate, raw_bgr)
+        gripper_feature = np.array(
+            [tip_px[0], tip_px[1], float(gripper_depth_mm)],
+            dtype=float,
+        )
+        lid_feature = np.asarray(lid_feature, dtype=float)
+        feature_metadata = {
+            "lid_grasp_feature": lid_feature,
+            "gripper_feature": gripper_feature,
+            "error": lid_feature - gripper_feature,
+        }
+
+        lid_mask = np.zeros(raw_bgr.shape[:2], dtype=np.uint8)
+        cv2.circle(lid_mask, (300, 220), 45, 255, thickness=-1)
+        image_artifacts = {
+            "sam_input_png": raw_bgr,
+            "sam_request_jpeg_q90": raw_bgr,
+            "sam_roi_input_png": raw_bgr,
+            "sam_roi_request_jpeg_q90": raw_bgr,
+            "overlay_image": raw_bgr,
+            "lid_mask": lid_mask,
+            "gripper_mask": gripper_mask,
+            "gripper_feature_support_mask": support,
+        }
+        paths = {"raw_image": str(image_path)}
+        for role, artifact_image in image_artifacts.items():
+            artifact_path = run / f"{prefix}_{role}.png"
+            assert cv2.imwrite(str(artifact_path), artifact_image)
+            paths[role] = str(artifact_path)
+
         depth_path = run / f"{prefix}_depth.npz"
+        depth_m = np.ones(raw_bgr.shape[:2], dtype=np.float64)
+        depth_m[support != 0] = float(gripper_depth_mm) / 1000.0
         np.savez_compressed(
             depth_path,
-            depth_m=np.ones((12, 16), dtype=np.float32),
+            depth_m=depth_m,
             camera_matrix=np.array(
-                [[100.0, 0.0, 8.0], [0.0, 100.0, 6.0], [0.0, 0.0, 1.0]]
+                [
+                    [100.0, 0.0, 240.0],
+                    [0.0, 100.0, 180.0],
+                    [0.0, 0.0, 1.0],
+                ]
             ),
             source_timestamps=np.array([100.0, 100.1]),
         )
-        paths = {
-            "raw_image": str(image_path),
-            "sam_input_png": str(image_path),
-            "sam_request_jpeg_q90": str(image_path),
-            "sam_roi_input_png": str(image_path),
-            "sam_roi_request_jpeg_q90": str(image_path),
-            "overlay_image": str(image_path),
-            "lid_mask": str(image_path),
-            "gripper_mask": str(image_path),
-            "depth_npz": str(depth_path),
-        }
+        paths["depth_npz"] = str(depth_path)
         files = {
             field: {
                 "path": Path(path).name,
@@ -276,7 +339,7 @@ def make_record(
             "run_id": f"test-run-{index}",
             "attempt_id": f"test-attempt-{prefix}",
             "files": files,
-            "image_shape_hw": list(image.shape[:2]),
+            "image_shape_hw": list(raw_bgr.shape[:2]),
             "preprocess": "identity",
             "lid": {
                 "prompt": (
@@ -287,6 +350,29 @@ def make_record(
             "gripper": {
                 "prompt": "blue clamp",
                 "model": "fake-sam",
+                "feature_extractor": {
+                    "schema": "sam_hsv_gripper_tip/v1",
+                    "semantic_source": "roi_refined_sam_mask",
+                    "colour_space": "HSV",
+                    "hsv_lower": [80, 80, 60],
+                    "hsv_upper": [115, 255, 255],
+                    "minimum_pixels": 50,
+                    "minimum_sam_mask_fraction": 0.10,
+                    "connected_component": "largest_8_connected",
+                    "tip": (
+                        "longitudinal_right_terminal_percentile_99"
+                    ),
+                    "depth_support": "same_colour_component",
+                    "support_pixel_count": int(
+                        np.count_nonzero(support)
+                    ),
+                    "support_artifact_role": (
+                        "gripper_feature_support_mask"
+                    ),
+                    "support_artifact_path": Path(
+                        paths["gripper_feature_support_mask"]
+                    ).name,
+                },
             },
             "feature": {
                 key: np.asarray(value, dtype=float).tolist()
@@ -311,7 +397,7 @@ def make_record(
             "sha256": {
                 field: sha256(path) for field, path in paths.items()
             },
-        }
+        }, gripper_feature
 
     actual = np.asarray(actual, dtype=float)
     axis = "X" if abs(actual[0]) >= abs(actual[1]) else "Y"
@@ -334,27 +420,27 @@ def make_record(
     assert relative_delta.shape == (3,)
     lid_delta = np.asarray(lid_delta, dtype=float)
     gripper_delta = relative_delta + lid_delta
-    before_gripper = np.array([100.0, 80.0, 900.0])
     before_lid = np.array([220.0, 260.0, 840.0])
-    after_gripper = before_gripper + gripper_delta
     after_lid = before_lid + lid_delta
-    before_artifacts = observation_artifacts(
+    before_artifacts, before_gripper = observation_artifacts(
         "before",
         before_image,
-        {
-            "lid_grasp_feature": before_lid,
-            "gripper_feature": before_gripper,
-            "error": before_lid - before_gripper,
-        },
+        gripper_shift_uv=(0.0, 0.0),
+        gripper_depth_mm=900.0,
+        lid_feature=before_lid,
     )
-    after_artifacts = observation_artifacts(
+    after_artifacts, after_gripper = observation_artifacts(
         "after",
         after_image,
-        {
-            "lid_grasp_feature": after_lid,
-            "gripper_feature": after_gripper,
-            "error": after_lid - after_gripper,
-        },
+        gripper_shift_uv=gripper_delta[:2],
+        gripper_depth_mm=900.0 + gripper_delta[2],
+        lid_feature=after_lid,
+    )
+    assert np.allclose(
+        after_gripper - before_gripper,
+        gripper_delta,
+        atol=1e-7,
+        rtol=0.0,
     )
     stable = stable_context()
     if context_mutation is not None:
@@ -437,12 +523,18 @@ def make_record(
                 "feature_error": (before_lid - before_gripper).tolist(),
                 "gripper_feature": before_gripper.tolist(),
                 "lid_grasp_feature": before_lid.tolist(),
-                "head_image": str(before_image),
-                "head_image_sha256": sha256(before_image),
-                "head_raw_image": str(before_image),
-                "head_raw_image_sha256": sha256(before_image),
-                "right_image": str(before_image),
-                "right_image_sha256": sha256(before_image),
+                "head_image": before_artifacts["overlay_image"],
+                "head_image_sha256": before_artifacts["sha256"][
+                    "overlay_image"
+                ],
+                "head_raw_image": before_artifacts["raw_image"],
+                "head_raw_image_sha256": before_artifacts["sha256"][
+                    "raw_image"
+                ],
+                "right_image": before_artifacts["overlay_image"],
+                "right_image_sha256": before_artifacts["sha256"][
+                    "overlay_image"
+                ],
                 "head_timestamp": 100.0,
                 "head_artifacts": before_artifacts,
             },
@@ -450,12 +542,18 @@ def make_record(
                 "feature_error": (after_lid - after_gripper).tolist(),
                 "gripper_feature": after_gripper.tolist(),
                 "lid_grasp_feature": after_lid.tolist(),
-                "head_image": str(after_image),
-                "head_image_sha256": sha256(after_image),
-                "head_raw_image": str(after_image),
-                "head_raw_image_sha256": sha256(after_image),
-                "right_image": str(after_image),
-                "right_image_sha256": sha256(after_image),
+                "head_image": after_artifacts["overlay_image"],
+                "head_image_sha256": after_artifacts["sha256"][
+                    "overlay_image"
+                ],
+                "head_raw_image": after_artifacts["raw_image"],
+                "head_raw_image_sha256": after_artifacts["sha256"][
+                    "raw_image"
+                ],
+                "right_image": after_artifacts["overlay_image"],
+                "right_image_sha256": after_artifacts["sha256"][
+                    "overlay_image"
+                ],
                 "head_timestamp": 101.0,
                 "head_artifacts": after_artifacts,
             },
@@ -493,29 +591,91 @@ def make_record(
     return path, record
 
 
+def reseal_phase_manifest(record, phase, manifest=None):
+    description = record["observation"][phase]
+    artifacts = description["head_artifacts"]
+    manifest_path = Path(artifacts["manifest"])
+    if manifest is None:
+        manifest = json.loads(manifest_path.read_text())
+    for role, entry in manifest["files"].items():
+        artifact_path = manifest_path.parent / entry["path"]
+        entry["sha256"] = sha256(artifact_path)
+        entry["bytes"] = artifact_path.stat().st_size
+    manifest_path.write_text(
+        json.dumps(
+            manifest,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
+    )
+    artifacts["files"] = copy.deepcopy(manifest["files"])
+    artifacts["feature"] = copy.deepcopy(manifest["feature"])
+    artifacts["gripper"] = copy.deepcopy(manifest["gripper"])
+    artifacts["sha256"] = {
+        role: entry["sha256"]
+        for role, entry in manifest["files"].items()
+    }
+    artifacts["sha256"]["manifest"] = sha256(manifest_path)
+    artifacts["manifest_sha256"] = artifacts["sha256"]["manifest"]
+    description["head_image_sha256"] = artifacts["sha256"][
+        "overlay_image"
+    ]
+    description["head_raw_image_sha256"] = artifacts["sha256"][
+        "raw_image"
+    ]
+    description["right_image_sha256"] = artifacts["sha256"][
+        "overlay_image"
+    ]
+
+
+def rewrite_phase_manifest(record, phase, mutation):
+    manifest_path = Path(
+        record["observation"][phase]["head_artifacts"]["manifest"]
+    )
+    manifest = json.loads(manifest_path.read_text())
+    mutation(manifest)
+    reseal_phase_manifest(record, phase, manifest)
+
+
+def write_probe_record(path, record):
+    Path(path).write_text(json.dumps(record))
+
+
+def assert_probe_rejected(path, expected_message):
+    try:
+        load_probe_record(path)
+        raise AssertionError(
+            f"tampered probe was accepted: {expected_message}"
+        )
+    except ValueError as exc:
+        assert expected_message in str(exc), str(exc)
+
+
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
     x_path, x_record = make_record(
-        root, 1, [0.0058, 0.0001, 0.0002]
+        root, 1, [0.0060, 0.0000, 0.0002]
     )
     y_path, _ = make_record(
-        root, 2, [-0.0001, 0.0057, -0.0001]
+        root, 2, [0.0000, 0.0060, -0.0001]
     )
     diagonal_path, _ = make_record(
-        root, 3, [0.0030, 0.0040, 0.0001]
+        root, 3, [0.0040, 0.0030, 0.0001]
     )
     negative_x_path, _ = make_record(
-        root, 4, [-0.0058, -0.0001, 0.0]
+        root, 4, [-0.0060, 0.0000, 0.0]
     )
     negative_y_path, _ = make_record(
-        root, 14, [-0.0001, -0.0058, 0.0]
+        root, 14, [0.0000, -0.0060, 0.0]
     )
 
     sample = load_probe_record(x_path)
-    assert np.allclose(sample.actual_xyz_m, [0.0058, 0.0001, 0.0002])
+    assert np.allclose(sample.actual_xyz_m, [0.0060, 0.0000, 0.0002])
     assert np.allclose(
         sample.feature_delta[:2],
-        true_matrix @ np.array([0.0058, 0.0001]),
+        true_matrix @ np.array([0.0060, 0.0000]),
     )
     negative_sample = load_probe_record(negative_x_path)
     assert negative_sample.requested_xyz_m[0] < 0.0
@@ -574,10 +734,10 @@ with tempfile.TemporaryDirectory() as temporary:
     assert len(held_out) == 2
     assert report.normalized_residual_rms < 1e-8
     positive_x_path, _ = make_record(
-        root, 15, [0.0054, 0.0002, 0.0]
+        root, 15, [0.0060, 0.0000, 0.0]
     )
     positive_y_path, _ = make_record(
-        root, 16, [0.0002, 0.0054, 0.0]
+        root, 16, [0.0000, 0.0060, 0.0]
     )
     same_sign, same_sign_report, _ = verify_probe_records(
         provisional, [positive_x_path, positive_y_path]
@@ -701,9 +861,9 @@ with tempfile.TemporaryDirectory() as temporary:
     bad_verification_path, _ = make_record(
         root,
         5,
-        [-0.0001, -0.0058, 0.0],
+        [0.0000, -0.0060, 0.0],
         relative_delta=-(
-            true_uvd_matrix @ np.array([-0.0001, -0.0058])
+            true_uvd_matrix @ np.array([0.0000, -0.0060])
         ),
     )
     rejected, rejected_report, _ = verify_probe_records(
@@ -724,7 +884,7 @@ with tempfile.TemporaryDirectory() as temporary:
     mismatch_path, _ = make_record(
         root,
         6,
-        [0.0001, 0.0058, 0.0],
+        [0.0000, 0.0060, 0.0],
         context_mutation=lambda stable: stable.update(
             {"head_camera_udid": "different-camera"}
         ),
@@ -736,7 +896,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert "contexts do not match" in str(exc)
 
     moved_path, _ = make_record(
-        root, 7, [0.0001, 0.0058, 0.0], image=moved_view
+        root, 7, [0.0000, 0.0060, 0.0], image=moved_view
     )
     try:
         fit_probe_records([x_path, y_path, moved_path])
@@ -748,7 +908,7 @@ with tempfile.TemporaryDirectory() as temporary:
         root,
         8,
         [0.006, 0.0, 0.0],
-        relative_delta=[1.9, 0.0],
+        relative_delta=[1.0, 0.0],
         usable=False,
     )
     try:
@@ -772,7 +932,7 @@ with tempfile.TemporaryDirectory() as temporary:
     wrong_direction_path, _ = make_record(
         root,
         9,
-        [0.0058, 0.0, 0.0],
+        [0.0060, 0.0, 0.0],
         requested_xyz_m=[-0.006, 0.0, 0.0],
     )
     try:
@@ -782,7 +942,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert "did not follow requested direction" in str(exc)
 
     derived_path, derived_record = make_record(
-        root, 10, [0.0058, 0.0, 0.0]
+        root, 10, [0.0060, 0.0, 0.0]
     )
     derived_record["observation"]["relative_feature_delta"][0] += 1.0
     derived_path.write_text(json.dumps(derived_record))
@@ -793,7 +953,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert "relative feature delta is inconsistent" in str(exc)
 
     manifest_cross_path, manifest_cross_record = make_record(
-        root, 17, [0.0058, 0.0, 0.0]
+        root, 17, [0.0060, 0.0, 0.0]
     )
     for phase in ("before", "after"):
         manifest_cross_record["observation"][phase][
@@ -810,7 +970,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert "manifest and record" in str(exc)
 
     shift_path, shift_record = make_record(
-        root, 18, [0.0058, 0.0, 0.0]
+        root, 18, [0.0060, 0.0, 0.0]
     )
     shift_record["motion"]["observation_xyz_shift_m"][0] = 0.0001
     shift_path.write_text(json.dumps(shift_record))
@@ -821,7 +981,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert "Cartesian shift is inconsistent" in str(exc)
 
     artifact_path, artifact_record = make_record(
-        root, 11, [0.0058, 0.0, 0.0]
+        root, 11, [0.0060, 0.0, 0.0]
     )
     artifact_image = Path(
         artifact_record["observation"]["before"]["head_raw_image"]
@@ -833,8 +993,168 @@ with tempfile.TemporaryDirectory() as temporary:
     except ValueError as exc:
         assert "artifact hash mismatch" in str(exc)
 
+    missing_support_path, missing_support_record = make_record(
+        root, 20, [0.0060, 0.0, 0.0]
+    )
+    rewrite_phase_manifest(
+        missing_support_record,
+        "before",
+        lambda manifest: manifest["files"].pop(
+            "gripper_feature_support_mask"
+        ),
+    )
+    write_probe_record(missing_support_path, missing_support_record)
+    assert_probe_rejected(
+        missing_support_path, "ROI observation artifacts are incomplete"
+    )
+
+    support_path, support_record = make_record(
+        root, 21, [0.0060, 0.0, 0.0]
+    )
+    support_artifacts = support_record["observation"]["before"][
+        "head_artifacts"
+    ]
+    support_image_path = Path(
+        support_artifacts["gripper_feature_support_mask"]
+    )
+    support_image = cv2.imread(
+        str(support_image_path), cv2.IMREAD_UNCHANGED
+    )
+    support_y, support_x = np.argwhere(support_image != 0)[0]
+    support_image[support_y, support_x] = 0
+    assert cv2.imwrite(str(support_image_path), support_image)
+    reseal_phase_manifest(support_record, "before")
+    write_probe_record(support_path, support_record)
+    assert_probe_rejected(
+        support_path, "recorded gripper support does not match raw BGR"
+    )
+
+    mask_path, mask_record = make_record(
+        root, 22, [0.0060, 0.0, 0.0]
+    )
+    mask_artifacts = mask_record["observation"]["before"][
+        "head_artifacts"
+    ]
+    mask_image_path = Path(mask_artifacts["gripper_mask"])
+    mask_image = cv2.imread(str(mask_image_path), cv2.IMREAD_UNCHANGED)
+    mask_image[support_y, support_x] = 0
+    assert cv2.imwrite(str(mask_image_path), mask_image)
+    reseal_phase_manifest(mask_record, "before")
+    write_probe_record(mask_path, mask_record)
+    assert_probe_rejected(mask_path, "is not a SAM-mask subset")
+
+    rgb_path, rgb_record = make_record(
+        root, 23, [0.0060, 0.0, 0.0]
+    )
+    rgb_artifacts = rgb_record["observation"]["before"][
+        "head_artifacts"
+    ]
+    raw_path = Path(rgb_artifacts["raw_image"])
+    raw_image = cv2.imread(str(raw_path), cv2.IMREAD_COLOR)
+    raw_image[support_y, support_x] = (20, 20, 20)
+    assert cv2.imwrite(str(raw_path), raw_image)
+    reseal_phase_manifest(rgb_record, "before")
+    write_probe_record(rgb_path, rgb_record)
+    assert_probe_rejected(
+        rgb_path, "recorded gripper support does not match raw BGR"
+    )
+
+    metadata_path, metadata_record = make_record(
+        root, 24, [0.0060, 0.0, 0.0]
+    )
+    rewrite_phase_manifest(
+        metadata_record,
+        "before",
+        lambda manifest: manifest["gripper"]["feature_extractor"].update(
+            {"hsv_lower": [79, 80, 60]}
+        ),
+    )
+    write_probe_record(metadata_path, metadata_record)
+    assert_probe_rejected(
+        metadata_path, "recorded gripper HSV policy is unsupported"
+    )
+
+    count_path, count_record = make_record(
+        root, 25, [0.0060, 0.0, 0.0]
+    )
+    rewrite_phase_manifest(
+        count_record,
+        "before",
+        lambda manifest: manifest["gripper"]["feature_extractor"].update(
+            {
+                "support_pixel_count": (
+                    manifest["gripper"]["feature_extractor"][
+                        "support_pixel_count"
+                    ]
+                    + 1
+                )
+            }
+        ),
+    )
+    write_probe_record(count_path, count_record)
+    assert_probe_rejected(
+        count_path, "gripper support count/fraction is inconsistent"
+    )
+
+    metadata_path_record, metadata_path_record_data = make_record(
+        root, 26, [0.0060, 0.0, 0.0]
+    )
+    rewrite_phase_manifest(
+        metadata_path_record_data,
+        "before",
+        lambda manifest: manifest["gripper"]["feature_extractor"].update(
+            {"support_artifact_path": "different-support.png"}
+        ),
+    )
+    write_probe_record(metadata_path_record, metadata_path_record_data)
+    assert_probe_rejected(
+        metadata_path_record,
+        "v4 gripper extractor metadata is unsupported",
+    )
+
+    feature_path, feature_record = make_record(
+        root, 27, [0.0060, 0.0, 0.0]
+    )
+    for phase in ("before", "after"):
+        description = feature_record["observation"][phase]
+        description["gripper_feature"][0] += 1.0
+        description["feature_error"][0] -= 1.0
+
+        def shift_manifest_feature(manifest):
+            manifest["feature"]["gripper_feature"][0] += 1.0
+            manifest["feature"]["error"][0] -= 1.0
+
+        rewrite_phase_manifest(
+            feature_record, phase, shift_manifest_feature
+        )
+    write_probe_record(feature_path, feature_record)
+    assert_probe_rejected(
+        feature_path, "gripper feature does not match cyan-tip/depth artifacts"
+    )
+
+    depth_path_record, depth_record = make_record(
+        root, 28, [0.0060, 0.0, 0.0]
+    )
+    depth_artifacts = depth_record["observation"]["before"][
+        "head_artifacts"
+    ]
+    depth_path = Path(depth_artifacts["depth_npz"])
+    with np.load(depth_path, allow_pickle=False) as archive:
+        depth_payload = {
+            key: np.asarray(archive[key]).copy()
+            for key in archive.files
+        }
+    depth_payload["depth_m"][support_image != 0] += 0.010
+    np.savez_compressed(depth_path, **depth_payload)
+    reseal_phase_manifest(depth_record, "before")
+    write_probe_record(depth_path_record, depth_record)
+    assert_probe_rejected(
+        depth_path_record,
+        "gripper feature does not match cyan-tip/depth artifacts",
+    )
+
     committed_path, committed_record = make_record(
-        root, 19, [0.0058, 0.0, 0.0]
+        root, 19, [0.0060, 0.0, 0.0]
     )
     expected_record_hash = sha256(committed_path)
     assert (

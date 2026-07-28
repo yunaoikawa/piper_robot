@@ -14,11 +14,20 @@ import cv2
 import numpy as np
 
 from rollout.realtime_sam_servo import (
+    DEPTH_SCALE,
+    GRIPPER_COLOR_MINIMUM_MASK_FRACTION,
+    GRIPPER_COLOR_MINIMUM_PIXELS,
+    GRIPPER_CYAN_HSV_LOWER,
+    GRIPPER_CYAN_HSV_UPPER,
     ReachableFeatureModel,
+    _longitudinal_tip_px,
     bounded_reachable_servo_step,
     estimate_reachable_feature_model,
+    gripper_cyan_support_mask,
+    mask_depth_median,
 )
 from rollout.sam_segmentation import PROTOCOL_VERSION
+from rollout.sam_segmentation import MaskCandidate
 from rollout.scene_semantics import estimate_image_homography
 
 
@@ -306,6 +315,194 @@ _HEAD_OBSERVATION_ARTIFACT_FIELDS = (
 )
 
 
+def _binary_mask_image(
+    path: Path,
+    expected_shape_hw: tuple[int, int],
+    *,
+    record_path: Path,
+    role: str,
+) -> np.ndarray:
+    image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if (
+        image is None
+        or image.ndim != 2
+        or image.shape != expected_shape_hw
+        or image.dtype != np.uint8
+        or not np.all((image == 0) | (image == 255))
+    ):
+        raise ValueError(
+            f"{record_path}: manifest {role} is not a binary full-frame mask"
+        )
+    return image != 0
+
+
+def _verify_v4_gripper_feature(
+    record_path: Path,
+    manifest: dict,
+    artifacts: dict[str, Path],
+    depth_m: np.ndarray,
+) -> None:
+    """Reproduce the v4 gripper feature solely from committed artifacts."""
+
+    raw_bgr = cv2.imread(str(artifacts["raw_image"]), cv2.IMREAD_COLOR)
+    if raw_bgr is None or raw_bgr.dtype != np.uint8:
+        raise ValueError(f"{record_path}: raw BGR artifact is unreadable")
+    shape_hw = tuple(int(value) for value in raw_bgr.shape[:2])
+    if manifest.get("image_shape_hw") != list(shape_hw):
+        raise ValueError(
+            f"{record_path}: observation image shape metadata is inconsistent"
+        )
+    if depth_m.shape != shape_hw:
+        raise ValueError(
+            f"{record_path}: depth and raw BGR artifact shapes disagree"
+        )
+
+    sam_mask = _binary_mask_image(
+        artifacts["gripper_mask"],
+        shape_hw,
+        record_path=record_path,
+        role="gripper_mask",
+    )
+    support = _binary_mask_image(
+        artifacts["gripper_feature_support_mask"],
+        shape_hw,
+        record_path=record_path,
+        role="gripper_feature_support_mask",
+    )
+    if np.any(support & ~sam_mask):
+        raise ValueError(
+            f"{record_path}: cyan gripper support is not a SAM-mask subset"
+        )
+
+    gripper = manifest.get("gripper")
+    extractor = (
+        gripper.get("feature_extractor")
+        if isinstance(gripper, dict)
+        else None
+    )
+    expected_keys = {
+        "schema",
+        "semantic_source",
+        "colour_space",
+        "hsv_lower",
+        "hsv_upper",
+        "minimum_pixels",
+        "minimum_sam_mask_fraction",
+        "connected_component",
+        "tip",
+        "depth_support",
+        "support_pixel_count",
+        "support_artifact_role",
+        "support_artifact_path",
+    }
+    if not isinstance(extractor, dict) or set(extractor) != expected_keys:
+        raise ValueError(
+            f"{record_path}: v4 gripper extractor metadata is incomplete"
+        )
+    if (
+        extractor.get("schema") != "sam_hsv_gripper_tip/v1"
+        or extractor.get("semantic_source") != "roi_refined_sam_mask"
+        or extractor.get("colour_space") != "HSV"
+        or extractor.get("connected_component") != "largest_8_connected"
+        or extractor.get("tip")
+        != "longitudinal_right_terminal_percentile_99"
+        or extractor.get("depth_support") != "same_colour_component"
+        or extractor.get("support_artifact_role")
+        != "gripper_feature_support_mask"
+        or extractor.get("support_artifact_path")
+        != artifacts["gripper_feature_support_mask"].name
+    ):
+        raise ValueError(
+            f"{record_path}: v4 gripper extractor metadata is unsupported"
+        )
+
+    hsv_lower = extractor.get("hsv_lower")
+    hsv_upper = extractor.get("hsv_upper")
+    minimum_pixels = extractor.get("minimum_pixels")
+    minimum_fraction = extractor.get("minimum_sam_mask_fraction")
+    if (
+        hsv_lower != list(GRIPPER_CYAN_HSV_LOWER)
+        or hsv_upper != list(GRIPPER_CYAN_HSV_UPPER)
+        or isinstance(minimum_pixels, bool)
+        or not isinstance(minimum_pixels, Integral)
+        or int(minimum_pixels) != GRIPPER_COLOR_MINIMUM_PIXELS
+        or isinstance(minimum_fraction, bool)
+        or not isinstance(minimum_fraction, (int, float))
+        or float(minimum_fraction)
+        != GRIPPER_COLOR_MINIMUM_MASK_FRACTION
+    ):
+        raise ValueError(
+            f"{record_path}: recorded gripper HSV policy is unsupported"
+        )
+
+    candidate = MaskCandidate(
+        mask=sam_mask,
+        box_xyxy=np.zeros(4, dtype=float),
+        score=1.0,
+    )
+    try:
+        recomputed_support = gripper_cyan_support_mask(
+            candidate,
+            raw_bgr,
+            hsv_lower=tuple(int(value) for value in hsv_lower),
+            hsv_upper=tuple(int(value) for value in hsv_upper),
+            minimum_pixels=int(minimum_pixels),
+            minimum_mask_fraction=float(minimum_fraction),
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"{record_path}: recorded gripper colour support is invalid"
+        ) from exc
+    if not np.array_equal(support, recomputed_support):
+        raise ValueError(
+            f"{record_path}: recorded gripper support does not match raw BGR"
+        )
+
+    support_pixels = int(np.count_nonzero(support))
+    semantic_pixels = int(np.count_nonzero(sam_mask))
+    recorded_pixels = extractor.get("support_pixel_count")
+    if (
+        isinstance(recorded_pixels, bool)
+        or not isinstance(recorded_pixels, Integral)
+        or int(recorded_pixels) != support_pixels
+        or semantic_pixels < 1
+        or support_pixels / semantic_pixels < float(minimum_fraction)
+    ):
+        raise ValueError(
+            f"{record_path}: gripper support count/fraction is inconsistent"
+        )
+
+    try:
+        tip_px = _longitudinal_tip_px(
+            support, terminal_percentile=99.0
+        )
+        gripper_depth_m = mask_depth_median(depth_m, support)
+    except ValueError as exc:
+        raise ValueError(
+            f"{record_path}: gripper feature support is insufficient"
+        ) from exc
+    derived_feature = np.array(
+        [
+            float(tip_px[0]),
+            float(tip_px[1]),
+            DEPTH_SCALE * float(gripper_depth_m),
+        ],
+        dtype=float,
+    )
+    saved_feature = _finite_vector(
+        manifest.get("feature", {}).get("gripper_feature"),
+        3,
+        f"{record_path}: manifest gripper feature",
+    )
+    if not np.allclose(
+        saved_feature, derived_feature, atol=1e-7, rtol=0.0
+    ):
+        raise ValueError(
+            f"{record_path}: gripper feature does not match "
+            "cyan-tip/depth artifacts"
+        )
+
+
 def _verify_head_observation_artifacts(
     record_path: Path, description: dict
 ) -> dict:
@@ -362,6 +559,7 @@ def _verify_head_observation_artifacts(
         or artifacts.get("files") != manifest.get("files")
         or not isinstance(manifest.get("feature"), dict)
         or artifacts.get("feature") != manifest.get("feature")
+        or artifacts.get("gripper") != manifest.get("gripper")
     ):
         raise ValueError(
             f"{record_path}: observation manifest metadata is inconsistent"
@@ -375,12 +573,14 @@ def _verify_head_observation_artifacts(
         "overlay_image",
         "lid_mask",
         "gripper_mask",
+        "gripper_feature_support_mask",
         "depth_npz",
     }
     if not required_manifest_roles.issubset(manifest["files"]):
         raise ValueError(
             f"{record_path}: ROI observation artifacts are incomplete"
         )
+    manifest_paths = {}
     for role, entry in manifest["files"].items():
         if not isinstance(role, str) or not role or not isinstance(entry, dict):
             raise ValueError(
@@ -420,6 +620,7 @@ def _verify_head_observation_artifacts(
             raise ValueError(
                 f"{record_path}: manifest {role} artifact is inconsistent"
             )
+        manifest_paths[role] = artifact
     for field in _HEAD_OBSERVATION_ARTIFACT_FIELDS:
         if field == "manifest":
             continue
@@ -465,6 +666,12 @@ def _verify_head_observation_artifacts(
         or not np.all(np.isfinite(timestamps))
     ):
         raise ValueError(f"{record_path}: depth artifact is malformed")
+    _verify_v4_gripper_feature(
+        record_path,
+        manifest,
+        manifest_paths,
+        depth_m,
+    )
     return manifest
 
 
