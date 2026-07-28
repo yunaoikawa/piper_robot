@@ -187,6 +187,12 @@ def _write_bundle(directory, image, mask, wire_request):
         wire_request[1],
         media_type="image/jpeg",
     )
+    metadata_path = writer.add_bytes(
+        "sam_request_000_wire_metadata",
+        f"{prefix}_head_sam_request_000_metadata.json",
+        wire_request[0],
+        media_type="application/json",
+    )
     writer.add_image(
         "lid_mask",
         f"{prefix}_head_lid_mask.png",
@@ -225,6 +231,10 @@ def _write_bundle(directory, image, mask, wire_request):
                 "requests": [
                     {
                         "wire_metadata": request_metadata,
+                        "wire_metadata_artifact_role": (
+                            "sam_request_000_wire_metadata"
+                        ),
+                        "wire_metadata_artifact_path": metadata_path.name,
                         "wire_metadata_sha256": hashlib.sha256(
                             wire_request[0]
                         ).hexdigest(),
@@ -274,6 +284,16 @@ def test_bundle_round_trip_and_canonical_manifest():
         assert (
             hashlib.sha256(request_path.read_bytes()).hexdigest()
             == files["sam_request_jpeg_q90"]["sha256"]
+        )
+        metadata_path = first_manifest.parent / files[
+            "sam_request_000_wire_metadata"
+        ]["path"]
+        assert metadata_path.read_bytes() == wire_request[0]
+        assert (
+            hashlib.sha256(metadata_path.read_bytes()).hexdigest()
+            == first_document["sam_transport"]["requests"][0][
+                "wire_metadata_sha256"
+            ]
         )
 
         lid_path = first_manifest.parent / files["lid_mask"]["path"]
@@ -427,9 +447,16 @@ def test_timeout_writes_failure_journal_with_exact_wire_evidence():
                 jpeg,
                 media_type="image/jpeg",
             )
+            metadata_path = writer.add_bytes(
+                "sam_request_000_wire_metadata",
+                f"{prefix}_head_sam_request_000_metadata.json",
+                metadata,
+                media_type="application/json",
+            )
             requests.append(
                 {
                     "request_artifact_path": path.name,
+                    "wire_metadata_artifact_path": metadata_path.name,
                     "wire_metadata": json.loads(metadata),
                     "wire_metadata_sha256": hashlib.sha256(
                         metadata
@@ -455,6 +482,8 @@ def test_timeout_writes_failure_journal_with_exact_wire_evidence():
         assert socket.sent is not None
         request_path = root / requests[0]["request_artifact_path"]
         assert request_path.read_bytes() == socket.sent[1]
+        metadata_path = root / requests[0]["wire_metadata_artifact_path"]
+        assert metadata_path.read_bytes() == socket.sent[0]
         assert not (root / f"{prefix}_head_observation.json").exists()
         assert journal_path.exists()
         assert not writer.reservation_path.exists()

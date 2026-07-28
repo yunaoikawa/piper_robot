@@ -418,6 +418,66 @@ def test_public_roi_dataclass_is_revalidated_at_helper_boundaries():
         )
 
 
+def test_roi_helpers_enforce_practical_resource_limits():
+    candidate = _candidate()
+    _assert_value_error(
+        "candidate count",
+        lambda: compute_candidate_roi(
+            [candidate] * 65,
+            full_shape_hw=(8, 10),
+        ),
+    )
+    _assert_value_error(
+        "dimension",
+        lambda: compute_candidate_roi(
+            [candidate],
+            full_shape_hw=(8, 10),
+            padding_px=0,
+            scale=1000,
+        ),
+    )
+
+    large_shape = (1500, 1500)
+    large_mask = np.ones(large_shape, dtype=bool)
+    large_candidate = MaskCandidate(
+        large_mask,
+        np.array([0.0, 0.0, 1500.0, 1500.0]),
+        0.9,
+    )
+    _assert_value_error(
+        "pixel count",
+        lambda: compute_candidate_roi(
+            [large_candidate],
+            full_shape_hw=large_shape,
+            padding_px=0,
+            scale=2,
+        ),
+    )
+
+    roi = compute_candidate_roi(
+        [candidate],
+        full_shape_hw=(8, 10),
+        padding_px=0,
+        scale=2,
+    )
+    fine_candidate = MaskCandidate(
+        np.ones(roi.resized_shape_hw, dtype=bool),
+        np.array([1.0, 1.0, 4.0, 4.0]),
+        0.8,
+    )
+    too_many = SegmentationResult(
+        frame_id=32,
+        source_timestamp=12.5,
+        model="test-sam",
+        inference_ms=4.0,
+        candidates=(fine_candidate,) * 65,
+    )
+    _assert_value_error(
+        "candidate count",
+        lambda: remap_segmentation_result_from_roi(too_many, roi),
+    )
+
+
 if __name__ == "__main__":
     test_compute_candidate_roi_clips_and_reports_actual_scale()
     test_roi_uses_union_of_boxes_and_masks_for_multiple_candidates()
@@ -429,4 +489,5 @@ if __name__ == "__main__":
     test_compute_roi_rejects_empty_or_malformed_candidates()
     test_extract_and_remap_reject_shape_and_finite_errors()
     test_public_roi_dataclass_is_revalidated_at_helper_boundaries()
+    test_roi_helpers_enforce_practical_resource_limits()
     print("SAM ROI helper checks passed")
