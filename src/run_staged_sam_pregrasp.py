@@ -109,26 +109,28 @@ class MotionExecutionClaim:
     def finalize(self, error: BaseException | None = None):
         if self.finalized:
             return
-        self.finalized = True
-        self.payload["finished_at_utc"] = datetime.now(
+        payload = copy.deepcopy(self.payload)
+        payload["finished_at_utc"] = datetime.now(
             timezone.utc
         ).isoformat()
         if error is None:
-            self.payload["status"] = "completed"
+            payload["status"] = "completed"
             if self.result is not None:
-                self.payload["result"] = self.result
+                payload["result"] = copy.deepcopy(self.result)
         else:
-            self.payload["status"] = "failed"
-            self.payload["failure_timing"] = (
+            payload["status"] = "failed"
+            payload["failure_timing"] = (
                 "during_or_after_motion_attempt"
-                if self.payload.get("motion_attempted") is True
+                if payload.get("motion_attempted") is True
                 else "before_motion_attempt"
             )
-            self.payload["error"] = {
+            payload["error"] = {
                 "type": type(error).__name__,
                 "message": str(error),
             }
-        _atomic_write_json(self.path, self.payload)
+        _atomic_write_json(self.path, payload)
+        self.payload = payload
+        self.finalized = True
 
 
 def claim_motion_execution(
@@ -658,6 +660,9 @@ def _probe_context(runner, anchor_head_path, anchor_artifacts=None):
         "median_inlier_error_px": registration.median_inlier_error_px,
         "maximum_corner_motion_px": registration.maximum_corner_motion_px,
     }
+    context["depth_geometry_quality"] = _geometry_quality_record(
+        runner.last_geometry_quality
+    )
     try:
         context["host_boot_id"] = (
             Path("/proc/sys/kernel/random/boot_id").read_text().strip()
@@ -709,6 +714,63 @@ def bound_horizontal_step(displacement, max_norm_m, max_axis_m):
     if norm > max_norm_m:
         step[:2] *= max_norm_m / norm
     return step
+
+
+def _geometry_quality_record(geometry_quality):
+    """Record future 3D/descent quality without gating a UV-only probe."""
+
+    def finite_nonnegative(value):
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(result) or result < 0.0:
+            return None
+        return result
+
+    if geometry_quality is None:
+        view_angle = None
+        footprint = [None, None]
+        reasons = ["depth geometry quality observation is unavailable"]
+        accepted = False
+    else:
+        view_angle = finite_nonnegative(
+            getattr(geometry_quality, "view_angle_deg", None)
+        )
+        footprint = [
+            finite_nonnegative(
+                getattr(
+                    geometry_quality,
+                    "native_pixel_footprint_x_m",
+                    None,
+                )
+            ),
+            finite_nonnegative(
+                getattr(
+                    geometry_quality,
+                    "native_pixel_footprint_y_m",
+                    None,
+                )
+            ),
+        ]
+        reasons = [
+            str(reason)
+            for reason in getattr(geometry_quality, "reasons", ())
+        ]
+        if view_angle is None or any(value is None for value in footprint):
+            reasons.append("depth geometry quality values are invalid")
+        accepted = bool(
+            getattr(geometry_quality, "accepted", False)
+            and view_angle is not None
+            and all(value is not None for value in footprint)
+        )
+    return {
+        "accepted_for_future_descent_or_3d": accepted,
+        "view_angle_deg": view_angle,
+        "native_depth_pixel_footprint_m": footprint,
+        "reasons": reasons,
+        "horizontal_uv_probe_policy": "record_only_not_motion_gate",
+    }
 
 
 def _probe_motion_quality(actual_xyz, requested_xyz):
@@ -1392,6 +1454,87 @@ class RightLidObserver:
         return geometry, candidate, str(path), float(timestamp)
 
 
+def _add_exception_note(error, message):
+    message = str(message)
+    add_note = getattr(error, "add_note", None)
+    if add_note is not None:
+        try:
+            add_note(message)
+            return
+        except BaseException:
+            pass
+    try:
+        notes = list(getattr(error, "__notes__", ()))
+        notes.append(message)
+        setattr(error, "__notes__", notes)
+    except BaseException:
+        pass
+
+
+def _cleanup_staged_runtime(
+    runner,
+    right,
+    execution_claim,
+    execution_error,
+    prior_cleanup_failures=(),
+):
+    """Stop both observers and finalize a claim without masking the primary."""
+
+    cleanup_failures = list(prior_cleanup_failures)
+    for label, callback in (
+        ("right.stop", right.stop),
+        ("runner.stop", runner.stop),
+    ):
+        try:
+            callback()
+        except BaseException as error:
+            cleanup_failures.append((label, error))
+
+    if execution_error is not None:
+        for label, error in cleanup_failures:
+            _add_exception_note(
+                execution_error,
+                f"{label} also failed during cleanup: {error!r}",
+            )
+        if execution_claim is not None:
+            try:
+                execution_claim.finalize(execution_error)
+            except BaseException as error:
+                _add_exception_note(
+                    execution_error,
+                    "execution claim finalization also failed: "
+                    f"{error!r}",
+                )
+        return None
+
+    cleanup_error = None
+    if cleanup_failures:
+        primary_label, cleanup_error = cleanup_failures[0]
+        _add_exception_note(
+            cleanup_error,
+            f"cleanup operation failed: {primary_label}",
+        )
+        for label, error in cleanup_failures[1:]:
+            _add_exception_note(
+                cleanup_error,
+                f"{label} also failed during cleanup: {error!r}",
+            )
+
+    if execution_claim is not None:
+        try:
+            execution_claim.finalize(cleanup_error)
+        except BaseException as error:
+            if cleanup_error is None:
+                cleanup_error = error
+            else:
+                _add_exception_note(
+                    cleanup_error,
+                    "execution claim finalization also failed: "
+                    f"{error!r}",
+                )
+    return cleanup_error
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--sam-endpoint", default="tcp://127.0.0.1:15563")
@@ -1466,10 +1609,18 @@ def main(argv=None):
         )
     except BaseException as exc:
         if execution_claim is not None:
-            execution_claim.finalize(exc)
+            try:
+                execution_claim.finalize(exc)
+            except BaseException as finalize_error:
+                _add_exception_note(
+                    exc,
+                    "execution claim finalization also failed: "
+                    f"{finalize_error!r}",
+                )
         raise
     moved = False
     execution_error = None
+    cleanup_failures = []
     try:
         runner.start()
         right.start()
@@ -1480,6 +1631,9 @@ def main(argv=None):
         )
         right_geometry, right_candidate, right_path, right_timestamp = (
             right.observe(require_lid=False)
+        )
+        depth_geometry_quality = _geometry_quality_record(
+            runner.last_geometry_quality
         )
         print(
             json.dumps(
@@ -1500,21 +1654,7 @@ def main(argv=None):
                     "support_plane_confidence": (
                         runner.last_target_3d.confidence
                     ),
-                    "geometry_quality": {
-                        "accepted": runner.last_geometry_quality.accepted,
-                        "view_angle_deg": (
-                            runner.last_geometry_quality.view_angle_deg
-                        ),
-                        "native_depth_pixel_footprint_mm": [
-                            runner.last_geometry_quality.native_pixel_footprint_x_m
-                            * 1000.0,
-                            runner.last_geometry_quality.native_pixel_footprint_y_m
-                            * 1000.0,
-                        ],
-                        "reasons": list(
-                            runner.last_geometry_quality.reasons
-                        ),
-                    },
+                    "depth_geometry_quality": depth_geometry_quality,
                     "proximity_warning_only_m": (
                         runner.last_proximity_m
                     ),
@@ -1539,11 +1679,6 @@ def main(argv=None):
         )
         if not args.execute_horizontal:
             return
-        if not runner.last_geometry_quality.accepted:
-            raise RuntimeError(
-                "camera geometry is too oblique for horizontal execution: "
-                + "; ".join(runner.last_geometry_quality.reasons)
-            )
         record_path = (
             Path(args.output_dir) / "probe_record.json"
         ).resolve()
@@ -1576,19 +1711,21 @@ def main(argv=None):
         if moved:
             try:
                 runner.hold_measured()
-            except Exception:
-                pass
+            except BaseException as cleanup_error:
+                cleanup_failures.append(
+                    ("runner.hold_measured", cleanup_error)
+                )
         raise
     finally:
-        try:
-            right.stop()
-        except Exception:
-            pass
-        try:
-            runner.stop()
-        finally:
-            if execution_claim is not None:
-                execution_claim.finalize(execution_error)
+        cleanup_error = _cleanup_staged_runtime(
+            runner,
+            right,
+            execution_claim,
+            execution_error,
+            cleanup_failures,
+        )
+        if execution_error is None and cleanup_error is not None:
+            raise cleanup_error
 
 
 if __name__ == "__main__":

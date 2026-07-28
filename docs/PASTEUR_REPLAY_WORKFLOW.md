@@ -211,27 +211,74 @@ Software enhancement cannot recover detail from a nearly black, quantized
 Record3D frame: zero SAM candidates is a hard observation failure, so restore
 camera exposure/lighting and rerun the observation-only command.
 
-The dry-run report also measures camera geometry at the detected lid. For this
-setup, aim the head camera within 40 degrees of the bench normal (20--30
-degrees is preferable) and make the native LiDAR pixel footprint no larger
-than 7 mm at the lid. A closer, more top-down view improves both metrics. The
-current saved scene measures about 48 degrees and 5.0 x 6.4 mm, so it is useful
-for coarse scene geometry but is rejected for autonomous motion. Repositioning
-the camera invalidates the old ICP reference; capture a new reference cloud
-after the mount is fixed.
+The dry-run report also measures depth geometry at the detected lid. For a
+future 3D approach or descent, aim the head camera within 40 degrees of the
+bench normal (20--30 degrees is preferable) and make the native LiDAR pixel
+footprint no larger than 7 mm at the lid. A closer, more top-down view improves
+both metrics. These depth/support-plane metrics are recorded in every one-shot
+horizontal probe, but they are advisory for UV-only horizontal calibration and
+do not block that single X/Y command. The current saved scene measures about
+48 degrees and 5.0 x 6.4 mm: it is rejected for a future 3D approach/descent,
+not solely for a signed UV horizontal probe. The stricter 3D/descent gate
+remains in the 3D execution path. Repositioning the camera still invalidates
+the fixed-view/ICP reference; capture a new reference cloud after the mount is
+fixed.
 
-After reviewing those images, horizontal movement must be enabled explicitly:
+The selected lid and gripper masks and boxes must also remain at least 10 px
+inside every head-image boundary. A clipped mask is a hard camera-placement
+failure, even if SAM is otherwise confident. Reframe the camera and repeat the
+observation-only run; never fit or apply a calibration from a clipped frame.
+
+After reviewing those images, authorize exactly one signed horizontal probe.
+Use a fresh operator-issued token and a unique, not-yet-existing output
+directory for every invocation:
 
 ```bash
-python src/run_staged_sam_pregrasp.py --execute-horizontal
+TOKEN='fresh-operator-approval-token-for-this-command'
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(python -c \
+  'import uuid; print(uuid.uuid4().hex)')"
+OUT="/var/tmp/pasteur-horizontal-probes/${RUN_ID}"
+test ! -e "${OUT}"
+python src/run_staged_sam_pregrasp.py \
+  --execute-horizontal \
+  --single-probe-axis x \
+  --single-probe-m +0.006 \
+  --motion-token "${TOKEN}" \
+  --output-dir "${OUT}"
 ```
 
-This state only probes and corrects robot X/Y. It cannot request a downward
-move, never commands the left arm, and never homes either arm. It stops at
-`HORIZONTAL_ALIGNED_DESCENT_PAUSED`; descent remains a separate,
-operator-confirmed stage. Joint-torque sustained exceedance remains the hard
-stop. Point-cloud proximity is configured as a warning rather than a hard
-stop in `src/configs/pasteur_lid_scene3d.json`.
+Choose `x` or `y` and use the sign of `--single-probe-m` to select the
+direction. `--execute-horizontal` without `--single-probe-axis` is rejected:
+the removed legacy path could issue several calibration and servo motions
+under one approval. One token now authorizes one horizontal command, captures
+the before/after head and right-camera evidence, writes one immutable
+`probe_record.json`, and stops. It cannot request a downward move, command the
+left arm, or home either arm. A six-joint positive torque limit is mandatory
+and its exact values are recorded with each stationary check.
+
+Build the local model offline from at least three committed, usable-for-fit
+probe records whose measured XY motions have rank 2. Keep at least two
+additional physical records completely out of the fit; the held-out set must
+independently have horizontal rank 2. Across fit plus held-out records, cover
+both signs of both X and Y. Every one of those records requires its own fresh
+token and unique output directory. A model is motion-eligible only after the
+held-out gate accepts it.
+
+Before every later solve, also require the model's current-applicability check
+to accept the exact context fingerprint, fixed-camera registration, current EE
+position and orientation, and local feature range. Repeat the clip gate on the
+current SAM observation. Any rejection means stop and capture a new local
+calibration; do not silently reuse an old image-to-motion mapping.
+
+UV is the default feature for horizontal control. Record3D depth is not used
+to authorize or calculate the UV horizontal command: its stationary noise is
+too large for that role. Synchronized, filtered depth is retained for support
+plane, clearance, and eventual descent geometry only. A failed recorded
+depth-geometry quality result therefore does not waive or replace the hard
+fixed-view ORB, SAM image/mask/ROI margin, freshness, torque, or one-shot claim
+gates. Descent remains a separate operator-confirmed stage. Point-cloud
+proximity is configured as a warning rather than a hard stop in
+`src/configs/pasteur_lid_scene3d.json`.
 
 For offline camera-shift validation, first save a reference cloud, then compare
 a later capture. `registration.accepted=false` means stop and recalibrate; it

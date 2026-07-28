@@ -5,7 +5,7 @@ import io
 import json
 import sys
 import tempfile
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +15,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rollout.local_feature_calibration import load_probe_record
+import src.run_staged_sam_pregrasp as staged_pregrasp
 from src.run_staged_sam_pregrasp import (
+    _cleanup_staged_runtime,
     bound_horizontal_step,
     claim_motion_execution,
     estimate_horizontal_displacement,
@@ -64,6 +66,211 @@ except SystemExit as exc:
     assert exc.code == 2
 assert "--execute-horizontal requires --single-probe-axis" in (
     legacy_cli_stderr.getvalue()
+)
+
+
+class FakeCleanupTarget:
+    def __init__(self, stop_error=None):
+        self.stop_error = stop_error
+        self.stop_calls = 0
+
+    def stop(self):
+        self.stop_calls += 1
+        if self.stop_error is not None:
+            raise self.stop_error
+
+
+class FakeCleanupClaim:
+    def __init__(self, finalize_error=None):
+        self.finalize_error = finalize_error
+        self.finalize_calls = []
+
+    def finalize(self, error):
+        self.finalize_calls.append(error)
+        if self.finalize_error is not None:
+            raise self.finalize_error
+
+
+primary_error = RuntimeError("primary execution failure")
+hold_error = RuntimeError("hold cleanup failure")
+right_stop_error = RuntimeError("right stop failure")
+runner_stop_error = RuntimeError("runner stop failure")
+claim_finalize_error = RuntimeError("claim finalize failure")
+cleanup_runner = FakeCleanupTarget(runner_stop_error)
+cleanup_right = FakeCleanupTarget(right_stop_error)
+cleanup_claim = FakeCleanupClaim(claim_finalize_error)
+assert (
+    _cleanup_staged_runtime(
+        cleanup_runner,
+        cleanup_right,
+        cleanup_claim,
+        primary_error,
+        [("runner.hold_measured", hold_error)],
+    )
+    is None
+)
+assert cleanup_runner.stop_calls == 1
+assert cleanup_right.stop_calls == 1
+assert cleanup_claim.finalize_calls == [primary_error]
+primary_notes = "\n".join(getattr(primary_error, "__notes__", ()))
+assert "runner.hold_measured" in primary_notes
+assert "right.stop" in primary_notes
+assert "runner.stop" in primary_notes
+assert "execution claim finalization" in primary_notes
+
+finalize_only_error = RuntimeError("finalize-only failure")
+assert (
+    _cleanup_staged_runtime(
+        FakeCleanupTarget(),
+        FakeCleanupTarget(),
+        FakeCleanupClaim(finalize_only_error),
+        None,
+    )
+    is finalize_only_error
+)
+
+main_calls = {}
+
+
+class FakeRejectedGeometryMainRunner(FakeCleanupTarget):
+    last_instance = None
+
+    def __init__(self, args):
+        super().__init__()
+        type(self).last_instance = self
+        self.args = args
+        self.start_calls = 0
+        self.last_geometry_quality = SimpleNamespace(
+            accepted=False,
+            view_angle_deg=68.0,
+            native_pixel_footprint_x_m=0.010,
+            native_pixel_footprint_y_m=0.012,
+            reasons=("future descent geometry is too oblique",),
+        )
+        self.last_target_3d = SimpleNamespace(
+            point_camera_xyz_m=np.array([0.1, 0.2, 0.8]),
+            confidence=0.25,
+        )
+        self.last_proximity_m = 0.20
+
+    def start(self):
+        self.start_calls += 1
+
+    def observe(self, clearance_m):
+        feature = SimpleNamespace()
+        return feature, np.array([2.0, 3.0, 4.0]), "head.png", 123.0
+
+    def check_scene_registration(self, reference_points):
+        return {"accepted": True}
+
+
+class FakeMainRightObserver(FakeCleanupTarget):
+    last_instance = None
+
+    def __init__(self, runner, output_dir):
+        super().__init__()
+        type(self).last_instance = self
+        self.start_calls = 0
+
+    def start(self):
+        self.start_calls += 1
+
+    def observe(self, require_lid):
+        return None, None, "right.png", 124.0
+
+
+class FakeMainClaim:
+    def __init__(self):
+        self.payload = {"token_sha256": "a" * 64}
+        self.result = None
+        self.attempts = 0
+        self.finalize_calls = []
+
+    def mark_motion_attempt(self):
+        self.attempts += 1
+
+    def set_result(self, result):
+        self.result = result
+
+    def finalize(self, error):
+        self.finalize_calls.append(error)
+
+
+fake_main_claim = FakeMainClaim()
+
+
+def fake_execute_single_probe(runner, right, axis, distance_m, **kwargs):
+    kwargs["motion_attempt_callback"]()
+    main_calls["execute"] = {
+        "axis": axis,
+        "distance_m": distance_m,
+        "geometry_accepted": runner.last_geometry_quality.accepted,
+    }
+    return {
+        "status": "SINGLE_X_PROBE_COMMITTED",
+        "quality": {"usable_for_fit": True},
+    }
+
+
+patched_main_attributes = {
+    "LiveSamGrasp": staged_pregrasp.LiveSamGrasp,
+    "RightLidObserver": staged_pregrasp.RightLidObserver,
+    "claim_motion_execution": staged_pregrasp.claim_motion_execution,
+    "execute_single_horizontal_probe": (
+        staged_pregrasp.execute_single_horizontal_probe
+    ),
+    "_required_sha256": staged_pregrasp._required_sha256,
+}
+try:
+    staged_pregrasp.LiveSamGrasp = FakeRejectedGeometryMainRunner
+    staged_pregrasp.RightLidObserver = FakeMainRightObserver
+    staged_pregrasp.claim_motion_execution = (
+        lambda *args, **kwargs: fake_main_claim
+    )
+    staged_pregrasp.execute_single_horizontal_probe = (
+        fake_execute_single_probe
+    )
+    staged_pregrasp._required_sha256 = lambda *args, **kwargs: "b" * 64
+    with redirect_stdout(io.StringIO()):
+        main(
+            [
+                "--execute-horizontal",
+                "--single-probe-axis",
+                "x",
+                "--single-probe-m",
+                "+0.006",
+                "--motion-token",
+                "advisory-depth-geometry",
+                "--output-dir",
+                "/tmp/pure-rejected-geometry-probe",
+            ]
+        )
+finally:
+    for name, value in patched_main_attributes.items():
+        setattr(staged_pregrasp, name, value)
+assert main_calls["execute"]["geometry_accepted"] is False
+assert main_calls["execute"]["axis"] == "x"
+assert fake_main_claim.attempts == 1
+assert fake_main_claim.finalize_calls == [None]
+assert FakeRejectedGeometryMainRunner.last_instance.stop_calls == 1
+assert FakeMainRightObserver.last_instance.stop_calls == 1
+invalid_geometry_record = staged_pregrasp._geometry_quality_record(
+    SimpleNamespace(
+        accepted=False,
+        view_angle_deg=float("nan"),
+        native_pixel_footprint_x_m=float("nan"),
+        native_pixel_footprint_y_m=-1.0,
+        reasons=("invalid depth-only observation",),
+    )
+)
+assert invalid_geometry_record["view_angle_deg"] is None
+assert invalid_geometry_record["native_depth_pixel_footprint_m"] == [
+    None,
+    None,
+]
+assert (
+    invalid_geometry_record["horizontal_uv_probe_policy"]
+    == "record_only_not_motion_gate"
 )
 
 
@@ -193,6 +400,16 @@ class FakeSingleProbeRunner:
         self.pose = np.array([1.0, 0.0, 0.0, 0.0, 0.3, 0.0, 0.8])
         self.output_dir = _artifact_root / "head"
         self.last_observation_artifacts = None
+        self.last_geometry_quality = SimpleNamespace(
+            accepted=False,
+            view_angle_deg=65.0,
+            native_pixel_footprint_x_m=0.009,
+            native_pixel_footprint_y_m=0.011,
+            reasons=(
+                "view angle 65.0deg > 40.0deg",
+                "depth-pixel footprint 11.0mm > 7.0mm",
+            ),
+        )
         config_dir = _artifact_root / "config"
         config_dir.mkdir(exist_ok=True)
         reference = _artifact_root / "placement_reference.png"
@@ -345,6 +562,18 @@ assert np.allclose(
     [0.0058, -0.0001, 0.0],
 )
 assert single_report["motion"]["hold"]["verified"]
+assert (
+    single_report["context"]["depth_geometry_quality"][
+        "accepted_for_future_descent_or_3d"
+    ]
+    is False
+)
+assert (
+    single_report["context"]["depth_geometry_quality"][
+        "horizontal_uv_probe_policy"
+    ]
+    == "record_only_not_motion_gate"
+)
 assert single_report["motion"]["initial_hold"]["torque_limit_nm"] == [
     1.0
 ] * 6
@@ -624,5 +853,53 @@ with tempfile.TemporaryDirectory() as temporary:
     assert attempted_payload["failure_timing"] == (
         "during_or_after_motion_attempt"
     )
+
+    cleanup_claim = claim_motion_execution(
+        "approval-004",
+        claims,
+        root / "run-cleanup-failed",
+        {"axis": "x", "distance_m": 0.006},
+    )
+    cleanup_right_error = RuntimeError("right camera stop failed")
+    cleanup_runner_error = RuntimeError("runner stop failed")
+    cleanup_failure = _cleanup_staged_runtime(
+        FakeCleanupTarget(cleanup_runner_error),
+        FakeCleanupTarget(cleanup_right_error),
+        cleanup_claim,
+        None,
+    )
+    assert cleanup_failure is cleanup_right_error
+    cleanup_payload = json.loads(cleanup_claim.path.read_text())
+    assert cleanup_payload["status"] == "failed"
+    assert cleanup_payload["error"]["message"] == str(cleanup_right_error)
+    assert "runner.stop" in "\n".join(
+        getattr(cleanup_right_error, "__notes__", ())
+    )
+
+    retry_claim = claim_motion_execution(
+        "approval-005",
+        claims,
+        root / "run-finalize-retry",
+        {"axis": "y", "distance_m": 0.006},
+    )
+    original_atomic_write = staged_pregrasp._atomic_write_json
+
+    def fail_atomic_write(path, payload):
+        raise OSError("injected claim write failure")
+
+    try:
+        staged_pregrasp._atomic_write_json = fail_atomic_write
+        try:
+            retry_claim.finalize()
+            raise AssertionError("claim write failure was swallowed")
+        except OSError as exc:
+            assert "injected claim write failure" in str(exc)
+    finally:
+        staged_pregrasp._atomic_write_json = original_atomic_write
+    assert retry_claim.finalized is False
+    assert retry_claim.payload["status"] == "claimed"
+    retry_claim.finalize()
+    assert retry_claim.finalized is True
+    assert json.loads(retry_claim.path.read_text())["status"] == "completed"
 
 print("staged SAM pregrasp checks passed")
