@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import cv2
 import mink
 import numpy as np
 
@@ -60,8 +61,30 @@ feature = scene_feature(
 )
 assert np.allclose(feature.lid_grasp_feature[2], 1060)
 assert np.allclose(feature.gripper_feature[2], 950)
-assert gripper_tip_px(right)[0] >= 188
+assert gripper_tip_px(right)[0] >= 185
 assert feature.lid_grasp_feature[0] < 200
+
+# The contact point must be stable when a few noisy extreme contour pixels
+# appear or disappear on a rotated elongated tool mask.
+rotated_tool = np.zeros((240, 320), np.uint8)
+box = cv2.boxPoints(((180, 120), (120, 28), 18)).astype(np.int32)
+cv2.fillConvexPoly(rotated_tool, box, 1)
+noisy_tool = rotated_tool.copy()
+noisy_tool[116, 244] = 1
+noisy_tool[127, 243] = 1
+rotated_candidate = MaskCandidate(
+    rotated_tool.astype(bool),
+    np.array([118, 88, 242, 152]),
+    0.9,
+)
+noisy_candidate = MaskCandidate(
+    noisy_tool.astype(bool),
+    np.array([118, 88, 245, 152]),
+    0.9,
+)
+assert np.linalg.norm(
+    gripper_tip_px(rotated_candidate) - gripper_tip_px(noisy_candidate)
+) < 1.0
 
 true_jacobian = np.array(
     [[500, 20, -80], [-30, 420, 100], [100, -50, 900]], dtype=float

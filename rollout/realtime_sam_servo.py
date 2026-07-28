@@ -113,9 +113,31 @@ def gripper_tip_px(candidate: MaskCandidate) -> np.ndarray:
     ys, xs = np.where(np.asarray(candidate.mask, dtype=bool))
     if xs.size < 50:
         raise ValueError("gripper mask is too small")
-    edge = float(np.percentile(xs, 99))
-    band_y = ys[xs >= edge - 3.0]
-    return np.array([edge, float(np.median(band_y))], dtype=float)
+    points = np.column_stack((xs, ys)).astype(float)
+    centered = points - np.mean(points, axis=0)
+    _, singular_values, axes = np.linalg.svd(
+        centered, full_matrices=False
+    )
+    if (
+        singular_values.shape != (2,)
+        or singular_values[1] <= 0.0
+        or singular_values[0] / singular_values[1] < 1.25
+    ):
+        raise ValueError("gripper mask has no stable longitudinal axis")
+
+    # A single extreme contour pixel is unstable between otherwise equivalent
+    # SAM masks, especially at the angled jaw tip. Estimate the tool axis from
+    # the whole instance and use the median of its terminal two-percent band.
+    # The head-camera task convention is that the right-arm contact end is the
+    # longitudinal endpoint with the greater image x coordinate.
+    axis = axes[0]
+    if axis[0] < 0.0:
+        axis = -axis
+    projection = centered @ axis
+    terminal = projection >= np.percentile(projection, 98.0)
+    if np.count_nonzero(terminal) < 10:
+        raise ValueError("gripper tip band is too small")
+    return np.median(points[terminal], axis=0)
 
 
 def lid_left_grasp_px(candidate: MaskCandidate, geometry: LidMaskGeometry) -> np.ndarray:
