@@ -14,10 +14,12 @@
     "record3d_device_type": 1
   },
   "head_camera_placement_reference": {
-    "capture_id": "20260728T041637.600930Z_head_front_oblique_recalibration_20260728_d765f402",
+    "capture_id": "20260728T045144.210894Z_head_front_oblique_recalibration_20260728_after_reframe_33b32ef4",
     "record3d_udid": "00008101-0015486E1412001E",
-    "rgb_path": "data/captures/pasteur/2026-07-28/20260728T041637.600930Z_head_front_oblique_recalibration_20260728_d765f402/derived/head_rgb_landscape.png",
-    "rgb_sha256": "7be3e65567e5c650d0661305c0c28b79a02ef07278c27a8b8bea3051d3987b36",
+    "rgb_path": "src/configs/placement_references/pasteur_head_20260728T045144_q90.jpg",
+    "rgb_sha256": "7f78edcb3a9a85fbf84b10d4672412164607f745cfd372ad55cecd3a544a1e12",
+    "source_rgb_sha256": "f2e8c5ab8b2a6cd42b3829d5e7ea1646b7d4c4fc50e46bb80962cec7ad32aca7",
+    "encoding": "JPEG quality 90, original 1440x1920 resolution",
     "registration_gate": "orb_identity_v1"
   },
   "temporal_depth_frames": 15,
