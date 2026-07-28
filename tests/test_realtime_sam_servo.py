@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import socket
+import struct
 import sys
 import time
 from pathlib import Path
@@ -10,7 +12,17 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.run_realtime_sam_grasp import LiveSamGrasp, TorqueStop
+from src.run_realtime_sam_grasp import (
+    DEFAULT_HOLDING_KD,
+    DEFAULT_HOLDING_KP,
+    DEFAULT_MOTION_KD,
+    DEFAULT_MOTION_KP,
+    LiveSamGrasp,
+    PIPER_MIT_MODE_CAN_ID,
+    PIPER_MIT_MODE_PAYLOAD,
+    TorqueStop,
+    refresh_right_mit_mode,
+)
 from rollout.realtime_sam_servo import (
     bounded_reachable_servo_step,
     bounded_servo_step,
@@ -106,6 +118,8 @@ class FakeMotionRPC:
         self.pose = np.array([1.0, 0.0, 0.0, 0.0, 0.3, 0.0, 0.8])
         self.commands = []
         self.holds = []
+        self.gains = []
+        self.events = []
         self.reject_at = reject_at
         self.command_delay_s = float(command_delay_s)
         self.torque = (
@@ -137,6 +151,7 @@ class FakeMotionRPC:
         self.commands.append(
             (parameters.copy(), gripper_target, float(preview_time))
         )
+        self.events.append("move")
         if self.reject_at == len(self.commands):
             return False
         self.pose = parameters
@@ -155,6 +170,18 @@ class FakeMotionRPC:
                 float(preview_time),
             )
         )
+        self.events.append("hold")
+        return True
+
+    def set_right_gain(self, kp, kd):
+        self.gains.append(
+            (
+                np.asarray(kp, dtype=float).copy(),
+                np.asarray(kd, dtype=float).copy(),
+            )
+        )
+        self.events.append("gain")
+        return True
 
 
 class LegacyNoneMotionRPC(FakeMotionRPC):
@@ -182,7 +209,70 @@ def fake_motion_runner(rpc, *, torque_samples=5):
     runner.torque_limit = np.ones(6)
     runner.torque_samples = torque_samples
     runner.joint_command = None
+    runner.holding_kp = DEFAULT_HOLDING_KP.copy()
+    runner.holding_kd = DEFAULT_HOLDING_KD.copy()
+    runner.motion_kp = DEFAULT_MOTION_KP.copy()
+    runner.motion_kd = DEFAULT_MOTION_KD.copy()
+    runner.gain_ramp_s = 0.0
+    runner.mode_settle_s = 0.0
+    runner.hold_settle_s = 0.0
+    runner.motion_mode_refresher = lambda: rpc.events.append("mode")
     return runner
+
+
+class FakeCanSocket:
+    def __init__(self, sent_length=None):
+        self.bound = None
+        self.frame = None
+        self.closed = False
+        self.sent_length = sent_length
+
+    def bind(self, address):
+        self.bound = address
+
+    def send(self, frame):
+        self.frame = bytes(frame)
+        if self.sent_length is None:
+            return len(frame)
+        return self.sent_length
+
+    def close(self):
+        self.closed = True
+
+
+can_socket = FakeCanSocket()
+factory_args = []
+
+
+def fake_socket_factory(*args):
+    factory_args.append(args)
+    return can_socket
+
+
+refresh_right_mit_mode("can_right", socket_factory=fake_socket_factory)
+assert factory_args == [(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)]
+assert can_socket.bound == ("can_right",)
+assert can_socket.closed
+can_id, dlc, payload = struct.unpack("=IB3x8s", can_socket.frame)
+assert can_id == PIPER_MIT_MODE_CAN_ID
+assert dlc == 8
+assert payload == PIPER_MIT_MODE_PAYLOAD
+
+try:
+    refresh_right_mit_mode("can_left", socket_factory=fake_socket_factory)
+    raise AssertionError("unsafe CAN interface name was accepted")
+except ValueError:
+    pass
+
+short_socket = FakeCanSocket(sent_length=8)
+try:
+    refresh_right_mit_mode(
+        "can_right", socket_factory=lambda *_: short_socket
+    )
+    raise AssertionError("short CAN write was accepted")
+except RuntimeError as exc:
+    assert "short" in str(exc)
+assert short_socket.closed
 
 
 motion_rpc = FakeMotionRPC()
@@ -196,7 +286,13 @@ assert motion_rpc.commands[0][0][6] < motion_rpc.commands[1][0][6]
 assert np.isclose(motion_rpc.commands[-1][0][6], 0.804)
 assert all(command[1] is None for command in motion_rpc.commands)
 assert all(np.isclose(command[2], 0.05) for command in motion_rpc.commands)
-assert not motion_rpc.holds
+assert len(motion_rpc.holds) == 2
+assert all(hold[1] is None for hold in motion_rpc.holds)
+first_move = motion_rpc.events.index("move")
+assert motion_rpc.events[:first_move].count("mode") == 2
+assert motion_rpc.events[-2:] == ["hold", "gain"]
+assert np.allclose(motion_rpc.gains[-1][0], DEFAULT_HOLDING_KP)
+assert np.allclose(motion_rpc.gains[-1][1], DEFAULT_HOLDING_KD)
 
 rejecting_rpc = FakeMotionRPC(reject_at=2)
 try:
@@ -247,6 +343,7 @@ high_torque = np.full(6, 2.0)
 late_torque_rpc = FakeMotionRPC(
     torque_sequence=[
         zero_torque,
+        zero_torque,
         high_torque,
         high_torque,
         high_torque,
@@ -284,6 +381,28 @@ except RuntimeError as exc:
     assert "did not follow" in str(exc)
 assert lateral_rpc.holds
 
+mode_failure_rpc = FakeMotionRPC()
+mode_failure_runner = fake_motion_runner(mode_failure_rpc)
+
+
+def fail_mode_refresh():
+    mode_failure_rpc.events.append("mode")
+    raise RuntimeError("mode refresh failed")
+
+
+mode_failure_runner.motion_mode_refresher = fail_mode_refresh
+try:
+    mode_failure_runner.move_cartesian_delta(
+        [0.0, 0.0, 0.004], preview_time=0.06
+    )
+    raise AssertionError("mode refresh failure did not stop the move")
+except RuntimeError as exc:
+    assert "mode refresh failed" in str(exc)
+assert not mode_failure_rpc.commands
+assert mode_failure_rpc.events[-2:] == ["hold", "gain"]
+assert np.allclose(mode_failure_rpc.gains[-1][0], DEFAULT_HOLDING_KP)
+assert np.allclose(mode_failure_rpc.gains[-1][1], DEFAULT_HOLDING_KD)
+
 invalid_rpc = FakeMotionRPC()
 try:
     fake_motion_runner(invalid_rpc).move_cartesian_delta(
@@ -293,5 +412,8 @@ try:
 except ValueError:
     pass
 assert not invalid_rpc.commands
+assert not invalid_rpc.holds
+assert not invalid_rpc.gains
+assert not invalid_rpc.events
 
 print("real-time SAM servo checks passed")

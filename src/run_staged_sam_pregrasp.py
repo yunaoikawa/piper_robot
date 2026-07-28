@@ -67,6 +67,50 @@ def bound_horizontal_step(displacement, max_norm_m, max_axis_m):
     return step
 
 
+def execute_single_horizontal_probe(
+    runner, right_observer, axis: str, distance_m: float
+):
+    """Execute exactly one horizontal probe, then capture both live views."""
+
+    if axis not in ("x", "y"):
+        raise ValueError("single probe axis must be x or y")
+    distance_m = float(distance_m)
+    if not np.isfinite(distance_m) or not 0.0 < distance_m <= 0.008:
+        raise ValueError("single probe distance must be within (0, 0.008] m")
+    request = np.zeros(3, dtype=float)
+    request[0 if axis == "x" else 1] = distance_m
+    actual = runner.move_cartesian_delta(
+        request, minimum_progress=0.0
+    )
+    feature, error, head_path, head_timestamp = runner.observe(0.0)
+    (
+        right_geometry,
+        right_candidate,
+        right_path,
+        right_timestamp,
+    ) = right_observer.observe(require_lid=False)
+    return {
+        "status": f"SINGLE_{axis.upper()}_PROBE_COMPLETE_AND_HELD",
+        "requested_xyz_m": request.tolist(),
+        "actual_xyz_m": np.asarray(actual, dtype=float).round(6).tolist(),
+        "feature_error": np.asarray(error, dtype=float).round(2).tolist(),
+        "head_image": head_path,
+        "head_timestamp": head_timestamp,
+        "right_lid_center_px": (
+            right_geometry.center_px.round(2).tolist()
+            if right_geometry is not None
+            else None
+        ),
+        "right_lid_score": (
+            float(right_candidate.score)
+            if right_candidate is not None
+            else None
+        ),
+        "right_image": right_path,
+        "right_timestamp": right_timestamp,
+    }
+
+
 class RightLidObserver:
     """Independent live SAM check from the right wrist camera."""
 
@@ -228,11 +272,19 @@ def main():
     parser.add_argument("--horizontal-tolerance-m", type=float, default=0.006)
     parser.add_argument("--max-iters", type=int, default=16)
     parser.add_argument(
+        "--single-probe-axis",
+        choices=("x", "y"),
+        help="execute exactly one horizontal probe, capture both views, stop",
+    )
+    parser.add_argument("--single-probe-m", type=float, default=0.006)
+    parser.add_argument(
         "--execute-horizontal",
         action="store_true",
         help="allow right-arm horizontal motion; default is camera-only dry-run",
     )
     args = parser.parse_args()
+    if args.single_probe_axis and not args.execute_horizontal:
+        parser.error("--single-probe-axis requires --execute-horizontal")
 
     # LiveSamGrasp owns camera, SAM, torque monitoring, and right-only RPC.
     args.control_space = "cartesian"
@@ -260,9 +312,13 @@ def main():
             json.dumps(
                 {
                     "mode": (
-                        "HORIZONTAL_ONLY"
-                        if args.execute_horizontal
-                        else "DRY_RUN_NO_MOTION"
+                        f"SINGLE_PROBE_{args.single_probe_axis.upper()}"
+                        if args.single_probe_axis
+                        else (
+                            "HORIZONTAL_ONLY"
+                            if args.execute_horizontal
+                            else "DRY_RUN_NO_MOTION"
+                        )
                     ),
                     "feature_error": raw_error.round(2).tolist(),
                     "target_camera_xyz_m": (
@@ -315,6 +371,16 @@ def main():
                 "camera geometry is too oblique for horizontal execution: "
                 + "; ".join(runner.last_geometry_quality.reasons)
             )
+        if args.single_probe_axis:
+            moved = True
+            report = execute_single_horizontal_probe(
+                runner,
+                right,
+                args.single_probe_axis,
+                args.single_probe_m,
+            )
+            print(json.dumps(report), flush=True)
+            return
         origin = np.asarray(
             runner.rpc.get_right_ee_pose().parameters(), dtype=float
         )

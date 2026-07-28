@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
+import struct
 import sys
 import threading
 import time
@@ -46,6 +48,48 @@ class TorqueStop(RuntimeError):
     pass
 
 
+PIPER_MIT_MODE_CAN_ID = 0x151
+PIPER_MIT_MODE_PAYLOAD = bytes.fromhex("010400AD00000000")
+DEFAULT_HOLDING_KP = np.full(6, 2.5)
+DEFAULT_HOLDING_KD = np.full(6, 0.2)
+DEFAULT_MOTION_KP = np.array([7.0, 7.0, 7.0, 5.0, 5.0, 5.0])
+DEFAULT_MOTION_KD = np.array([0.4, 0.4, 0.4, 0.3, 0.3, 0.3])
+
+
+def refresh_right_mit_mode(
+    can_interface: str = "can_right", socket_factory=socket.socket
+):
+    """Reassert Piper's right-arm MIT mode without reset, enable, or homing."""
+
+    if can_interface != "can_right":
+        raise ValueError("MIT mode refresh is restricted to can_right")
+    frame = struct.pack(
+        "=IB3x8s",
+        PIPER_MIT_MODE_CAN_ID,
+        len(PIPER_MIT_MODE_PAYLOAD),
+        PIPER_MIT_MODE_PAYLOAD,
+    )
+    can_socket = socket_factory(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
+    try:
+        can_socket.bind((can_interface,))
+        sent = can_socket.send(frame)
+    finally:
+        can_socket.close()
+    if sent != len(frame):
+        raise RuntimeError(
+            f"short right MIT mode CAN write: {sent}/{len(frame)} bytes"
+        )
+
+
+def _gain_vector(values, name: str, maximum) -> np.ndarray:
+    gain = np.asarray(values, dtype=float)
+    if gain.shape != (6,) or not np.all(np.isfinite(gain)):
+        raise ValueError(f"{name} must contain six finite values")
+    if np.any(gain < 0.0) or np.any(gain > np.asarray(maximum, dtype=float)):
+        raise ValueError(f"{name} is outside the tested safe range")
+    return gain
+
+
 class LiveSamGrasp:
     def __init__(self, args):
         self.args = args
@@ -60,6 +104,45 @@ class LiveSamGrasp:
             torque_cfg["thresholds"]["right"], dtype=float
         )
         self.torque_samples = int(torque_cfg["consecutive_samples"])
+        self.holding_kp = _gain_vector(
+            getattr(args, "holding_kp", DEFAULT_HOLDING_KP),
+            "holding kp",
+            DEFAULT_MOTION_KP,
+        )
+        self.holding_kd = _gain_vector(
+            getattr(args, "holding_kd", DEFAULT_HOLDING_KD),
+            "holding kd",
+            DEFAULT_MOTION_KD,
+        )
+        self.motion_kp = _gain_vector(
+            getattr(args, "motion_kp", DEFAULT_MOTION_KP),
+            "motion kp",
+            DEFAULT_MOTION_KP,
+        )
+        self.motion_kd = _gain_vector(
+            getattr(args, "motion_kd", DEFAULT_MOTION_KD),
+            "motion kd",
+            DEFAULT_MOTION_KD,
+        )
+        self.gain_ramp_s = float(getattr(args, "gain_ramp_s", 1.0))
+        self.mode_settle_s = float(getattr(args, "mode_settle_s", 0.5))
+        self.hold_settle_s = float(getattr(args, "hold_settle_s", 0.25))
+        preparation_times = np.array(
+            [self.gain_ramp_s, self.mode_settle_s, self.hold_settle_s]
+        )
+        if (
+            not np.all(np.isfinite(preparation_times))
+            or np.any(preparation_times < 0.0)
+            or self.gain_ramp_s > 5.0
+            or max(self.mode_settle_s, self.hold_settle_s) > 2.0
+        ):
+            raise ValueError("motion preparation times are outside safe bounds")
+        right_can_interface = str(
+            getattr(args, "right_can_interface", "can_right")
+        )
+        self.motion_mode_refresher = lambda: refresh_right_mit_mode(
+            right_can_interface
+        )
         self.frame_id = 1000
         self.sequence = 0
         self.previous_lid_center = None
@@ -371,6 +454,130 @@ class LiveSamGrasp:
                 )
             time.sleep(0.05)
 
+    @staticmethod
+    def _wait_with_torque(
+        duration_s, check_torque, stage, check_state=None
+    ):
+        if duration_s <= 0.0:
+            return
+        deadline = time.monotonic() + duration_s
+        while True:
+            check_torque(stage)
+            if check_state is not None:
+                check_state(stage)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                return
+            time.sleep(min(0.05, remaining))
+
+    def _prepare_cartesian_motion(self, check_torque):
+        # First latch the measured joints. Reasserting MIT mode can otherwise
+        # activate a stale target left by an earlier client.
+        def measured_state():
+            q = np.asarray(
+                self.rpc.get_right_joint_positions(), dtype=float
+            )
+            xyz = np.asarray(
+                self.rpc.get_right_ee_pose().translation(), dtype=float
+            )
+            if (
+                q.shape != (6,)
+                or xyz.shape != (3,)
+                or not np.all(np.isfinite(q))
+                or not np.all(np.isfinite(xyz))
+            ):
+                raise RuntimeError("invalid measured right-arm state")
+            return q, xyz
+
+        start_q, start_xyz = measured_state()
+
+        def check_preparation_drift(stage):
+            q, xyz = measured_state()
+            if (
+                np.max(np.abs(q - start_q)) > 0.02
+                or np.linalg.norm(xyz - start_xyz) > 0.002
+            ):
+                raise RuntimeError(
+                    f"unexpected right-arm motion {stage}"
+                )
+
+        self.hold_measured()
+        self.rpc.set_right_gain(self.holding_kp, self.holding_kd)
+        self._wait_with_torque(
+            self.hold_settle_s,
+            check_torque,
+            "while latching measured right pose",
+            check_preparation_drift,
+        )
+        check_preparation_drift("while latching measured pose")
+        self.motion_mode_refresher()
+        self._wait_with_torque(
+            self.mode_settle_s,
+            check_torque,
+            "after right MIT mode refresh",
+            check_preparation_drift,
+        )
+        check_preparation_drift("after MIT mode refresh")
+
+        if self.gain_ramp_s <= 0.0:
+            self.rpc.set_right_gain(self.motion_kp, self.motion_kd)
+            check_torque("after right motion gain")
+            check_preparation_drift("after right motion gain")
+        else:
+            steps = max(1, int(np.ceil(self.gain_ramp_s / 0.1)))
+            step_duration = self.gain_ramp_s / steps
+            for index in range(steps):
+                # Re-latch the measured pose before every stiffness increase.
+                # If the arm yielded under low gain, this avoids pulling it
+                # back toward a stale target as gain rises.
+                self.hold_measured()
+                alpha = (index + 1) / steps
+                kp = (
+                    self.holding_kp * (1.0 - alpha)
+                    + self.motion_kp * alpha
+                )
+                kd = (
+                    self.holding_kd * (1.0 - alpha)
+                    + self.motion_kd * alpha
+                )
+                self.rpc.set_right_gain(kp, kd)
+                self._wait_with_torque(
+                    step_duration,
+                    check_torque,
+                    f"during right gain ramp {index + 1}/{steps}",
+                    check_preparation_drift,
+                )
+                check_preparation_drift(
+                    f"during gain ramp {index + 1}/{steps}"
+                )
+
+        # The Piper V2 MIT examples reassert 0x151 immediately before each
+        # motion command. The first refresh above verifies a stable hold; this
+        # second one removes any ambiguity before the first non-zero target.
+        self.motion_mode_refresher()
+        check_torque("after final right MIT mode refresh")
+        check_preparation_drift("after final MIT mode refresh")
+
+    def _finish_cartesian_motion(self):
+        # Hold before lowering stiffness so a completed or interrupted move
+        # cannot resume toward an old interpolator waypoint.
+        hold_error = None
+        try:
+            self.hold_measured()
+        except BaseException as exc:
+            hold_error = exc
+        try:
+            self.rpc.set_right_gain(self.holding_kp, self.holding_kd)
+        except BaseException as gain_error:
+            if hold_error is not None:
+                hold_error.add_note(
+                    f"holding-gain restoration also failed: {gain_error!r}"
+                )
+            else:
+                raise
+        if hold_error is not None:
+            raise hold_error
+
     def move_cartesian_delta(
         self, delta_xyz, preview_time=None, minimum_progress=None
     ):
@@ -379,9 +586,8 @@ class LiveSamGrasp:
         if minimum_progress is None:
             minimum_progress = self.args.minimum_progress
         preview_time = float(preview_time)
-        if preview_time <= 0.0:
-            raise ValueError("preview_time must be positive")
-        before = np.asarray(self.rpc.get_right_ee_pose().parameters(), dtype=float)
+        if not np.isfinite(preview_time) or not 0.0 < preview_time <= 10.0:
+            raise ValueError("preview_time must be within (0, 10] seconds")
         requested = np.asarray(delta_xyz, dtype=float).reshape(3)
         if not np.all(np.isfinite(requested)):
             raise ValueError("Cartesian delta must contain three finite values")
@@ -394,7 +600,6 @@ class LiveSamGrasp:
         steps = max(1, int(np.ceil(preview_time * command_rate_hz)))
         period_s = preview_time / steps
         command_preview_s = 0.05
-        started = time.monotonic()
         strikes = 0
 
         def check_torque(stage):
@@ -421,7 +626,16 @@ class LiveSamGrasp:
                     f"{np.round(torque, 3).tolist()}"
                 )
 
+        motion_error = None
         try:
+            self._prepare_cartesian_motion(check_torque)
+            before = np.asarray(
+                self.rpc.get_right_ee_pose().parameters(), dtype=float
+            )
+            # Preparation deliberately takes longer than a short probe.  Start
+            # the streaming deadline only after the arm is stably in MIT mode
+            # with the motion gains applied.
+            started = time.monotonic()
             for index in range(steps):
                 check_torque("during streamed move")
 
@@ -455,11 +669,22 @@ class LiveSamGrasp:
                     break
                 time.sleep(min(0.05, remaining))
             check_torque("after streamed move settled")
-        except BaseException:
-            self.hold_measured()
+        except BaseException as exc:
+            motion_error = exc
             raise
+        finally:
+            try:
+                self._finish_cartesian_motion()
+            except BaseException as cleanup_error:
+                if motion_error is None:
+                    raise
+                motion_error.add_note(
+                    f"right-arm cleanup also failed: {cleanup_error!r}"
+                )
 
-        after = np.asarray(self.rpc.get_right_ee_pose().parameters(), dtype=float)
+        after = np.asarray(
+            self.rpc.get_right_ee_pose().parameters(), dtype=float
+        )
         actual = after[4:7] - before[4:7]
         if np.linalg.norm(requested) > 0.001:
             progress = float(
@@ -467,7 +692,6 @@ class LiveSamGrasp:
                 / np.dot(requested, requested)
             )
             if progress < minimum_progress:
-                self.hold_measured()
                 raise RuntimeError(
                     f"right arm did not follow request: {progress:.2f}"
                 )
@@ -754,6 +978,22 @@ def main():
     parser.add_argument("--preview-time", type=float, default=1.2)
     parser.add_argument("--xy-tolerance-px", type=float, default=6.0)
     parser.add_argument("--depth-tolerance-mm", type=float, default=8.0)
+    parser.add_argument("--right-can-interface", default="can_right")
+    parser.add_argument(
+        "--holding-kp", type=float, nargs=6, default=DEFAULT_HOLDING_KP
+    )
+    parser.add_argument(
+        "--holding-kd", type=float, nargs=6, default=DEFAULT_HOLDING_KD
+    )
+    parser.add_argument(
+        "--motion-kp", type=float, nargs=6, default=DEFAULT_MOTION_KP
+    )
+    parser.add_argument(
+        "--motion-kd", type=float, nargs=6, default=DEFAULT_MOTION_KD
+    )
+    parser.add_argument("--gain-ramp-s", type=float, default=1.0)
+    parser.add_argument("--mode-settle-s", type=float, default=0.5)
+    parser.add_argument("--hold-settle-s", type=float, default=0.25)
     parser.add_argument("--execute-pregrasp", action="store_true")
     args = parser.parse_args()
 
