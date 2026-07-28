@@ -26,7 +26,6 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robot.rpc import RPCClient
-from rollout.camera import CameraFeedManager
 from rollout.realtime_sam_servo import (
     GRIPPER_COLOR_MINIMUM_MASK_FRACTION,
     GRIPPER_COLOR_MINIMUM_PIXELS,
@@ -40,6 +39,7 @@ from rollout.realtime_sam_servo import (
     render_scene,
     scene_feature,
 )
+from rollout.sam_head_camera import SamHeadlessRecord3DManager
 from rollout.sam_segmentation import SamSegmentationClient
 from rollout.sam_segmentation import (
     choose_lid_candidate,
@@ -783,9 +783,7 @@ class LiveSamGrasp:
         self.last_head_rgb_sha256 = None
         try:
             self.rpc = RPCClient("localhost", 8081, timeout_ms=10000)
-            self.camera = CameraFeedManager(
-                self.stop_event, display=False, head_stream=False
-            )
+            self.camera = SamHeadlessRecord3DManager(self.stop_event)
             self.sam = SamSegmentationClient(
                 args.sam_endpoint, timeout_ms=20000
             )
