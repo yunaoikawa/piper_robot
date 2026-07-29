@@ -62,10 +62,48 @@
   "support_height_tolerance_m": 0.008,
   "support_minimum_area_fraction": 0.003,
   "support_collision_thickness_m": 0.025,
+  "support_visual_thickness_m": 0.001,
+  "support_collision_tile_size_px": 8,
+  "support_collision_tile_minimum_points": 4,
   "esdf_voxel_size_m": 0.02,
   "esdf_maximum_voxels": 2000000,
   "unknown_minimum_area_fraction": 0.01,
+  "observed_surface_objects": ["microscope"],
+  "observed_object_collision_voxel_size_m": 0.02,
   "robot_model": "robot/arm/mujoco/bimanual_piper_table.xml",
+  "robot_end_effector": {
+    "variant": "nyu_gripper_body",
+    "mesh": "robot/arm/mujoco/assets/gripper_body.stl",
+    "mesh_scale": [0.001, 0.001, 0.001],
+    "rgba": [1.0, 1.0, 1.0, 1.0],
+    "attachment_pos_m": [0.0275, 0.01875, 0.0798],
+    "attachment_euler_rad": [3.14, -1.57, 0.0],
+    "ee_site_pos_m": [0.0, 0.0, 0.1],
+    "bodies": ["left/gripper_base", "right/gripper_base"],
+    "required_visual_geoms": [
+      "left/nyu_gripper_visual",
+      "right/nyu_gripper_visual"
+    ],
+    "forbidden_bodies": [
+      "left/link7",
+      "left/link8",
+      "right/link7",
+      "right/link8"
+    ]
+  },
+  "primary_robot_pose": "home",
+  "robot_environment_penetration_tolerance_m": 0.001,
+  "robot_alignment_refinement": {
+    "enabled": true,
+    "cad_vertex_sample_stride": 8,
+    "maximum_observed_points": 2500,
+    "residual_clip_m": 0.08,
+    "maximum_translation_m": 0.15,
+    "allow_vertical_translation": false,
+    "maximum_yaw_delta_rad": 0.35,
+    "maximum_evaluations": 80,
+    "minimum_median_improvement_fraction": 0.2
+  },
   "robot_placement": {
     "semantic_name": "robot",
     "anchor_map": "anchor_xyz_level_m",

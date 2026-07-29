@@ -359,6 +359,69 @@ def discover_supports(
     return supports
 
 
+def support_collision_boxes(
+    support: dict,
+    *,
+    vertices: np.ndarray,
+    valid: np.ndarray,
+    shape_hw: tuple[int, int],
+    tile_size_px: int = 8,
+    minimum_points: int = 4,
+) -> list[dict]:
+    """Approximate an observed support mask without filling its occluded holes.
+
+    A single world-space AABB is unsafe here: an arm standing through a cut-out
+    or an occluded gap disappears when the non-rectangular RGB-D support mask
+    is replaced by its bounding rectangle.  Small image-space tiles retain
+    those holes while remaining cheap box collision geometry for MuJoCo/ESDF.
+    """
+
+    _organized_shape(len(vertices), shape_hw)
+    tile = int(tile_size_px)
+    if tile < 2:
+        raise ValueError("tile_size_px must be at least 2")
+    minimum = int(minimum_points)
+    if minimum < 1:
+        raise ValueError("minimum_points must be positive")
+    mask = np.asarray(support["mask"], dtype=bool)
+    if mask.shape != shape_hw:
+        raise ValueError("support mask shape does not match organized RGB-D")
+    points = np.asarray(vertices, dtype=float).reshape(*shape_hw, 3)
+    valid_image = np.asarray(valid, dtype=bool).reshape(shape_hw)
+    usable = mask & valid_image
+    rows, columns = np.nonzero(usable)
+    if not len(rows):
+        return []
+    result = []
+    row_start = int(rows.min() // tile * tile)
+    column_start = int(columns.min() // tile * tile)
+    for top in range(row_start, int(rows.max()) + 1, tile):
+        for left in range(column_start, int(columns.max()) + 1, tile):
+            selected_mask = usable[top : top + tile, left : left + tile]
+            if int(np.count_nonzero(selected_mask)) < minimum:
+                continue
+            selected = points[top : top + tile, left : left + tile][
+                selected_mask
+            ]
+            lower, upper = np.quantile(selected[:, :2], [0.02, 0.98], axis=0)
+            size = upper - lower
+            if np.any(~np.isfinite(size)) or np.any(size <= 1e-5):
+                continue
+            result.append(
+                {
+                    "center_xy_m": ((lower + upper) / 2).tolist(),
+                    "size_xy_m": np.maximum(size, 0.002).tolist(),
+                    "source_pixel_bounds_xyxy": [
+                        left,
+                        top,
+                        min(left + tile, shape_hw[1]),
+                        min(top + tile, shape_hw[0]),
+                    ],
+                }
+            )
+    return result
+
+
 def choose_support(points: np.ndarray, supports: list[dict]) -> dict | None:
     center = np.median(points, axis=0)
     lower_object, upper_object = np.quantile(points[:, :2], [0.05, 0.95], axis=0)
@@ -577,33 +640,57 @@ def conservative_scene_esdf(
     completed = list(objects)
     for support in supports:
         support_thickness = 0.025
-        lower_xy, upper_xy = np.asarray(support["bounds_xy_m"], dtype=float)
-        completed.append(
-            {
-                "geometry": {
-                    "center_xyz_m": [
-                        *((lower_xy + upper_xy) / 2).tolist(),
-                        float(support["height_m"]) - support_thickness / 2,
-                    ],
-                    "size_xyz_m": [
-                        *(upper_xy - lower_xy).tolist(),
-                        support_thickness,
-                    ],
+        boxes = support.get("collision_boxes")
+        if not boxes:
+            lower_xy, upper_xy = np.asarray(
+                support["bounds_xy_m"], dtype=float
+            )
+            boxes = [
+                {
+                    "center_xy_m": ((lower_xy + upper_xy) / 2).tolist(),
+                    "size_xy_m": (upper_xy - lower_xy).tolist(),
                 }
-            }
-        )
+            ]
+        for box in boxes:
+            completed.append(
+                {
+                    "geometry": {
+                        "center_xyz_m": [
+                            *box["center_xy_m"],
+                            float(support["height_m"])
+                            - support_thickness / 2,
+                        ],
+                        "size_xyz_m": [
+                            *box["size_xy_m"],
+                            support_thickness,
+                        ],
+                    }
+                }
+            )
     for record in completed:
-        geometry = record["geometry"]
-        center = np.asarray(geometry["center_xyz_m"], dtype=float)
-        half = np.asarray(geometry["size_xyz_m"], dtype=float) / 2
-        low_index = indices(center - half)
-        high_index = indices(center + half)
-        slices = tuple(
-            slice(int(low_index[axis]), int(high_index[axis]) + 1)
-            for axis in range(3)
+        collision_boxes = record.get("collision_boxes")
+        geometries = (
+            [
+                {
+                    "center_xyz_m": item["center_xyz_m"],
+                    "size_xyz_m": item["size_xyz_m"],
+                }
+                for item in collision_boxes
+            ]
+            if collision_boxes
+            else [record["geometry"]]
         )
-        occupied[slices] = True
-        observed[slices] = True
+        for geometry in geometries:
+            center = np.asarray(geometry["center_xyz_m"], dtype=float)
+            half = np.asarray(geometry["size_xyz_m"], dtype=float) / 2
+            low_index = indices(center - half)
+            high_index = indices(center + half)
+            slices = tuple(
+                slice(int(low_index[axis]), int(high_index[axis]) + 1)
+                for axis in range(3)
+            )
+            occupied[slices] = True
+            observed[slices] = True
     distance = distance_transform_edt(~occupied) * voxel
     distance[occupied] = -voxel
     unknown = ~observed

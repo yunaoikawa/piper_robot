@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 import cv2
 import mujoco
@@ -12,7 +13,9 @@ from rollout.daily_scene import DailySceneStore
 from rollout.semantic_scene_pipeline import MaskObservation
 from src.build_semantic_scene import (
     _canonicalize_mesh,
+    _install_configured_end_effectors,
     _position_articulated_model,
+    _robot_environment_penetrations,
     build,
 )
 
@@ -293,6 +296,69 @@ def test_canonical_axis_and_shared_base_height_are_applied_together(tmp_path):
     assert report["raw_sam_base_height_m"]["left/base_link"] != report[
         "raw_sam_base_height_m"
     ]["right/base_link"]
+
+
+def test_nyu_gripper_is_pinned_and_stock_fingers_are_rejected():
+    root_dir = Path(__file__).resolve().parents[1]
+    tree = ET.parse(
+        root_dir / "robot/arm/mujoco/bimanual_piper_table.xml"
+    )
+    configuration = {
+        "variant": "nyu_gripper_body",
+        "mesh": str(
+            root_dir / "robot/arm/mujoco/assets/gripper_body.stl"
+        ),
+        "bodies": ["left/gripper_base", "right/gripper_base"],
+        "required_visual_geoms": [
+            "left/nyu_gripper_visual",
+            "right/nyu_gripper_visual",
+        ],
+        "forbidden_bodies": [
+            "left/link7",
+            "left/link8",
+            "right/link7",
+            "right/link8",
+        ],
+    }
+    report = _install_configured_end_effectors(
+        tree.getroot(), configuration
+    )
+    assert report["accepted"]
+    for name in configuration["required_visual_geoms"]:
+        assert tree.getroot().find(f".//geom[@name='{name}']") is not None
+    for name in configuration["forbidden_bodies"]:
+        assert tree.getroot().find(f".//body[@name='{name}']") is None
+
+
+def test_home_robot_environment_penetration_is_reported(tmp_path):
+    model_path = tmp_path / "penetration.xml"
+    model_path.write_text(
+        "<mujoco><worldbody>"
+        '<body name="robot"><freejoint/>'
+        '<geom name="robot_geom" type="box" size=".1 .1 .1"/>'
+        "</body>"
+        '<body name="wall" pos=".15 0 0">'
+        '<geom name="wall_geom" type="box" size=".1 .1 .1"/>'
+        "</body>"
+        "</worldbody><keyframe>"
+        '<key name="home" qpos="0 0 0 1 0 0 0"/>'
+        "</keyframe></mujoco>"
+    )
+    model = mujoco.MjModel.from_xml_path(str(model_path))
+    records = _robot_environment_penetrations(
+        model,
+        mujoco.MjData(model),
+        profile={
+            "robot_placement": {
+                "instances": [{"body": "robot"}],
+            }
+        },
+        keyframe="home",
+    )
+    assert records
+    assert all(item["robot_body"] == "robot" for item in records)
+    assert all(item["environment_body"] == "wall" for item in records)
+    assert all(item["penetration_depth_m"] > 0.001 for item in records)
 
 
 def test_operator_can_mark_false_unknown_candidate_absent_and_resume(tmp_path):

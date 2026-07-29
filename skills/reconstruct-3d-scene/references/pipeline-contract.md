@@ -42,7 +42,15 @@ color, and optional model.
 For articulated models, use `robot_placement.instances` to map model root
 bodies to named calibration anchors. Recover base height from the associated
 SAM component, apply one shared upright yaw, and save a derived positioned
-MJCF. Missing base placement keeps collision and motion readiness false.
+MJCF. The profile must pin any non-stock end-effector and list required geoms
+and forbidden stock terminal bodies. Missing base placement or an
+end-effector regression keeps collision and motion readiness false.
+
+Measured supports retain their observed mask topology. Use a measured visual
+mesh and hole-preserving collision cells; never replace an occluded support
+with one full bounding rectangle. Likewise, a complex concave object such as
+a microscope uses its observed SAM/RGB-D surface plus sparse conservative
+collision cells until a closed multiview model exists.
 
 ## Output and gates
 
@@ -52,7 +60,8 @@ confidence, and status.
 
 - `display_ready`: enough information exists for visual inspection.
 - `collision_ready`: every object is accepted, MuJoCo compiles, and completed
-  geometry passes intersection gates.
+  geometry passes intersection gates, including robot/environment contact at
+  the configured initial/home keyframe.
 - `motion_ready`: collision-ready plus an explicitly accepted camera-to-robot
   transform.
 
@@ -64,4 +73,5 @@ traces must stay below practical WebGL index limits.
 Add a new object to the JSON catalog before adding Python. Add Python only
 when a genuinely new completion family is needed. Test it with synthetic
 RGB-D, one low-confidence case, one support/occlusion case, and a saved real
-capture.
+capture. Robot profiles additionally require an end-effector regression test
+and a home-pose penetration test.

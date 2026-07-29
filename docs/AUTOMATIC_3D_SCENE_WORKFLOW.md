@@ -32,7 +32,9 @@ It is observation-only. It does not command robot hardware.
 8. Treat unclaimed interior RGB-D components above supports as unknown object
    candidates.
 9. Evaluate confidence, supports, completed-volume intersections, MuJoCo
-   compilation, calibration authority, and mobile rendering.
+   compilation, configured end-effector identity, home-pose
+   robot/environment penetration, calibration authority, and mobile
+   rendering.
 10. Continue automatically for known high-confidence objects. Route unknown
     or low-confidence instances to the daily phone UI and resume the same
     revision after correction.
@@ -130,6 +132,14 @@ The three readiness levels are deliberately separate:
   vertical position.
 - Use exact kinematics for robots. Do not fit individual links independently.
 - Distinguish a partial observed surface from a closed collision body.
+- Preserve support-mask holes with measured meshes and tiled collision cells;
+  an image-space occlusion or robot cut-out must not become solid merely
+  because a world-space AABB spans it.
+- Pin the requested end-effector in the profile and reject regenerated MJCF
+  when required geoms vanish or forbidden stock terminal bodies reappear.
+- Make the primary `mujoco.html` use the configured initial pose. Keep a
+  synchronized-capture view as a separate artifact when its joint state
+  differs.
 - Preserve unknown space as collision-relevant unknown space.
 - Use the current Pasteur capture as a regression fixture, not as the source
   of universal coordinates.
@@ -153,6 +163,8 @@ The three readiness levels are deliberately separate:
   and catalog dimensions; require confirmation when evidence disagrees.
 - Missing support: retain the observation but lower confidence.
 - Completed bodies intersect: set collision and motion readiness false.
+- The robot penetrates any environment geom at home: set collision and motion
+  readiness false and list the body pair and penetration depth.
 - MuJoCo compilation fails: keep measured artifacts and report the compiler
   error.
 - Camera-to-robot transform is unaccepted: permit display but never motion.

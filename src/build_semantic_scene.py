@@ -46,6 +46,7 @@ from rollout.semantic_scene_pipeline import (
     robust_oriented_geometry,
     scene_json_ready,
     sha256_file,
+    support_collision_boxes,
 )
 from src.render_mujoco_mobile import _box, _cylinder
 
@@ -63,6 +64,53 @@ def _compact_mesh(vertices: np.ndarray, faces: np.ndarray):
     return vertices[used], remap[faces]
 
 
+def _extrude_surface_mesh(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    *,
+    thickness_m: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Give a measured open surface finite thickness without filling holes."""
+
+    vertices = np.asarray(vertices, dtype=float)
+    faces = np.asarray(faces, dtype=np.int32)
+    thickness = float(thickness_m)
+    if thickness <= 0:
+        raise ValueError("surface extrusion thickness must be positive")
+    count = len(vertices)
+    lower = vertices.copy()
+    lower[:, 2] -= thickness
+    all_vertices = np.vstack((vertices, lower))
+    all_faces = [faces, faces[:, ::-1] + count]
+    edges = np.sort(
+        np.vstack(
+            (
+                faces[:, [0, 1]],
+                faces[:, [1, 2]],
+                faces[:, [2, 0]],
+            )
+        ),
+        axis=1,
+    )
+    unique, edge_counts = np.unique(edges, axis=0, return_counts=True)
+    boundary = unique[edge_counts == 1]
+    if len(boundary):
+        first = boundary[:, 0]
+        second = boundary[:, 1]
+        sides = np.vstack(
+            (
+                np.column_stack(
+                    (first, second, second + count)
+                ),
+                np.column_stack(
+                    (first, second + count, first + count)
+                ),
+            )
+        ).astype(np.int32)
+        all_faces.append(sides)
+    return all_vertices, np.vstack(all_faces)
+
+
 def _primitive_mesh(record: dict):
     geometry = record["geometry"]
     size = np.asarray(geometry["size_xyz_m"], dtype=float)
@@ -76,6 +124,41 @@ def _primitive_mesh(record: dict):
     )
     center = np.asarray(geometry["center_xyz_m"])
     return (rotation @ vertices.T).T + center, faces
+
+
+def _hex_rgba(color: str, alpha: float = 0.84) -> list[float]:
+    value = str(color).lstrip("#")
+    if len(value) != 6:
+        return [0.45, 0.62, 0.78, alpha]
+    try:
+        return [
+            int(value[index : index + 2], 16) / 255
+            for index in (0, 2, 4)
+        ] + [alpha]
+    except ValueError:
+        return [0.45, 0.62, 0.78, alpha]
+
+
+def _observed_voxel_boxes(
+    points: np.ndarray,
+    *,
+    voxel_size_m: float,
+) -> list[dict]:
+    """Create sparse collision cells from actually observed object points."""
+
+    points = np.asarray(points, dtype=float)
+    voxel = float(voxel_size_m)
+    if voxel <= 0 or not np.isfinite(voxel):
+        raise ValueError("observed object voxel size must be positive")
+    indices = np.floor(points / voxel).astype(np.int64)
+    unique = np.unique(indices, axis=0)
+    return [
+        {
+            "center_xyz_m": ((index.astype(float) + 0.5) * voxel).tolist(),
+            "size_xyz_m": [voxel, voxel, voxel],
+        }
+        for index in unique
+    ]
 
 
 def _parse_mask_specs(specs: list[str], profile: dict) -> list[MaskObservation]:
@@ -107,6 +190,7 @@ def _position_articulated_model(
     mesh: dict[str, np.ndarray],
     shape_hw: tuple[int, int],
     output_dir: Path,
+    robot_qpos: list[float] | None = None,
 ) -> tuple[dict, dict]:
     """Place root bodies from named calibration anchors and SAM components."""
 
@@ -175,6 +259,7 @@ def _position_articulated_model(
         }
     remaining = list(component_points)
     positions = {}
+    observed_points_by_body = {}
     for instance in instance_configs:
         anchor_name = str(instance["anchor"])
         anchor = _vector3(anchors[anchor_name], f"anchor {anchor_name}")
@@ -189,7 +274,9 @@ def _position_articulated_model(
         )
         selected = remaining.pop(selected_index)
         anchor[2] = float(np.quantile(selected[:, 2], 0.01))
-        positions[str(instance["body"])] = anchor
+        body_name = str(instance["body"])
+        positions[body_name] = anchor
+        observed_points_by_body[body_name] = selected
     raw_base_heights = {
         name: float(position[2]) for name, position in positions.items()
     }
@@ -227,6 +314,14 @@ def _position_articulated_model(
         compiler = ET.Element("compiler")
         root.insert(0, compiler)
     compiler.set("meshdir", str(source.parent / "assets"))
+    end_effector_report = _install_configured_end_effectors(
+        root,
+        profile.get("robot_end_effector"),
+    )
+    initial_pose_report = _install_configured_initial_pose(
+        root,
+        profile.get("robot_initial_pose"),
+    )
     for body_name, position in positions.items():
         body = root.find(f".//body[@name='{body_name}']")
         if body is None:
@@ -235,6 +330,22 @@ def _position_articulated_model(
         body.set("euler", f"0 0 {yaw:.10f}")
     positioned = output_dir / "positioned_robot.xml"
     tree.write(positioned, encoding="unicode")
+    refinement = _refine_articulated_alignment(
+        tree=tree,
+        positioned_path=positioned,
+        positions=positions,
+        observed_points_by_body=observed_points_by_body,
+        initial_yaw=yaw,
+        robot_qpos=robot_qpos,
+        configuration=profile.get("robot_alignment_refinement"),
+    )
+    if refinement["accepted"]:
+        positions = {
+            name: np.asarray(value, dtype=float)
+            for name, value in refinement["base_xyz_level_m"].items()
+        }
+        yaw = float(refinement["shared_upright_yaw_rad"])
+        tree.write(positioned, encoding="unicode")
     runtime_profile["robot_model"] = str(positioned.resolve())
     return runtime_profile, {
         "required": True,
@@ -253,6 +364,436 @@ def _position_articulated_model(
         "raw_sam_base_height_m": raw_base_heights,
         "shared_base_height_m": enforced_base_height,
         "shared_upright_yaw_rad": yaw,
+        "end_effector": end_effector_report,
+        "initial_pose": initial_pose_report,
+        "sam_cad_alignment_refinement": refinement,
+    }
+
+
+def _install_configured_initial_pose(
+    root: ET.Element,
+    configuration: dict | None,
+) -> dict:
+    """Pin the displayed initial keyframe to a named, reviewed source pose."""
+
+    if not configuration:
+        return {
+            "required": False,
+            "accepted": True,
+            "source": "source_model_default",
+        }
+    key_name = str(configuration.get("keyframe", "home"))
+    key = root.find(f".//key[@name='{key_name}']")
+    if key is None:
+        raise ValueError(f"initial keyframe {key_name!r} not found")
+    qpos = [
+        float(item) for item in configuration.get("qpos", ())
+    ]
+    if not qpos:
+        raise ValueError("robot_initial_pose.qpos is empty")
+    qpos_text = " ".join(f"{item:.10f}" for item in qpos)
+    key.set("qpos", qpos_text)
+    if configuration.get("set_ctrl", True):
+        key.set("ctrl", qpos_text)
+    return {
+        "required": True,
+        "accepted": True,
+        "keyframe": key_name,
+        "qpos": qpos,
+        "source": str(configuration.get("source", "profile")),
+    }
+
+
+def _refine_articulated_alignment(
+    *,
+    tree: ET.ElementTree,
+    positioned_path: Path,
+    positions: dict[str, np.ndarray],
+    observed_points_by_body: dict[str, np.ndarray],
+    initial_yaw: float,
+    robot_qpos: list[float] | None,
+    configuration: dict | None,
+) -> dict:
+    """Refine one shared rigid robot transform against SAM-labelled RGB-D."""
+
+    if not configuration or not configuration.get("enabled", False):
+        return {
+            "attempted": False,
+            "accepted": False,
+            "reason": "disabled",
+        }
+    if robot_qpos is None:
+        return {
+            "attempted": False,
+            "accepted": False,
+            "reason": "synchronized_joint_state_missing",
+        }
+    try:
+        import mujoco
+        from scipy.optimize import least_squares
+        from scipy.spatial import cKDTree
+
+        model = mujoco.MjModel.from_xml_path(str(positioned_path))
+        data = mujoco.MjData(model)
+        qpos = np.asarray(robot_qpos, dtype=float)
+        if qpos.shape != (model.nq,):
+            raise ValueError(
+                f"robot qpos has shape {qpos.shape}, expected {(model.nq,)}"
+            )
+        data.qpos[:] = qpos
+        mujoco.mj_forward(model, data)
+
+        def is_descendant(body_id: int, root_id: int) -> bool:
+            while body_id:
+                if body_id == root_id:
+                    return True
+                body_id = int(model.body_parentid[body_id])
+            return False
+
+        sample_stride = max(
+            1, int(configuration.get("cad_vertex_sample_stride", 8))
+        )
+        pairs = []
+        for body_name, observed in observed_points_by_body.items():
+            root_id = int(model.body(body_name).id)
+            parts = []
+            for geom_id in range(model.ngeom):
+                if (
+                    int(model.geom_group[geom_id]) != 2
+                    or not is_descendant(
+                        int(model.geom_bodyid[geom_id]), root_id
+                    )
+                ):
+                    continue
+                mesh_id = int(model.geom_dataid[geom_id])
+                if mesh_id < 0:
+                    continue
+                start = int(model.mesh_vertadr[mesh_id])
+                count = int(model.mesh_vertnum[mesh_id])
+                vertices = np.asarray(
+                    model.mesh_vert[start : start + count], dtype=float
+                )
+                rotation = np.asarray(
+                    data.geom_xmat[geom_id], dtype=float
+                ).reshape(3, 3)
+                parts.append(
+                    vertices @ rotation.T
+                    + np.asarray(data.geom_xpos[geom_id], dtype=float)
+                )
+            if not parts:
+                continue
+            cad = np.vstack(parts)[::sample_stride]
+            measured = np.asarray(observed, dtype=float)
+            measured_stride = max(
+                1,
+                len(measured)
+                // int(configuration.get("maximum_observed_points", 2500)),
+            )
+            pairs.append((cad, measured[::measured_stride]))
+        if len(pairs) < 2:
+            return {
+                "attempted": True,
+                "accepted": False,
+                "reason": "fewer_than_two_robot_instances_with_depth",
+            }
+        clip = float(configuration.get("residual_clip_m", 0.08))
+
+        allow_vertical = bool(
+            configuration.get("allow_vertical_translation", False)
+        )
+
+        def expanded_parameters(parameters: np.ndarray) -> np.ndarray:
+            if allow_vertical:
+                return np.asarray(parameters, dtype=float)
+            return np.array(
+                [parameters[0], parameters[1], 0.0, parameters[2]],
+                dtype=float,
+            )
+
+        def transformed(vertices: np.ndarray, parameters: np.ndarray):
+            expanded = expanded_parameters(parameters)
+            translation = expanded[:3]
+            yaw_delta = float(expanded[3])
+            cosine = np.cos(yaw_delta)
+            sine = np.sin(yaw_delta)
+            rotation = np.array(
+                [
+                    [cosine, -sine, 0.0],
+                    [sine, cosine, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            )
+            return vertices @ rotation.T + translation
+
+        def residuals(parameters):
+            return np.concatenate(
+                [
+                    np.minimum(
+                        cKDTree(transformed(cad, parameters)).query(
+                            measured, k=1
+                        )[0],
+                        clip,
+                    )
+                    for cad, measured in pairs
+                ]
+            )
+
+        maximum_translation = float(
+            configuration.get("maximum_translation_m", 0.15)
+        )
+        maximum_yaw = float(
+            configuration.get("maximum_yaw_delta_rad", 0.35)
+        )
+        parameter_count = 4 if allow_vertical else 3
+        initial = residuals(np.zeros(parameter_count, dtype=float))
+        lower = [
+            -maximum_translation,
+            -maximum_translation,
+            *([-maximum_translation] if allow_vertical else []),
+            -maximum_yaw,
+        ]
+        upper = [
+            maximum_translation,
+            maximum_translation,
+            *([maximum_translation] if allow_vertical else []),
+            maximum_yaw,
+        ]
+        result = least_squares(
+            residuals,
+            np.zeros(parameter_count, dtype=float),
+            bounds=(lower, upper),
+            max_nfev=int(configuration.get("maximum_evaluations", 80)),
+        )
+        expanded = expanded_parameters(result.x)
+        refined = residuals(result.x)
+        initial_median = float(np.median(initial))
+        refined_median = float(np.median(refined))
+        required_improvement = float(
+            configuration.get("minimum_median_improvement_fraction", 0.20)
+        )
+        accepted = (
+            result.success
+            and refined_median
+            <= initial_median * (1.0 - required_improvement)
+        )
+        report = {
+            "attempted": True,
+            "accepted": bool(accepted),
+            "method": "shared_se3_yaw_sam_rgbd_to_exact_cad",
+            "initial_median_residual_m": initial_median,
+            "refined_median_residual_m": refined_median,
+            "translation_xyz_m": expanded[:3].tolist(),
+            "yaw_delta_rad": float(expanded[3]),
+            "vertical_translation_locked": not allow_vertical,
+            "optimizer_success": bool(result.success),
+            "optimizer_message": str(result.message),
+        }
+        if not accepted:
+            report["reason"] = "insufficient_sam_cad_residual_improvement"
+            return report
+        yaw_delta = float(expanded[3])
+        cosine = np.cos(yaw_delta)
+        sine = np.sin(yaw_delta)
+        rotation = np.array(
+            [
+                [cosine, -sine, 0.0],
+                [sine, cosine, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        refined_positions = {
+            name: rotation @ np.asarray(position, dtype=float)
+            + expanded[:3]
+            for name, position in positions.items()
+        }
+        refined_yaw = float(
+            np.arctan2(
+                np.sin(initial_yaw + yaw_delta),
+                np.cos(initial_yaw + yaw_delta),
+            )
+        )
+        root = tree.getroot()
+        for body_name, position in refined_positions.items():
+            body = root.find(f".//body[@name='{body_name}']")
+            if body is None:
+                raise ValueError(
+                    f"refined root body {body_name!r} disappeared"
+                )
+            body.set(
+                "pos", " ".join(f"{value:.10f}" for value in position)
+            )
+            body.set("euler", f"0 0 {refined_yaw:.10f}")
+        report["base_xyz_level_m"] = {
+            name: value.tolist()
+            for name, value in refined_positions.items()
+        }
+        report["shared_upright_yaw_rad"] = refined_yaw
+        return report
+    except Exception as error:
+        return {
+            "attempted": True,
+            "accepted": False,
+            "reason": "sam_cad_alignment_refinement_failed",
+            "error": str(error),
+        }
+
+
+def _install_configured_end_effectors(
+    root: ET.Element,
+    configuration: dict | None,
+) -> dict:
+    """Replace stock terminal subtrees with a pinned end-effector asset."""
+
+    if not configuration:
+        return {
+            "required": False,
+            "accepted": True,
+            "variant": "source_model_default",
+        }
+    variant = str(configuration.get("variant", ""))
+    if variant != "nyu_gripper_body":
+        raise ValueError(f"unsupported robot_end_effector variant {variant!r}")
+    mesh_path = Path(configuration["mesh"]).resolve()
+    if not mesh_path.is_file():
+        raise FileNotFoundError(mesh_path)
+    asset = root.find("asset")
+    if asset is None:
+        asset = ET.Element("asset")
+        compiler = root.find("compiler")
+        root.insert(1 if compiler is not None else 0, asset)
+    mesh_name = "pinned_nyu_gripper_body"
+    for old in list(asset.findall("mesh")):
+        if old.get("name") == mesh_name:
+            asset.remove(old)
+    ET.SubElement(
+        asset,
+        "mesh",
+        {
+            "name": mesh_name,
+            "file": str(mesh_path),
+            "scale": " ".join(
+                str(float(item))
+                for item in configuration.get(
+                    "mesh_scale", [0.001, 0.001, 0.001]
+                )
+            ),
+        },
+    )
+    material_name = "pinned_nyu_gripper_material"
+    if not any(
+        item.get("name") == material_name for item in asset.findall("material")
+    ):
+        ET.SubElement(
+            asset,
+            "material",
+            {
+                "name": material_name,
+                "rgba": " ".join(
+                    str(float(item))
+                    for item in configuration.get(
+                        "rgba", [1.0, 1.0, 1.0, 1.0]
+                    )
+                ),
+            },
+        )
+    installed = []
+    removed = []
+    removed_body_replacements = {}
+    position = " ".join(
+        str(float(item))
+        for item in configuration.get(
+            "attachment_pos_m", [0.0275, 0.01875, 0.0798]
+        )
+    )
+    euler = " ".join(
+        str(float(item))
+        for item in configuration.get(
+            "attachment_euler_rad", [3.14, -1.57, 0.0]
+        )
+    )
+    site_position = " ".join(
+        str(float(item))
+        for item in configuration.get("ee_site_pos_m", [0.0, 0.0, 0.1])
+    )
+    for body_name in configuration.get("bodies", ()):
+        body = root.find(f".//body[@name='{body_name}']")
+        if body is None:
+            raise ValueError(
+                f"end-effector destination body {body_name!r} not found"
+            )
+        body.set("pos", position)
+        body.set("euler", euler)
+        for child in list(body):
+            if child.tag in {"geom", "site", "body"}:
+                if child.get("name"):
+                    removed.append(child.get("name"))
+                if child.tag == "body":
+                    for removed_body in (child, *child.findall(".//body")):
+                        if removed_body.get("name"):
+                            removed_body_replacements[
+                                removed_body.get("name")
+                            ] = body_name
+                body.remove(child)
+        prefix = str(body_name).split("/", 1)[0]
+        ET.SubElement(
+            body,
+            "geom",
+            {
+                "name": f"{prefix}/nyu_gripper_visual",
+                "type": "mesh",
+                "mesh": mesh_name,
+                "class": "visual",
+                "material": material_name,
+            },
+        )
+        ET.SubElement(
+            body,
+            "geom",
+            {
+                "name": f"{prefix}/nyu_gripper_collision",
+                "type": "mesh",
+                "mesh": mesh_name,
+                "class": "collision",
+                "friction": "2 0.005 0.0001",
+            },
+        )
+        ET.SubElement(
+            body,
+            "site",
+            {
+                "name": f"{prefix}/ee",
+                "pos": site_position,
+                "size": "0.001",
+                "rgba": "1 0 0 1",
+            },
+        )
+        installed.append(f"{prefix}/nyu_gripper_visual")
+    for light in root.findall(".//light"):
+        target = light.get("target")
+        if target in removed_body_replacements:
+            light.set("target", removed_body_replacements[target])
+    required = set(configuration.get("required_visual_geoms", installed))
+    present = {
+        item.get("name") for item in root.findall(".//geom") if item.get("name")
+    }
+    missing = sorted(required - present)
+    forbidden = [
+        name
+        for name in configuration.get("forbidden_bodies", ())
+        if root.find(f".//body[@name='{name}']") is not None
+    ]
+    if missing or forbidden:
+        raise ValueError(
+            "end-effector regression: "
+            f"missing_visual_geoms={missing}, forbidden_bodies={forbidden}"
+        )
+    return {
+        "required": True,
+        "accepted": True,
+        "variant": variant,
+        "mesh": str(mesh_path),
+        "installed_visual_geoms": installed,
+        "removed_named_nodes": removed,
     }
 
 
@@ -749,18 +1290,63 @@ def _write_mjcf(
             '  <compiler angle="radian" autolimits="true" '
             f'meshdir="{escape(str(meshdir))}"/>\n'
         )
+    assets = []
     geoms = []
+    observed_surface_objects = set(
+        profile.get("observed_surface_objects", ())
+    )
     for record in objects:
         if record.get("completion") == "exact_cad" and robot_model:
             # The included articulated model is authoritative.  A SAM-derived
             # AABB remains in scene.json as an observation, never as duplicate
             # robot collision geometry.
             continue
+        if (
+            record.get("semantic_name") in observed_surface_objects
+            and record.get("observed_mesh")
+        ):
+            instance_id = str(record["instance_id"])
+            mesh_name = f"{instance_id}-observed-mesh"
+            assets.append(
+                f'    <mesh name="{escape(mesh_name)}" '
+                f'file="{escape(str(Path(record["observed_mesh"]).resolve()))}"/>'
+            )
+            rgba_text = " ".join(
+                f"{item:.4f}"
+                for item in _hex_rgba(record.get("color", "#8b9bb4"))
+            )
+            geoms.append(
+                f'    <body name="{escape(instance_id)}-observed">\n'
+                f'      <geom name="{escape(instance_id)}-visual" '
+                f'type="mesh" mesh="{escape(mesh_name)}" '
+                f'rgba="{rgba_text}" group="2" contype="0" '
+                'conaffinity="0"/>\n'
+                "    </body>"
+            )
+            for index, box in enumerate(
+                record.get("collision_boxes", ())
+            ):
+                center = np.asarray(box["center_xyz_m"], dtype=float)
+                half = np.asarray(box["size_xyz_m"], dtype=float) / 2
+                geoms.append(
+                    f'    <body name="{escape(instance_id)}-cell-{index}" '
+                    f'pos="{center[0]:.8f} {center[1]:.8f} '
+                    f'{center[2]:.8f}">\n'
+                    f'      <geom name="{escape(instance_id)}-collision-'
+                    f'{index}" type="box" size="{half[0]:.8f} '
+                    f'{half[1]:.8f} {half[2]:.8f}" rgba="0 0 0 0" '
+                    'group="3" contype="1" conaffinity="1"/>\n'
+                    "    </body>"
+                )
+            continue
         geometry = record["geometry"]
         center = geometry["center_xyz_m"]
         size = geometry["size_xyz_m"]
         yaw = geometry["yaw_rad"]
-        rgba = record.get("rgba", [0.45, 0.62, 0.78, 0.84])
+        rgba = record.get(
+            "rgba",
+            _hex_rgba(record.get("color", "#8b9bb4")),
+        )
         rgba_text = " ".join(f"{float(item):.4f}" for item in rgba)
         if geometry["kind"] == "cylinder":
             geom = (
@@ -778,21 +1364,57 @@ def _write_mjcf(
             f'      {geom} rgba="{rgba_text}" contype="1" conaffinity="1"/>\n'
             "    </body>"
         )
-    support_thickness = float(profile.get("support_collision_thickness_m", 0.025))
+    support_thickness = float(
+        profile.get("support_collision_thickness_m", 0.025)
+    )
     for support in supports or []:
-        lower, upper = np.asarray(support["bounds_xy_m"], dtype=float)
-        half_xy = np.maximum((upper - lower) / 2, 0.002)
-        center_xy = (lower + upper) / 2
-        center_z = float(support["height_m"]) - support_thickness / 2
-        geoms.append(
-            f'    <body name="{escape(support["support_id"])}" '
-            f'pos="{center_xy[0]:.8f} {center_xy[1]:.8f} {center_z:.8f}">\n'
-            f'      <geom type="box" size="{half_xy[0]:.8f} '
-            f'{half_xy[1]:.8f} {support_thickness / 2:.8f}" '
-            'rgba="0.18 0.21 0.25 0.75" contype="1" conaffinity="1" '
-            'friction="1 0.01 0.01"/>\n'
-            "    </body>"
-        )
+        support_id = str(support["support_id"])
+        observed_mesh = support.get("observed_mesh")
+        if observed_mesh:
+            mesh_name = f"{support_id}-observed-mesh"
+            assets.append(
+                f'    <mesh name="{escape(mesh_name)}" '
+                f'file="{escape(str(Path(observed_mesh).resolve()))}"/>'
+            )
+            geoms.append(
+                f'    <body name="{escape(support_id)}-observed">\n'
+                f'      <geom name="{escape(support_id)}-visual" '
+                f'type="mesh" mesh="{escape(mesh_name)}" '
+                'rgba="0.18 0.21 0.25 0.82" group="2" '
+                'contype="0" conaffinity="0"/>\n'
+                "    </body>"
+            )
+        boxes = support.get("collision_boxes")
+        if not boxes:
+            lower, upper = np.asarray(support["bounds_xy_m"], dtype=float)
+            boxes = [
+                {
+                    "center_xy_m": ((lower + upper) / 2).tolist(),
+                    "size_xy_m": (upper - lower).tolist(),
+                }
+            ]
+        for index, box in enumerate(boxes):
+            center_xy = np.asarray(box["center_xy_m"], dtype=float)
+            half_xy = np.maximum(
+                np.asarray(box["size_xy_m"], dtype=float) / 2,
+                0.001,
+            )
+            center_z = (
+                float(support["height_m"]) - support_thickness / 2
+            )
+            visible = not observed_mesh
+            rgba = "0.18 0.21 0.25 0.75" if visible else "0 0 0 0"
+            geoms.append(
+                f'    <body name="{escape(support_id)}-cell-{index}" '
+                f'pos="{center_xy[0]:.8f} {center_xy[1]:.8f} '
+                f'{center_z:.8f}">\n'
+                f'      <geom name="{escape(support_id)}-collision-{index}" '
+                f'type="box" size="{half_xy[0]:.8f} '
+                f'{half_xy[1]:.8f} {support_thickness / 2:.8f}" '
+                f'rgba="{rgba}" group="3" contype="1" conaffinity="1" '
+                'friction="1 0.01 0.01"/>\n'
+                "    </body>"
+            )
     keyframe = ""
     if robot_qpos is not None:
         keyframe = (
@@ -804,7 +1426,12 @@ def _write_mjcf(
         '<mujoco model="sam_first_semantic_scene">\n'
         f"{includes}"
         f"{compiler}"
-        "  <worldbody>\n"
+        + (
+            "  <asset>\n" + "\n".join(assets) + "\n  </asset>\n"
+            if assets
+            else ""
+        )
+        + "  <worldbody>\n"
         + "\n".join(geoms)
         + "\n  </worldbody>\n"
         + keyframe
@@ -818,9 +1445,16 @@ def _write_mobile_view(
     observed: list[dict],
     supports: list[dict] | None = None,
     camera_eye: tuple[float, float, float] = (-1.55, 0.0, 0.95),
+    observed_surface_objects: tuple[str, ...] = (),
 ) -> None:
     traces = []
+    observed_surface_names = set(observed_surface_objects)
     for record in objects:
+        if (
+            record.get("semantic_name") in observed_surface_names
+            and record.get("observed_mesh")
+        ):
+            continue
         vertices, faces = _primitive_mesh(record)
         traces.append(
             go.Mesh3d(
@@ -832,23 +1466,31 @@ def _write_mobile_view(
             )
         )
     for support in supports or []:
-        lower, upper = np.asarray(support["bounds_xy_m"], dtype=float)
-        thickness = 0.025
-        record = {
-            "geometry": {
-                "kind": "box",
-                "center_xyz_m": [
-                    *((lower + upper) / 2).tolist(),
-                    float(support["height_m"]) - thickness / 2,
-                ],
-                "size_xyz_m": [
-                    *(upper - lower).tolist(),
-                    thickness,
-                ],
-                "yaw_rad": 0.0,
+        observed_mesh = support.get("observed_mesh")
+        if observed_mesh:
+            surface = _read_obj(observed_mesh)
+            vertices = surface["vertices"]
+            faces = surface["faces"]
+        else:
+            lower, upper = np.asarray(
+                support["bounds_xy_m"], dtype=float
+            )
+            thickness = 0.025
+            record = {
+                "geometry": {
+                    "kind": "box",
+                    "center_xyz_m": [
+                        *((lower + upper) / 2).tolist(),
+                        float(support["height_m"]) - thickness / 2,
+                    ],
+                    "size_xyz_m": [
+                        *(upper - lower).tolist(),
+                        thickness,
+                    ],
+                    "yaw_rad": 0.0,
+                }
             }
-        }
-        vertices, faces = _primitive_mesh(record)
+            vertices, faces = _primitive_mesh(record)
         traces.append(
             go.Mesh3d(
                 x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2],
@@ -870,7 +1512,7 @@ def _write_mobile_view(
                 visible=True,
             )
         )
-    inferred_count = len(objects) + len(supports or [])
+    inferred_count = len(traces)
     observed_count = len(observed)
     figure = go.Figure(traces)
     figure.update_layout(
@@ -1029,6 +1671,91 @@ def _model_collision_records(model, data) -> list[dict]:
     return records
 
 
+def _robot_environment_penetrations(
+    model,
+    data,
+    *,
+    profile: dict,
+    keyframe: str,
+    tolerance_m: float = 0.001,
+) -> list[dict]:
+    """Report robot/environment penetrations at a named static pose."""
+
+    import mujoco
+
+    root_names = [
+        str(item["body"])
+        for item in profile.get("robot_placement", {}).get("instances", ())
+    ]
+    if not root_names:
+        return []
+    root_ids = []
+    for name in root_names:
+        try:
+            root_ids.append(int(model.body(name).id))
+        except KeyError as error:
+            raise ValueError(f"robot root body {name!r} is absent") from error
+    try:
+        key_id = int(model.key(keyframe).id)
+    except KeyError:
+        return []
+    mujoco.mj_resetDataKeyframe(model, data, key_id)
+    mujoco.mj_forward(model, data)
+
+    def is_robot_body(body_id: int) -> bool:
+        while body_id:
+            if body_id in root_ids:
+                return True
+            body_id = int(model.body_parentid[body_id])
+        return False
+
+    result = []
+    for index in range(int(data.ncon)):
+        contact = data.contact[index]
+        depth = -float(contact.dist)
+        if depth <= float(tolerance_m):
+            continue
+        geom1 = int(contact.geom1)
+        geom2 = int(contact.geom2)
+        body1 = int(model.geom_bodyid[geom1])
+        body2 = int(model.geom_bodyid[geom2])
+        first_robot = is_robot_body(body1)
+        second_robot = is_robot_body(body2)
+        if first_robot == second_robot:
+            continue
+        result.append(
+            {
+                "keyframe": keyframe,
+                "penetration_depth_m": depth,
+                "robot_body": mujoco.mj_id2name(
+                    model,
+                    mujoco.mjtObj.mjOBJ_BODY,
+                    body1 if first_robot else body2,
+                ),
+                "environment_body": mujoco.mj_id2name(
+                    model,
+                    mujoco.mjtObj.mjOBJ_BODY,
+                    body2 if first_robot else body1,
+                ),
+                "robot_geom": mujoco.mj_id2name(
+                    model,
+                    mujoco.mjtObj.mjOBJ_GEOM,
+                    geom1 if first_robot else geom2,
+                ),
+                "environment_geom": mujoco.mj_id2name(
+                    model,
+                    mujoco.mjtObj.mjOBJ_GEOM,
+                    geom2 if first_robot else geom1,
+                ),
+            }
+        )
+    return sorted(
+        result,
+        key=lambda item: item["penetration_depth_m"],
+        reverse=True,
+    )
+
+
 def _write_esdf_artifacts(
     *,
     output: Path,
@@ -1105,6 +1832,56 @@ def _read_obj(path: str | Path) -> dict:
         "vertices": np.asarray(vertices, dtype=float),
         "faces": np.asarray(faces, dtype=np.int32),
     }
+
+
+def _complete_support_geometry(
+    *,
+    supports: list[dict],
+    mesh: dict,
+    shape_hw: tuple[int, int],
+    output: Path,
+    profile: dict,
+) -> None:
+    """Persist measured support surfaces and hole-preserving collision cells."""
+
+    faces = np.asarray(mesh["faces"], dtype=np.int32)
+    for support in supports:
+        support["collision_representation"] = "observed_mask_tiled_boxes"
+        support["collision_boxes"] = support_collision_boxes(
+            support,
+            vertices=mesh["vertices"],
+            valid=mesh["valid"],
+            shape_hw=shape_hw,
+            tile_size_px=int(
+                profile.get("support_collision_tile_size_px", 8)
+            ),
+            minimum_points=int(
+                profile.get("support_collision_tile_minimum_points", 4)
+            ),
+        )
+        vertex_mask = (
+            np.asarray(support["mask"], dtype=bool).reshape(-1)
+            & np.asarray(mesh["valid"], dtype=bool)
+        )
+        selected_faces = faces[np.all(vertex_mask[faces], axis=1)]
+        if not len(selected_faces):
+            support["observed_mesh"] = None
+            continue
+        vertices, compact_faces = _compact_mesh(
+            np.asarray(mesh["vertices"], dtype=float),
+            selected_faces,
+        )
+        vertices, compact_faces = _extrude_surface_mesh(
+            vertices,
+            compact_faces,
+            thickness_m=float(
+                profile.get("support_visual_thickness_m", 0.001)
+            ),
+        )
+        path = output / "observed" / f"{support['support_id']}.obj"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_obj(path, vertices, compact_faces)
+        support["observed_mesh"] = str(path.resolve())
 
 
 def _resume_confirmed(args) -> dict:
@@ -1191,6 +1968,34 @@ def _resume_confirmed(args) -> dict:
         )
         data = mujoco.MjData(model)
         qpos = scene.get("robot_state", {}).get("qpos")
+        penetration_checks = {}
+        for keyframe in (
+            "home",
+            *(("synchronized",) if qpos is not None else ()),
+        ):
+            penetration_checks[keyframe] = _robot_environment_penetrations(
+                model,
+                data,
+                profile=profile,
+                keyframe=keyframe,
+                tolerance_m=float(
+                    profile.get(
+                        "robot_environment_penetration_tolerance_m",
+                        0.001,
+                    )
+                ),
+            )
+        scene["penetration_checks"] = penetration_checks
+        if penetration_checks.get("home"):
+            scene["readiness"]["collision_ready"] = False
+            scene["readiness"]["motion_ready"] = False
+            if (
+                "home_robot_environment_penetration"
+                not in scene["readiness"]["reasons"]
+            ):
+                scene["readiness"]["reasons"].append(
+                    "home_robot_environment_penetration"
+                )
         if qpos is not None:
             mujoco.mj_resetDataKeyframe(
                 model, data, int(model.key("synchronized").id)
@@ -1201,14 +2006,23 @@ def _resume_confirmed(args) -> dict:
             "nbody": int(model.nbody),
             "ngeom": int(model.ngeom),
             "nq": int(model.nq),
+            "home_robot_environment_penetrations": len(
+                penetration_checks.get("home", ())
+            ),
         }
         try:
             from src.render_mujoco_mobile import render
 
+            primary_keyframe = str(
+                profile.get(
+                    "primary_robot_pose",
+                    "synchronized" if qpos is not None else "home",
+                )
+            )
             render(
                 Path(args.output_dir) / "scene.xml",
                 Path(args.output_dir) / "mujoco.html",
-                keyframe="synchronized" if qpos is not None else None,
+                keyframe=primary_keyframe,
                 camera_eye=_viewer_camera_eye(profile),
             )
             scene["artifacts"]["mujoco_mobile_view"] = str(
@@ -1229,6 +2043,21 @@ def _resume_confirmed(args) -> dict:
                 )
             except KeyError:
                 pass
+            if qpos is not None:
+                render(
+                    Path(args.output_dir) / "scene.xml",
+                    Path(args.output_dir) / "mujoco_synchronized.html",
+                    keyframe="synchronized",
+                    camera_eye=_viewer_camera_eye(profile),
+                )
+                scene["artifacts"][
+                    "mujoco_synchronized_mobile_view"
+                ] = str(
+                    (
+                        Path(args.output_dir)
+                        / "mujoco_synchronized.html"
+                    ).resolve()
+                )
         except Exception as error:
             scene["mujoco_compile"]["mobile_render_error"] = str(error)
         if model.nq:
@@ -1269,6 +2098,9 @@ def _resume_confirmed(args) -> dict:
         observed,
         scene.get("supports", []),
         camera_eye=_viewer_camera_eye(profile),
+        observed_surface_objects=tuple(
+            profile.get("observed_surface_objects", ())
+        ),
     )
     mesh = _canonicalize_mesh(
         load_organized_mesh(scene["inputs"]["mesh"]["path"]),
@@ -1368,11 +2200,19 @@ def build(args) -> dict:
         mesh=mesh,
         shape_hw=shape_hw,
         output_dir=output,
+        robot_qpos=robot_qpos,
     )
     supports = discover_supports(
         mesh["vertices"], mesh["valid"], shape_hw,
         height_tolerance_m=float(profile.get("support_height_tolerance_m", 0.008)),
         minimum_area_fraction=float(profile.get("support_minimum_area_fraction", 0.004)),
+    )
+    _complete_support_geometry(
+        supports=supports,
+        mesh=mesh,
+        shape_hw=shape_hw,
+        output=output,
+        profile=profile,
     )
     faces = mesh["faces"]
     valid_image = mesh["valid"].reshape(shape_hw)
@@ -1452,6 +2292,20 @@ def build(args) -> dict:
             },
             "quality": terms,
         }
+        if (
+            observation.semantic_name
+            in set(profile.get("observed_surface_objects", ()))
+            and observed_path is not None
+        ):
+            record["collision_representation"] = (
+                "observed_rgbd_sparse_voxels"
+            )
+            record["collision_boxes"] = _observed_voxel_boxes(
+                points,
+                voxel_size_m=float(
+                    profile.get("observed_object_collision_voxel_size_m", 0.02)
+                ),
+            )
         if record["completion"] == "exact_cad":
             record["pose_source"] = (
                 "synchronized_capture_joint_state"
@@ -1551,20 +2405,50 @@ def build(args) -> dict:
         observed_surfaces,
         supports,
         camera_eye=_viewer_camera_eye(profile),
+        observed_surface_objects=tuple(
+            profile.get("observed_surface_objects", ())
+        ),
     )
     _write_mjcf(
         output / "scene.xml", records, profile, robot_qpos, supports
     )
     compile_result = {"ok": False}
+    penetration_checks = {}
     try:
         import mujoco
 
         model = mujoco.MjModel.from_xml_path(str(output / "scene.xml"))
+        validation_data = mujoco.MjData(model)
+        for keyframe in (
+            "home",
+            *(("synchronized",) if robot_qpos is not None else ()),
+        ):
+            penetration_checks[keyframe] = _robot_environment_penetrations(
+                model,
+                validation_data,
+                profile=profile,
+                keyframe=keyframe,
+                tolerance_m=float(
+                    profile.get(
+                        "robot_environment_penetration_tolerance_m",
+                        0.001,
+                    )
+                ),
+            )
+        if penetration_checks.get("home"):
+            readiness["collision_ready"] = False
+            readiness["motion_ready"] = False
+            readiness["reasons"].append(
+                "home_robot_environment_penetration"
+            )
         compile_result = {
             "ok": True,
             "nbody": int(model.nbody),
             "ngeom": int(model.ngeom),
             "nq": int(model.nq),
+            "home_robot_environment_penetrations": len(
+                penetration_checks.get("home", ())
+            ),
         }
     except Exception as error:
         compile_result["error"] = str(error)
@@ -1574,15 +2458,22 @@ def build(args) -> dict:
         model = None
     scene_mobile = None
     home_mobile = None
+    synchronized_mobile = None
     articulation = {"ok": False, "reason": "mujoco_compile_failed"}
     if model is not None:
         try:
             from src.render_mujoco_mobile import render
 
+            primary_keyframe = str(
+                profile.get(
+                    "primary_robot_pose",
+                    "synchronized" if robot_qpos is not None else "home",
+                )
+            )
             render(
                 output / "scene.xml",
                 output / "mujoco.html",
-                keyframe="synchronized" if robot_qpos is not None else None,
+                keyframe=primary_keyframe,
                 camera_eye=_viewer_camera_eye(profile),
             )
             scene_mobile = str((output / "mujoco.html").resolve())
@@ -1599,6 +2490,16 @@ def build(args) -> dict:
                 )
             except KeyError:
                 pass
+            if robot_qpos is not None:
+                render(
+                    output / "scene.xml",
+                    output / "mujoco_synchronized.html",
+                    keyframe="synchronized",
+                    camera_eye=_viewer_camera_eye(profile),
+                )
+                synchronized_mobile = str(
+                    (output / "mujoco_synchronized.html").resolve()
+                )
         except Exception as error:
             compile_result["mobile_render_error"] = str(error)
         if model.nq:
@@ -1660,6 +2561,7 @@ def build(args) -> dict:
         "objects": records,
         "supports": supports,
         "intersections": intersections,
+        "penetration_checks": penetration_checks,
         "readiness": readiness,
         "mujoco_compile": compile_result,
         "artifacts": {
@@ -1668,6 +2570,7 @@ def build(args) -> dict:
             "mujoco": str((output / "scene.xml").resolve()),
             "mujoco_mobile_view": scene_mobile,
             "mujoco_home_mobile_view": home_mobile,
+            "mujoco_synchronized_mobile_view": synchronized_mobile,
             "articulation_video": articulation.get("path"),
             "esdf": str((output / "scene_esdf.npz").resolve()),
             "esdf_mobile_view": str((output / "esdf.html").resolve()),

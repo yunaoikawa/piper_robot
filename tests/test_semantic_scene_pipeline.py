@@ -15,6 +15,7 @@ from rollout.semantic_scene_pipeline import (
     exclusive_masks,
     quality_score,
     robust_oriented_geometry,
+    support_collision_boxes,
 )
 
 
@@ -82,6 +83,26 @@ def test_support_discovery_and_supported_completion():
     )
     assert np.allclose(geometry.size_xyz_m, [0.10, 0.10, 0.04])
     assert np.isclose(geometry.center_xyz_m[2], 0.02, atol=0.005)
+
+
+def test_support_collision_boxes_preserve_an_occluded_arm_hole():
+    points, _ = organized_plane(height=32, width=48)
+    mask = np.ones((32, 48), dtype=bool)
+    mask[8:24, 18:30] = False
+    boxes = support_collision_boxes(
+        {"mask": mask},
+        vertices=points.reshape(-1, 3),
+        valid=np.ones(mask.size, dtype=bool),
+        shape_hw=mask.shape,
+        tile_size_px=4,
+        minimum_points=2,
+    )
+    assert boxes
+    for box in boxes:
+        left, top, right, bottom = box["source_pixel_bounds_xyxy"]
+        assert not (
+            left >= 18 and right <= 30 and top >= 8 and bottom <= 24
+        )
 
 
 def test_quality_is_dimensionless_and_rejects_missing_support():
