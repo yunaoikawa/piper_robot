@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Correct the full Pasteur MuJoCo scene from saved RGB-D and SAM evidence.
+"""Build the Pasteur MuJoCo scene from persisted fixture and RGB-D evidence.
 
-The lab-scene.mjcf equipment prior is retained, but its shared angled robot is
-replaced with the repository's two fully separate upright 6-DOF Piper model.
-A synchronized robot mask and joint state register the levelled RGB-D capture
-to that CAD.  The single nominal tabletop is replaced by measured support
-prisms, while the robot-excluded RGB-D mesh remains visual-only.
+The world origin is the right Piper base.  The measured right-Piper-to-
+incubator vector is the primary XY constraint; SAM is used for semantic
+exclusion and object bounds, never as an unconstrained global pose solver.
+Both Piper bases are positioned independently from RGB-D anchors and remain
+upright.
 """
 
 from __future__ import annotations
@@ -13,143 +13,88 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import shutil
 
 import cv2
 import mujoco
 import numpy as np
-from scipy.spatial import cKDTree
 
 
-def _voxel_downsample(points, voxel_m=0.006):
-    points = np.asarray(points, dtype=float)
-    cells = np.floor(points / voxel_m).astype(np.int64)
-    _, indices = np.unique(cells, axis=0, return_index=True)
-    return points[indices]
-
-
-def _model_surface_points(model_path, first_arm_q, second_arm_q):
-    model = mujoco.MjModel.from_xml_path(str(model_path))
-    data = mujoco.MjData(model)
-    data.qpos[:6] = first_arm_q
-    data.qpos[6:12] = second_arm_q
-    mujoco.mj_forward(model, data)
-    clouds = []
-    for geom_id in range(model.ngeom):
-        if (
-            int(model.geom_group[geom_id]) != 2
-            or int(model.geom_type[geom_id])
-            != int(mujoco.mjtGeom.mjGEOM_MESH)
-        ):
-            continue
-        mesh_id = int(model.geom_dataid[geom_id])
-        start = int(model.mesh_vertadr[mesh_id])
-        count = int(model.mesh_vertnum[mesh_id])
-        vertices = np.asarray(
-            model.mesh_vert[start : start + count], dtype=float
-        )
-        mesh_rotation = np.empty(9, dtype=float)
-        mujoco.mju_quat2Mat(mesh_rotation, model.mesh_quat[mesh_id])
-        vertices = (
-            mesh_rotation.reshape(3, 3) @ vertices.T
-        ).T + model.mesh_pos[mesh_id]
-        geom_rotation = np.asarray(
-            data.geom_xmat[geom_id], dtype=float
-        ).reshape(3, 3)
-        clouds.append(
-            (geom_rotation @ vertices.T).T + data.geom_xpos[geom_id]
-        )
-    return _voxel_downsample(np.concatenate(clouds))
-
-
-def _fit_yaw_registration(
-    observed_level,
-    cad_world,
-    *,
-    yaw_prior_deg=58.0,
-    maximum_yaw_error_deg=25.0,
-):
-    observed = _voxel_downsample(observed_level)
-    cad = _voxel_downsample(cad_world)
-    tree = cKDTree(cad)
-    candidates = np.linspace(
-        yaw_prior_deg - maximum_yaw_error_deg,
-        yaw_prior_deg + maximum_yaw_error_deg,
-        7,
+def _fixture_registration(calibration, fixture):
+    """Align levelled RGB-D using the base-to-incubator correspondence."""
+    anchors = calibration["anchor_xyz_level_m"]
+    source_base = np.asarray(anchors["right_piper_base"], dtype=float)
+    source_incubator = np.asarray(anchors["incubator"], dtype=float)
+    target_base = np.asarray(fixture["right_piper_base_xyz_m"], dtype=float)
+    target_incubator = np.asarray(
+        fixture["incubator"]["center_xyz_from_mount_m"], dtype=float
     )
-    results = []
-    for initial_deg in candidates:
-        yaw = np.deg2rad(initial_deg)
-        rotation = np.array(
-            [
-                [np.cos(yaw), -np.sin(yaw), 0.0],
-                [np.sin(yaw), np.cos(yaw), 0.0],
-                [0.0, 0.0, 1.0],
-            ]
-        )
-        translation = np.mean(cad, axis=0) - rotation @ np.mean(
-            observed, axis=0
-        )
-        for _ in range(40):
-            transformed = (
-                rotation @ observed.T
-            ).T + translation
-            distances, indices = tree.query(transformed)
-            keep = distances <= min(float(np.quantile(distances, 0.55)), 0.12)
-            source_xy = observed[keep, :2]
-            matched_xy = cad[indices[keep], :2] - translation[:2]
-            source_centered = source_xy - np.mean(source_xy, axis=0)
-            target_centered = matched_xy - np.mean(matched_xy, axis=0)
-            u, _, vt = np.linalg.svd(source_centered.T @ target_centered)
-            rotation_xy = vt.T @ u.T
-            if np.linalg.det(rotation_xy) < 0:
-                vt[-1] *= -1
-                rotation_xy = vt.T @ u.T
-            updated_rotation = np.eye(3)
-            updated_rotation[:2, :2] = rotation_xy
-            updated_translation = np.median(
-                cad[indices[keep]]
-                - (updated_rotation @ observed[keep].T).T,
-                axis=0,
-            )
-            rotation = 0.6 * rotation + 0.4 * updated_rotation
-            u, _, vt = np.linalg.svd(rotation)
-            rotation = u @ vt
-            translation = (
-                0.6 * translation + 0.4 * updated_translation
-            )
-        yaw_deg = float(
-            np.rad2deg(np.arctan2(rotation[1, 0], rotation[0, 0]))
-        )
-        yaw_error = abs(
-            (yaw_deg - yaw_prior_deg + 180.0) % 360.0 - 180.0
-        )
-        transformed = (rotation @ observed.T).T + translation
-        distances, _ = tree.query(transformed)
-        score = float(np.median(distances))
-        if yaw_error <= maximum_yaw_error_deg:
-            results.append(
-                (score, yaw_error, rotation, translation, initial_deg)
-            )
-    if not results:
-        raise RuntimeError("no ICP solution remained inside the yaw prior")
-    score, yaw_error, rotation, translation, initial_deg = min(results)
+    source_vector = source_incubator[:2] - source_base[:2]
+    target_vector = target_incubator[:2] - target_base[:2]
+    yaw = np.arctan2(target_vector[1], target_vector[0]) - np.arctan2(
+        source_vector[1], source_vector[0]
+    )
+    rotation = np.array(
+        [
+            [np.cos(yaw), -np.sin(yaw), 0.0],
+            [np.sin(yaw), np.cos(yaw), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    right_platform = float(
+        calibration["level_heights_m"]["right_platform"]
+    )
+    target_platform = float(
+        fixture["vertical_offsets_m"][
+            "right_platform_above_right_piper_mount"
+        ]
+    )
+    translation = target_base - rotation @ source_base
+    translation[2] = target_platform - right_platform
     transform = np.eye(4)
     transform[:3, :3] = rotation
     transform[:3, 3] = translation
+    mapped_incubator = rotation @ source_incubator + translation
     return transform, {
-        "method": "trimmed_yaw_icp_sam_robot_to_synchronized_cad",
-        "median_residual_m": score,
-        "yaw_deg": float(
-            np.rad2deg(np.arctan2(rotation[1, 0], rotation[0, 0]))
-        ),
-        "yaw_prior_deg": yaw_prior_deg,
-        "yaw_prior_error_deg": yaw_error,
-        "selected_initial_yaw_deg": float(initial_deg),
+        "method": "right_piper_base_to_incubator_vector",
+        "primary_constraint": "incubator_robot_distance_and_bearing",
+        "yaw_deg": float(np.rad2deg(yaw)),
         "translation_xyz_m": translation.tolist(),
-        "observed_points": int(len(observed)),
-        "cad_points": int(len(cad)),
+        "source_distance_m": float(np.linalg.norm(source_vector)),
+        "target_distance_m": float(np.linalg.norm(target_vector)),
+        "distance_disagreement_m": float(
+            abs(np.linalg.norm(source_vector) - np.linalg.norm(target_vector))
+        ),
+        "mapped_incubator_rgbd_anchor_m": mapped_incubator.tolist(),
+        "configured_incubator_center_m": target_incubator.tolist(),
+        "xy_residual_m": float(
+            np.linalg.norm(mapped_incubator[:2] - target_incubator[:2])
+        ),
     }
+
+
+def _write_positioned_robot_model(
+    source_path, destination, left_base, right_base
+):
+    """Write a derived independent-arm model with measured base positions."""
+    source_path = Path(source_path).resolve()
+    xml = source_path.read_text()
+    xml = xml.replace(
+        '<compiler angle="radian" meshdir="assets" />',
+        f'<compiler angle="radian" meshdir="{source_path.parent / "assets"}" />',
+    )
+    replacements = {
+        '<body name="left/base_link" pos="0 0.25 0"':
+            f'<body name="left/base_link" pos="{left_base[0]:.6f} '
+            f'{left_base[1]:.6f} {left_base[2]:.6f}"',
+        '<body name="right/base_link" pos="0 -0.25 0"':
+            f'<body name="right/base_link" pos="{right_base[0]:.6f} '
+            f'{right_base[1]:.6f} {right_base[2]:.6f}"',
+    }
+    for old, new in replacements.items():
+        if old not in xml:
+            raise RuntimeError(f"robot base declaration not found: {old}")
+        xml = xml.replace(old, new, 1)
+    Path(destination).write_text(xml)
 
 
 def _capture_geometry(capture_dir, report):
@@ -313,6 +258,7 @@ def build(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     calibration = json.loads(Path(args.calibration_report).read_text())
+    fixture = json.loads(Path(args.fixture_alignment).read_text())
     capture_manifest = json.loads(
         (Path(args.capture) / "manifest.json").read_text()
     )
@@ -322,45 +268,13 @@ def build(args):
     _, _, valid, level_points = _capture_geometry(
         args.capture, calibration
     )
-    robot_mask = _lowres_mask(args.robot_mask, valid.shape) & valid
-    observed_robot = level_points[robot_mask]
-    assignment_candidates = []
-    for assignment, first_q, second_q in (
-        ("model_left_is_physical_right", right_q, left_q),
-        ("model_left_is_physical_left", left_q, right_q),
-    ):
-        cad = _model_surface_points(args.robot_model, first_q, second_q)
-        candidate_transform, candidate_registration = (
-            _fit_yaw_registration(
-                observed_robot,
-                cad,
-                yaw_prior_deg=args.yaw_prior_deg,
-                maximum_yaw_error_deg=args.maximum_yaw_error_deg,
-            )
-        )
-        assignment_candidates.append(
-            (
-                candidate_registration["median_residual_m"],
-                assignment,
-                first_q,
-                second_q,
-                candidate_transform,
-                candidate_registration,
-            )
-        )
-    (
-        _,
-        selected_assignment,
-        model_first_q,
-        model_second_q,
-        transform,
-        registration,
-    ) = min(assignment_candidates, key=lambda candidate: candidate[0])
-    registration["joint_assignment"] = selected_assignment
-    registration["assignment_candidates"] = {
-        candidate[1]: candidate[5]["median_residual_m"]
-        for candidate in assignment_candidates
-    }
+    transform, registration = _fixture_registration(calibration, fixture)
+    right_base = np.asarray(fixture["right_piper_base_xyz_m"], dtype=float)
+    left_base_level = np.asarray(
+        calibration["anchor_xyz_level_m"]["left_piper_base"], dtype=float
+    )
+    left_base = transform[:3, :3] @ left_base_level + transform[:3, 3]
+    left_base[2] = right_base[2]
 
     mesh_archive = np.load(calibration["measured_scene_mesh"])
     vertices_level = np.asarray(mesh_archive["vertices_xyz_m"], dtype=float)
@@ -413,7 +327,9 @@ def build(args):
     left_table_height = float(
         transform[2, 3] + calibration["level_heights_m"]["left_table"]
     )
-    old_fridge = np.array([0.711, -0.174, platform_height + 0.175])
+    fridge = np.asarray(
+        fixture["incubator"]["center_xyz_from_mount_m"], dtype=float
+    )
     bottle_level = np.asarray(
         calibration["semantic_observations"][
             "culture_media_bottle_left"
@@ -427,16 +343,18 @@ def build(args):
     )
     dish = transform[:3, :3] @ dish_level + transform[:3, 3]
     model_path = Path(args.robot_model).resolve()
-    model_mesh_dir = model_path.parent / "assets"
+    positioned_model = output_dir / "positioned_bimanual_piper.xml"
+    _write_positioned_robot_model(
+        model_path, positioned_model, left_base, right_base
+    )
     qpos = " ".join(
-        f"{value:.9f}" for value in np.r_[model_first_q, model_second_q]
+        f"{value:.9f}" for value in np.r_[left_q, right_q]
     )
     ctrl = qpos
     xml_path = output_dir / "measured_full_lab_scene.mjcf"
     xml_path.write_text(
         f"""<mujoco model="pasteur_measured_full_lab">
-  <include file="{model_path}"/>
-  <compiler angle="radian" meshdir="{model_mesh_dir}"/>
+  <include file="{positioned_model.resolve()}"/>
   <statistic center="0.2 0 0.65" extent="1.35"/>
   <visual>
     <headlight ambient="0.35 0.35 0.35" diffuse="0.7 0.7 0.7"/>
@@ -461,7 +379,7 @@ def build(args):
           mesh="measured_static_visual" material="measured_rgbd"
           group="4" contype="0" conaffinity="0"/>
 {chr(10).join(support_geoms)}
-{_fridge_xml(old_fridge, platform_height)}
+{_fridge_xml(fridge, platform_height)}
 {_microscope_xml(microscope)}
     <body name="culture_media_bottle" pos="{bottle[0]:.6f} {bottle[1]:.6f} {bottle[2]:.6f}">
       <geom type="cylinder" size="0.0375 0.080" material="bottle_mat"/>
@@ -496,14 +414,20 @@ def build(args):
         ),
         "robot_layout": "two_fully_separate_upright_6dof_pipers",
         "registration": registration,
-        "T_robot_level": transform.tolist(),
+        "T_fixture_level": transform.tolist(),
+        "fixture_alignment": str(Path(args.fixture_alignment).resolve()),
+        "right_piper_base_m": right_base.tolist(),
+        "left_piper_base_m": left_base.tolist(),
+        "piper_base_separation_m": float(
+            np.linalg.norm(left_base[:2] - right_base[:2])
+        ),
         "right_platform_height_robot_m": platform_height,
         "left_table_height_robot_m": left_table_height,
         "height_difference_m": left_table_height - platform_height,
         "synchronized_q": {
-            "selected_assignment": selected_assignment,
-            "model_first_arm": model_first_q.tolist(),
-            "model_second_arm": model_second_q.tolist(),
+            "assignment": "model_left_is_physical_left",
+            "model_left_arm": left_q.tolist(),
+            "model_right_arm": right_q.tolist(),
         },
         "static_visual_mesh": {
             "vertices": static_vertices,
@@ -512,8 +436,16 @@ def build(args):
         },
         "collision_support_count": len(support_geoms),
         "microscope_visible_bounds": microscope,
-        "fridge_pose_source": "past measured incubator override + current platform height",
-        "fridge_center_m": old_fridge.tolist(),
+        "incubator_pose_source": "fixture primary anchor",
+        "incubator_center_m": fridge.tolist(),
+        "right_piper_to_incubator_center_distance_m": float(
+            np.linalg.norm(fridge[:2] - right_base[:2])
+        ),
+        "right_piper_to_incubator_front_distance_m": float(
+            fixture["incubator"][
+                "front_face_distance_from_right_piper_m"
+            ]
+        ),
         "bottle_center_m": bottle.tolist(),
         "dish_center_m": [
             float(dish[0]),
@@ -545,8 +477,10 @@ def main(argv=None):
         "--robot-model",
         default="robot/arm/mujoco/bimanual_piper_table.xml",
     )
-    parser.add_argument("--yaw-prior-deg", type=float, default=58.0)
-    parser.add_argument("--maximum-yaw-error-deg", type=float, default=25.0)
+    parser.add_argument(
+        "--fixture-alignment",
+        default="src/configs/pasteur_fixture_alignment.json",
+    )
     args = parser.parse_args(argv)
     report = build(args)
     print(json.dumps(report, indent=2))
