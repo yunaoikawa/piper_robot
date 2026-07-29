@@ -42,9 +42,18 @@ document.querySelector('#images').innerHTML=Object.entries(scene.images||{}).map
 document.querySelector('#objects').innerHTML=(scene.objects||[]).map((o,i)=>
 `<div class="card ${o.status}"><input value="${o.semantic_name}" id="n${i}">
 <span>${o.source} ${(o.confidence*100).toFixed(0)}%</span>
+<div>形状 <select id="t${i}"><option value="box" ${((o.geometry||{}).kind||(o.geometry||{}).type)==='box'?'selected':''}>box</option>
+<option value="cylinder" ${((o.geometry||{}).kind||(o.geometry||{}).type)==='cylinder'?'selected':''}>cylinder</option></select>
+寸法(m) ${[0,1,2].map(j=>`<input style="width:72px" type="number" step="0.001"
+id="s${i}_${j}" value="${((o.geometry||{}).size_xyz_m||[0,0,0])[j]||0}">`).join('')}</div>
+<div>支持面 <input value="${o.role||''}" id="r${i}"></div>
 <button onclick="setobj(${i},'confirmed')">確認</button>
 <button onclick="setobj(${i},'absent')">ない</button></div>`).join('')}
 async function setobj(i,status){scene.objects[i].semantic_name=document.querySelector('#n'+i).value;
+scene.objects[i].role=document.querySelector('#r'+i).value||null;
+let g=scene.objects[i].geometry||{};g.kind=document.querySelector('#t'+i).value;
+g.size_xyz_m=[0,1,2].map(j=>Number(document.querySelector(`#s${i}_${j}`).value));
+scene.objects[i].geometry=g;
 scene.objects[i].status=status;scene=await api('/api/objects',{revision:scene.revision,objects:scene.objects});load()}
 document.querySelector('#add').onclick=async()=>{let name=prompt('追加する物体名');
 if(!name)return;scene.objects.push({instance_id:'operator-'+Date.now(),semantic_name:name,

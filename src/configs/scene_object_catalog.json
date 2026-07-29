@@ -1,0 +1,87 @@
+{
+  "schema": "piper_robot.scene_object_catalog/v1",
+  "objects": [
+    {
+      "name": "robot",
+      "prompts": ["robot arm", "Piper robot arm"],
+      "completion": "exact_cad",
+      "primitive": "box",
+      "size_range_m": [[0.08, 0.08, 0.18], [0.80, 0.80, 1.20]],
+      "support": "horizontal_surface",
+      "minimum_confidence": 0.70,
+      "transparent": false,
+      "color": "#12c7c9",
+      "model": "robot/arm/mujoco/bimanual_piper_table.xml"
+    },
+    {
+      "name": "incubator",
+      "prompts": ["laboratory incubator", "small lab refrigerator"],
+      "completion": "template",
+      "primitive": "box",
+      "nominal_size_m": [0.28, 0.25, 0.35],
+      "size_range_m": [[0.20, 0.18, 0.25], [0.45, 0.45, 0.60]],
+      "support": "horizontal_surface",
+      "minimum_confidence": 0.74,
+      "transparent": false,
+      "color": "#f2d72f"
+    },
+    {
+      "name": "microscope",
+      "prompts": ["laboratory microscope", "microscope"],
+      "completion": "primitive",
+      "primitive": "box",
+      "size_range_m": [[0.10, 0.10, 0.15], [0.55, 0.55, 0.75]],
+      "support": "horizontal_surface",
+      "minimum_confidence": 0.72,
+      "transparent": false,
+      "color": "#e333d1"
+    },
+    {
+      "name": "culture_media_bottle",
+      "prompts": ["culture media bottle", "laboratory media bottle"],
+      "completion": "primitive",
+      "primitive": "cylinder",
+      "nominal_size_m": [0.075, 0.075, 0.16],
+      "size_range_m": [[0.04, 0.04, 0.08], [0.12, 0.12, 0.28]],
+      "support": "horizontal_surface",
+      "minimum_confidence": 0.76,
+      "transparent": false,
+      "color": "#ff8c1a"
+    },
+    {
+      "name": "petri_dish",
+      "prompts": ["petri dish body", "petri dish"],
+      "completion": "template",
+      "primitive": "cylinder",
+      "nominal_size_m": [0.09, 0.09, 0.014],
+      "size_range_m": [[0.03, 0.03, 0.005], [0.20, 0.20, 0.04]],
+      "support": "horizontal_surface",
+      "minimum_confidence": 0.78,
+      "transparent": true,
+      "color": "#70b7e6"
+    },
+    {
+      "name": "petri_lid",
+      "prompts": ["transparent petri dish lid", "petri dish lid"],
+      "completion": "template",
+      "primitive": "cylinder",
+      "nominal_size_m": [0.094, 0.094, 0.006],
+      "size_range_m": [[0.03, 0.03, 0.003], [0.21, 0.21, 0.03]],
+      "support": "horizontal_surface",
+      "minimum_confidence": 0.80,
+      "transparent": true,
+      "color": "#4f9dd1"
+    },
+    {
+      "name": "work_platform",
+      "prompts": ["raised laboratory work platform", "metal platform"],
+      "completion": "primitive",
+      "primitive": "box",
+      "size_range_m": [[0.10, 0.10, 0.01], [1.50, 1.50, 0.20]],
+      "support": "horizontal_surface",
+      "minimum_confidence": 0.70,
+      "transparent": false,
+      "color": "#343b46"
+    }
+  ]
+}
