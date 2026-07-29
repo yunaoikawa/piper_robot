@@ -27,7 +27,31 @@ def _primitive(kind, size, center, yaw=0.0):
     return (rotation @ vertices.T).T + center, faces
 
 
-def _arm_mesh(model_path, q, side):
+def _nyu_gripper_in_link6(model_path):
+    model = mujoco.MjModel.from_xml_path(str(model_path))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    geom = model.geom("gripper_body_visual")
+    mesh_id = int(model.geom_dataid[geom.id])
+    va = int(model.mesh_vertadr[mesh_id])
+    vn = int(model.mesh_vertnum[mesh_id])
+    fa = int(model.mesh_faceadr[mesh_id])
+    fn = int(model.mesh_facenum[mesh_id])
+    vertices = np.asarray(model.mesh_vert[va : va + vn], float)
+    geom_rotation = np.asarray(data.geom_xmat[geom.id]).reshape(3, 3)
+    world_vertices = (
+        geom_rotation @ vertices.T
+    ).T + data.geom_xpos[geom.id]
+    link6 = data.body("link6")
+    link6_rotation = np.asarray(link6.xmat).reshape(3, 3)
+    local_vertices = (
+        link6_rotation.T @ (world_vertices - link6.xpos).T
+    ).T
+    faces = np.asarray(model.mesh_face[fa : fa + fn], int)
+    return local_vertices, faces
+
+
+def _arm_mesh(model_path, gripper_model_path, q, side):
     model = mujoco.MjModel.from_xml_path(str(model_path))
     data = mujoco.MjData(model)
     try:
@@ -59,18 +83,28 @@ def _arm_mesh(model_path, q, side):
     base_id = int(model.body(base_name).id)
     base = data.body(base_name).xpos.copy()
 
-    def belongs_to_arm(body_id):
+    def is_descendant(body_id, ancestor_id):
         while body_id:
-            if body_id == base_id:
+            if body_id == ancestor_id:
                 return True
             body_id = int(model.body_parentid[body_id])
         return False
 
+    native_gripper_id = None
+    if joint_mapping == "complete_6dof":
+        native_gripper_id = int(model.body(f"{side}/gripper_base").id)
     parts = []
     for geom_id in range(model.ngeom):
         if (
-            not belongs_to_arm(int(model.geom_bodyid[geom_id]))
+            not is_descendant(int(model.geom_bodyid[geom_id]), base_id)
             or model.geom_group[geom_id] != 2
+            or (
+                native_gripper_id is not None
+                and is_descendant(
+                    int(model.geom_bodyid[geom_id]),
+                    native_gripper_id,
+                )
+            )
         ):
             continue
         mesh_id = int(model.geom_dataid[geom_id])
@@ -87,6 +121,17 @@ def _arm_mesh(model_path, q, side):
         part = (geom_rotation @ part.T).T + data.geom_xpos[geom_id] - base
         part_faces = np.asarray(model.mesh_face[fa : fa + fn], int)
         parts.append((part, part_faces))
+    if native_gripper_id is not None:
+        local_gripper, gripper_faces = _nyu_gripper_in_link6(
+            gripper_model_path
+        )
+        link6 = data.body(f"{side}/link6")
+        link6_rotation = np.asarray(link6.xmat).reshape(3, 3)
+        gripper_vertices = (
+            link6_rotation @ local_gripper.T
+        ).T + link6.xpos - base
+        parts.append((gripper_vertices, gripper_faces))
+        joint_mapping = "complete_6dof_plus_nyu_gripper_only"
     return parts, joint_mapping
 
 
@@ -187,13 +232,22 @@ def complete(args):
         "left_robot": np.asarray(state["left_joint_positions_rad"], float),
         "right_robot": np.asarray(state["right_joint_positions_rad"], float),
     }
-    model_by_name = {
-        "left_robot": args.left_robot_model,
-        "right_robot": args.right_robot_model,
+    if args.robot_pose == "upright_home":
+        upright_home = np.array(
+            [0.0, 1.5857, -1.4835, 0.0, 0.0, 0.0]
+        )
+        q_by_name = {
+            "left_robot": upright_home.copy(),
+            "right_robot": upright_home.copy(),
+        }
+    gripper_model_by_name = {
+        "left_robot": args.left_gripper_model,
+        "right_robot": args.right_gripper_model,
     }
     cad_result_by_name = {
         name: _arm_mesh(
-            model_by_name[name],
+            args.robot_model,
+            gripper_model_by_name[name],
             q,
             "left" if name == "left_robot" else "right",
         )
@@ -267,11 +321,15 @@ def complete(args):
         traces.extend(robot_traces)
         report["objects"][name] = {
             "completion": "exact_mujoco_forward_kinematics_at_synchronized_joint_state",
-            "model_source": str(Path(model_by_name[name]).resolve()),
+            "model_source": str(Path(args.robot_model).resolve()),
+            "nyu_gripper_source": str(
+                Path(gripper_model_by_name[name]).resolve()
+            ),
             "base_position_source": "rgbd_base_anchor",
             "base_xyz_level_m": translation.tolist(),
             "shared_upright_yaw_deg": float(np.rad2deg(base_yaw)),
             "joint_mapping": joint_mapping,
+            "pose_source": args.robot_pose,
             "mobile_mesh_trace_count": len(robot_traces),
             "maximum_trace_vertices": max(
                 len(trace.x) for trace in robot_traces
@@ -479,12 +537,21 @@ def main():
         help="exactly two measured support OBJ files",
     )
     parser.add_argument(
-        "--left-robot-model",
+        "--robot-model",
+        default="robot/arm/mujoco/bimanual_piper_table.xml",
+    )
+    parser.add_argument(
+        "--left-gripper-model",
         default="robot/arm/mujoco/piper_left.xml",
     )
     parser.add_argument(
-        "--right-robot-model",
+        "--right-gripper-model",
         default="robot/arm/mujoco/piper_right.xml",
+    )
+    parser.add_argument(
+        "--robot-pose",
+        choices=("upright_home", "synchronized"),
+        default="synchronized",
     )
     args = parser.parse_args()
     if len(args.platform_obj) != 2:
