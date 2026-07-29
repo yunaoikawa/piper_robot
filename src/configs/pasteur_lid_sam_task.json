@@ -54,7 +54,7 @@
     "empty_close_ratio": 0.01,
     "maximum_monitor_s": 6.0,
     "sample_period_s": 0.2,
-    "verification_lift_m": 0.002,
-    "minimum_target_follow_m": 0.001
+    "verification_lift_m": 0.005,
+    "minimum_target_follow_m": 0.0025
   }
 }

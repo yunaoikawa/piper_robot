@@ -13,6 +13,7 @@ def test_nominal_state_sequence_needs_no_external_reasoning():
         tool_horizontal=True,
         target_in_window=True,
         tip_at_support=True,
+        lowest_point_reached=True,
         closure_captured=True,
         target_followed_lift=True,
     )
@@ -41,6 +42,20 @@ def test_tip_on_target_branches_to_recovery():
     )
     assert decision.state == GraspState.RECOVER_TIP_CONTACT
     assert decision.action == "LIFT_AND_REALIGN"
+
+
+def test_sam_ready_cannot_close_before_lowest_point():
+    decision = decide_state(
+        GraspState.DESCEND_PROBE,
+        GraspGates(
+            target_visible=True,
+            target_in_window=True,
+            tip_at_support=True,
+            lowest_point_reached=False,
+        ),
+    )
+    assert decision.state == GraspState.DESCEND_PROBE
+    assert decision.action == "DESCEND_2MM"
 
 
 def test_recovery_limit_fails_closed():

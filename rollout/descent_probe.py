@@ -16,6 +16,69 @@ class DescentProbeAssessment:
     early_contact: bool
 
 
+@dataclass(frozen=True)
+class LowestPointAssessment:
+    """State update for proving that the tool cannot descend farther."""
+
+    candidate: bool
+    confirmed: bool
+    consecutive_candidates: int
+    progress_ratio: float
+    contact_signal: bool
+
+
+def assess_lowest_point(
+    *,
+    probe: DescentProbeAssessment,
+    support_clearance_m: float,
+    maximum_support_clearance_m: float,
+    minimum_progress_ratio: float,
+    minimum_torque_change_nm: float,
+    previous_consecutive_candidates: int,
+    required_consecutive_candidates: int,
+) -> LowestPointAssessment:
+    """Require repeated stalled probes before permitting gripper closure.
+
+    A single short move can be controller lag.  A lowest point therefore
+    needs both poor downward progress and either a physical torque change or
+    agreement from the observed support plane, repeated on consecutive
+    probes.
+    """
+
+    values = (
+        support_clearance_m,
+        maximum_support_clearance_m,
+        minimum_progress_ratio,
+        minimum_torque_change_nm,
+    )
+    if (
+        not np.all(np.isfinite(values))
+        or maximum_support_clearance_m < 0
+        or not 0 <= minimum_progress_ratio <= 1
+        or minimum_torque_change_nm < 0
+        or previous_consecutive_candidates < 0
+        or required_consecutive_candidates < 1
+    ):
+        raise ValueError("invalid lowest-point assessment parameters")
+    contact_signal = bool(
+        probe.maximum_torque_change_nm >= minimum_torque_change_nm
+        or support_clearance_m <= maximum_support_clearance_m
+    )
+    candidate = bool(
+        probe.progress_ratio < minimum_progress_ratio and contact_signal
+    )
+    consecutive = (
+        previous_consecutive_candidates + 1 if candidate else 0
+    )
+    return LowestPointAssessment(
+        candidate=candidate,
+        confirmed=consecutive >= required_consecutive_candidates,
+        consecutive_candidates=consecutive,
+        progress_ratio=probe.progress_ratio,
+        contact_signal=contact_signal,
+    )
+
+
 def assess_descent_probe(
     *,
     requested_distance_m: float,

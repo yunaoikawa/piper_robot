@@ -36,12 +36,15 @@
     "descent_probe_step_m": 0.002,
     "descent_probe_duration_s": 0.5,
     "maximum_descent_probes": 8,
+    "required_lowest_point_probes": 2,
+    "maximum_probe_below_support_m": 0.008,
     "minimum_descent_progress_ratio_at_contact": 0.3,
     "minimum_torque_change_nm": 0.1,
     "recovery_lift_m": 0.004,
+    "realignment_lift_m": 0.010,
     "maximum_preclose_recoveries": 4,
     "empty_close_ratio": 0.01,
-    "verification_lift_m": 0.002,
-    "minimum_target_follow_m": 0.001
+    "verification_lift_m": 0.005,
+    "minimum_target_follow_m": 0.0025
   }
 }

@@ -47,7 +47,7 @@ from rollout.autonomous_grasp_state_machine import (
     GraspState,
     decide_state,
 )
-from rollout.descent_probe import assess_descent_probe
+from rollout.descent_probe import assess_descent_probe, assess_lowest_point
 from rollout.grasp_contact_verification import assess_stable_closure
 from rollout.grasp_readiness import PrecloseThresholds, assess_preclose
 from rollout.grasp_window import (
@@ -568,10 +568,20 @@ def run_live(config, args, state, calibration):
         grasp = config["grasp"]
         thresholds = PrecloseThresholds.from_dict(grasp)
         maximum_probes = int(grasp["maximum_descent_probes"])
+        required_lowest_point_probes = int(
+            grasp["required_lowest_point_probes"]
+        )
+        maximum_probe_below_support_m = float(
+            grasp["maximum_probe_below_support_m"]
+        )
         recoveries = 0
         right_observation = None
         readiness = None
-        for probe_index in range(maximum_probes + 1):
+        lowest_point_confirmed = False
+        lowest_point_streak = 0
+        probe_index = 0
+        allowed = False
+        while probe_index <= maximum_probes:
             right_observation = perception.right_snapshot(reference)
             orientation_error = quaternion_angle_deg(
                 right_observation.scene.ee_pose.wxyz,
@@ -602,6 +612,7 @@ def run_live(config, args, state, calibration):
                     and readiness.finger_pad_at_target
                 ),
                 tip_at_support=readiness.tool_tip_at_support,
+                lowest_point_reached=lowest_point_confirmed,
                 recoveries=recoveries,
                 maximum_recoveries=int(
                     grasp["maximum_preclose_recoveries"]
@@ -614,7 +625,11 @@ def run_live(config, args, state, calibration):
             if preclose.state == GraspState.DESCEND_PROBE:
                 preclose = decide_state(preclose.state, gates)
             allowed = bool(
-                readiness.allowed
+                lowest_point_confirmed
+                and not (
+                    set(readiness.reasons)
+                    - {"tool_tip_not_at_support_plane"}
+                )
                 and preclose.state == GraspState.CLOSE_AND_MONITOR
             )
             state.event(
@@ -633,24 +648,84 @@ def run_live(config, args, state, calibration):
                 normalized_pad_target_gap=gap,
                 orientation_error_deg=orientation_error,
                 tool_support_clearance_m=tool_clearance,
+                lowest_point_confirmed=lowest_point_confirmed,
+                lowest_point_streak=lowest_point_streak,
                 readiness=readiness.to_dict(),
                 image=right_observation.image,
             )
             if allowed:
                 break
-            non_support_reasons = set(readiness.reasons) - {
-                "tool_tip_not_at_support_plane"
-            }
-            if non_support_reasons:
-                executor.sender.hold()
-                raise AutonomousStop(
-                    "generic pregrasp gate rejected before descent: "
-                    f"{tuple(sorted(non_support_reasons))}"
+            if lowest_point_confirmed:
+                lowest_point_visual_reasons = tuple(
+                    sorted(
+                        set(readiness.reasons)
+                        - {"tool_tip_not_at_support_plane"}
+                    )
                 )
-            if tool_clearance < -thresholds.maximum_tip_penetration_m:
+                recoveries += 1
+                if recoveries > int(
+                    grasp["maximum_preclose_recoveries"]
+                ):
+                    executor.sender.hold()
+                    raise AutonomousStop(
+                        "lowest-point SAM gate rejected closure after "
+                        f"{recoveries - 1} realignments: "
+                        f"{lowest_point_visual_reasons}"
+                    )
+                recovery_start = Pose.from_se3(
+                    runner.rpc.get_right_ee_pose()
+                )
+                recovery_finish = Pose(
+                    recovery_start.wxyz,
+                    tuple(
+                        float(value)
+                        for value in (
+                            np.asarray(recovery_start.xyz)
+                            + float(grasp["realignment_lift_m"])
+                            * np.asarray(free_normal)
+                        )
+                    ),
+                )
+                recovery_waypoints = minimum_jerk_segment(
+                    recovery_start,
+                    recovery_finish,
+                    1.0,
+                    stage="lowest_point_sam_recovery_lift",
+                )
+                recovery_simulation = MuJoCoIKValidator(
+                    config["mujoco_model"],
+                    runner.rpc.get_right_joint_positions(),
+                    left_q=runner.rpc.get_left_joint_positions(),
+                )
+                for waypoint in recovery_waypoints:
+                    recovery_simulation.validate(waypoint.pose)
+                executor.execute(recovery_waypoints)
+                reference, _ = perception.head_snapshot()
+                recovery_plan = make_plan(reference)
+                reference, replans = execute_visual_plan(
+                    recovery_plan, reference, replans
+                )
+                state.event(
+                    "lowest_point_sam_realign",
+                    recovery=recoveries,
+                    reasons=lowest_point_visual_reasons,
+                    lifted_m=float(grasp["realignment_lift_m"]),
+                )
+                lowest_point_confirmed = False
+                lowest_point_streak = 0
+                probe_index = 0
+                continue
+            if not readiness.tool_horizontal:
                 executor.sender.hold()
                 raise AutonomousStop(
-                    "tool mesh penetrates the observed support plane"
+                    "tool lost demonstrated horizontal orientation during "
+                    "lowest-point descent"
+                )
+            if tool_clearance < -maximum_probe_below_support_m:
+                executor.sender.hold()
+                raise AutonomousStop(
+                    "maximum bounded distance below the observed support "
+                    "plane exceeded"
                 )
             if probe_index >= maximum_probes:
                 executor.sender.hold()
@@ -663,7 +738,7 @@ def run_live(config, args, state, calibration):
                 max(
                     0.0,
                     tool_clearance
-                    - 0.5 * thresholds.maximum_tip_clearance_m,
+                    + maximum_probe_below_support_m,
                 ),
             )
             if requested <= 0:
@@ -695,7 +770,7 @@ def run_live(config, args, state, calibration):
             for waypoint in probe_waypoints:
                 simulation.validate(waypoint.pose)
             predicted_clearance = tool_clearance - requested
-            if predicted_clearance < -thresholds.maximum_tip_penetration_m:
+            if predicted_clearance < -maximum_probe_below_support_m:
                 executor.sender.hold()
                 raise AutonomousStop(
                     "bounded probe would penetrate the support plane"
@@ -735,6 +810,27 @@ def run_live(config, args, state, calibration):
                     grasp["minimum_torque_change_nm"]
                 ),
             )
+            lowest_point = assess_lowest_point(
+                probe=probe,
+                support_clearance_m=clearance_after,
+                maximum_support_clearance_m=(
+                    thresholds.maximum_tip_clearance_m
+                ),
+                minimum_progress_ratio=float(
+                    grasp[
+                        "minimum_descent_progress_ratio_at_contact"
+                    ]
+                ),
+                minimum_torque_change_nm=float(
+                    grasp["minimum_torque_change_nm"]
+                ),
+                previous_consecutive_candidates=lowest_point_streak,
+                required_consecutive_candidates=(
+                    required_lowest_point_probes
+                ),
+            )
+            lowest_point_streak = lowest_point.consecutive_candidates
+            lowest_point_confirmed = lowest_point.confirmed
             state.event(
                 "bounded_descent_probe",
                 probe=probe_index,
@@ -744,63 +840,12 @@ def run_live(config, args, state, calibration):
                 maximum_torque_change_nm=probe.maximum_torque_change_nm,
                 early_contact=probe.early_contact,
                 support_clearance_m=clearance_after,
+                lowest_point_candidate=lowest_point.candidate,
+                lowest_point_confirmed=lowest_point.confirmed,
+                lowest_point_streak=lowest_point.consecutive_candidates,
             )
-            if probe.early_contact:
-                recoveries += 1
-                recovery_start = Pose.from_se3(
-                    runner.rpc.get_right_ee_pose()
-                )
-                recovery_finish = Pose(
-                    recovery_start.wxyz,
-                    tuple(
-                        float(value)
-                        for value in (
-                            np.asarray(recovery_start.xyz)
-                            + float(grasp["recovery_lift_m"])
-                            * np.asarray(free_normal_after)
-                        )
-                    ),
-                )
-                recovery_waypoints = minimum_jerk_segment(
-                    recovery_start,
-                    recovery_finish,
-                    float(grasp["descent_probe_duration_s"]),
-                    stage="release_early_tip_contact",
-                )
-                recovery_simulation = MuJoCoIKValidator(
-                    config["mujoco_model"],
-                    runner.rpc.get_right_joint_positions(),
-                    left_q=runner.rpc.get_left_joint_positions(),
-                )
-                for waypoint in recovery_waypoints:
-                    recovery_simulation.validate(waypoint.pose)
-                executor.execute(recovery_waypoints)
-                recovery = decide_state(
-                    GraspState.DESCEND_PROBE,
-                    GraspGates(
-                        tip_on_target=True,
-                        recoveries=recoveries,
-                        maximum_recoveries=int(
-                            grasp["maximum_preclose_recoveries"]
-                        ),
-                    ),
-                )
-                executor.sender.hold()
-                state.event(
-                    "tip_contact_recovery",
-                    recovery=recoveries,
-                    state=recovery.state.value,
-                    action=recovery.action,
-                    lifted_m=float(grasp["recovery_lift_m"]),
-                )
-                # A wrist-image-to-robot lateral Jacobian has not been
-                # validated for this camera pose. Releasing the contact is
-                # deterministic; guessing a lateral direction is not.
-                raise AutonomousStop(
-                    "early fingertip contact released; no validated lateral "
-                    "image Jacobian is available for automatic realignment"
-                )
-        else:
+            probe_index += 1
+        if not allowed:
             raise AutonomousStop("preclose feedback loop did not converge")
 
         before_target = np.asarray(reference.target_xyz_m)

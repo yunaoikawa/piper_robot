@@ -26,6 +26,7 @@ class GraspGates:
     tool_horizontal: bool = False
     target_in_window: bool = False
     tip_at_support: bool = False
+    lowest_point_reached: bool = False
     tip_on_target: bool = False
     closure_captured: bool = False
     target_followed_lift: bool = False
@@ -72,8 +73,10 @@ def decide_state(state: GraspState, gates: GraspGates) -> StateDecision:
                 "LIFT_AND_REALIGN",
                 "tip_contacted_target",
             )
-        if not gates.tip_at_support:
-            return StateDecision(state, "DESCEND_2MM", "support_not_reached")
+        if not gates.lowest_point_reached:
+            return StateDecision(
+                state, "DESCEND_2MM", "lowest_point_not_proven"
+            )
         if not gates.target_in_window:
             return StateDecision(GraspState.FINE_ALIGN, "LIFT_AND_REALIGN", "window_shift")
         return StateDecision(
