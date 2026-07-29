@@ -28,9 +28,17 @@ def render(args):
     base_quaternion = np.array(
         [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
     )
+    try:
+        model.joint("right/joint1")
+        complete_model = True
+    except KeyError:
+        complete_model = False
     for side in ("right", "left"):
-        prefix = "left_" if side == "left" else ""
-        body = model.body(f"{prefix}base_link")
+        if complete_model:
+            body = model.body(f"{side}/base_link")
+        else:
+            prefix = "left_" if side == "left" else ""
+            body = model.body(f"{prefix}base_link")
         pose = object_report[f"{side}_robot"]["base_xyz_level_m"]
         model.body_pos[body.id] = pose
         model.body_quat[body.id] = base_quaternion
@@ -42,9 +50,13 @@ def render(args):
     renderer = mujoco.Renderer(
         model, height=args.height, width=args.width
     )
-    topdown_camera = model.camera("topdown")
-    model.cam_pos[topdown_camera.id] = [-0.10, 0.24, 1.30]
-    model.cam_fovy[topdown_camera.id] = 52
+    camera = mujoco.MjvCamera()
+    mujoco.mjv_defaultCamera(camera)
+    camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+    camera.lookat[:] = [-0.10, 0.24, 0.02]
+    camera.distance = 1.05
+    camera.azimuth = 145
+    camera.elevation = -32
     scene_option = mujoco.MjvOption()
     mujoco.mjv_defaultOption(scene_option)
     scene_option.geomgroup[:] = 0
@@ -68,15 +80,22 @@ def render(args):
             phase = 2 * np.pi * frame_index / max(frame_count - 1, 1)
             envelope = np.sin(phase)
             for side, target in q_targets.items():
-                prefix = "left_" if side == "left" else ""
                 direction = -1.0 if side == "left" else 1.0
                 offsets = direction * envelope * np.array(
-                    [0.18, 0.10, -0.08, 0.12, 0.16]
+                    [0.18, 0.10, -0.08, 0.12, 0.16, 0.14]
                 )
                 for joint_index, value in enumerate(
-                    target[:5] + offsets, 1
+                    target[:len(offsets)] + offsets, 1
                 ):
-                    joint = model.joint(f"{prefix}joint{joint_index}")
+                    if complete_model:
+                        joint = model.joint(f"{side}/joint{joint_index}")
+                    else:
+                        prefix = "left_" if side == "left" else ""
+                        if joint_index == 6:
+                            continue
+                        joint = model.joint(
+                            f"{prefix}joint{joint_index}"
+                        )
                     data.qpos[int(joint.qposadr[0])] = np.clip(
                         value,
                         model.jnt_range[joint.id, 0] + 0.01,
@@ -84,7 +103,7 @@ def render(args):
                     )
             mujoco.mj_forward(model, data)
             renderer.update_scene(
-                data, camera="topdown", scene_option=scene_option
+                data, camera=camera, scene_option=scene_option
             )
             encoder.stdin.write(renderer.render().tobytes())
     finally:
@@ -101,7 +120,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model",
-        default="robot/piper-mujoco/xml/lab-scene.xml",
+        default="robot/arm/mujoco/bimanual_piper_table.xml",
     )
     parser.add_argument("--capture", required=True)
     parser.add_argument("--scene-report", required=True)

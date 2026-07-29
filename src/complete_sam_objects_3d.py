@@ -30,12 +30,22 @@ def _primitive(kind, size, center, yaw=0.0):
 def _arm_mesh(model_path, q, side):
     model = mujoco.MjModel.from_xml_path(str(model_path))
     data = mujoco.MjData(model)
-    joint_prefix = "left_" if side == "left" else ""
-    for index, value in enumerate(q[:5], 1):
-        joint = model.joint(f"{joint_prefix}joint{index}")
+    try:
+        model.joint(f"{side}/joint1")
+        joint_names = [f"{side}/joint{index}" for index in range(1, 7)]
+        base_name = f"{side}/base_link"
+        joint_mapping = "complete_6dof"
+    except KeyError:
+        joint_prefix = "left_" if side == "left" else ""
+        joint_names = [
+            f"{joint_prefix}joint{index}" for index in range(1, 6)
+        ]
+        base_name = "left_base_link" if side == "left" else "base_link"
+        joint_mapping = "legacy_5dof"
+    for name, value in zip(joint_names, q):
+        joint = model.joint(name)
         data.qpos[int(joint.qposadr[0])] = value
     mujoco.mj_forward(model, data)
-    base_name = "left_base_link" if side == "left" else "base_link"
     base_id = int(model.body(base_name).id)
     base = data.body(base_name).xpos.copy()
 
@@ -67,7 +77,7 @@ def _arm_mesh(model_path, q, side):
         part = (geom_rotation @ part.T).T + data.geom_xpos[geom_id] - base
         part_faces = np.asarray(model.mesh_face[fa : fa + fn], int)
         parts.append((part, part_faces))
-    return parts
+    return parts, joint_mapping
 
 
 def _mesh_trace(vertices, faces, name, color, opacity=1.0):
@@ -167,7 +177,7 @@ def complete(args):
         "left_robot": np.asarray(state["left_joint_positions_rad"], float),
         "right_robot": np.asarray(state["right_joint_positions_rad"], float),
     }
-    cad_parts_by_name = {
+    cad_result_by_name = {
         name: _arm_mesh(
             args.robot_model,
             q,
@@ -213,7 +223,10 @@ def complete(args):
         anchor[2] = float(np.quantile(selected[:, 2], 0.01))
     base_vector = base_by_name["left_robot"][:2] - base_by_name["right_robot"][:2]
     # The source MJCF has right->left along +Y.
-    base_yaw = float(np.arctan2(base_vector[1], base_vector[0]) - np.pi / 2)
+    base_yaw = float(
+        np.arctan2(base_vector[1], base_vector[0]) + np.pi / 2
+    )
+    base_yaw = float(np.arctan2(np.sin(base_yaw), np.cos(base_yaw)))
     base_rotation = np.array(
         [
             [np.cos(base_yaw), -np.sin(base_yaw), 0],
@@ -222,7 +235,7 @@ def complete(args):
         ]
     )
     for name in ("left_robot", "right_robot"):
-        cad_parts = cad_parts_by_name[name]
+        cad_parts, joint_mapping = cad_result_by_name[name]
         translation = base_by_name[name]
         completed_parts = [
             ((base_rotation @ part.T).T + translation, part_faces)
@@ -244,7 +257,7 @@ def complete(args):
             "base_position_source": "rgbd_base_anchor",
             "base_xyz_level_m": translation.tolist(),
             "shared_upright_yaw_deg": float(np.rad2deg(base_yaw)),
-            "joint_mapping": "MacBook MJCF joint1..joint5; synchronized joint6 unavailable in that model",
+            "joint_mapping": joint_mapping,
             "mobile_mesh_trace_count": len(robot_traces),
             "maximum_trace_vertices": max(
                 len(trace.x) for trace in robot_traces
@@ -453,7 +466,7 @@ def main():
     )
     parser.add_argument(
         "--robot-model",
-        default="robot/piper-mujoco/xml/lab-scene.xml",
+        default="robot/arm/mujoco/bimanual_piper_table.xml",
     )
     args = parser.parse_args()
     if len(args.platform_obj) != 2:
