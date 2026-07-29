@@ -1,5 +1,5 @@
 {
-  "schema": "piper_robot.autonomous_sam_lid_grasp_config/v1",
+  "schema": "piper_robot.autonomous_sam_target_grasp_config/v2",
   "camera_udids": {
     "head": "00008101-0015486E1412001E",
     "right": "00008030-00121D820EE0802E",
@@ -28,11 +28,20 @@
     "maximum_rotation_error_deg": 3.0
   },
   "grasp": {
-    "right_goal_px": [189.7, 296.8],
-    "right_tolerance_px": 8.0,
-    "maximum_gripper_lid_m": 0.01,
+    "window_selection": "src/configs/pasteur_grasp_window_selection.json",
+    "maximum_orientation_error_deg": 3.0,
+    "maximum_tip_clearance_m": 0.002,
+    "maximum_tip_penetration_m": 0.001,
+    "maximum_normalized_image_gap": 0.08,
+    "descent_probe_step_m": 0.002,
+    "descent_probe_duration_s": 0.5,
+    "maximum_descent_probes": 8,
+    "minimum_descent_progress_ratio_at_contact": 0.3,
+    "minimum_torque_change_nm": 0.1,
+    "recovery_lift_m": 0.004,
+    "maximum_preclose_recoveries": 4,
     "empty_close_ratio": 0.01,
-    "verification_lift_m": 0.01,
-    "minimum_lid_follow_m": 0.005
+    "verification_lift_m": 0.002,
+    "minimum_target_follow_m": 0.001
   }
 }

@@ -1,0 +1,43 @@
+{
+  "schema": "piper_robot.grasp_window_ablation_manifest/v1",
+  "reference": {
+    "image_path": "task_goals/pasteur_lid_grip_start_right_0082_q90.jpg",
+    "ellipse": {
+      "center_px": [182, 322],
+      "axes_px": [121, 66],
+      "angle_deg": -8
+    }
+  },
+  "samples": [
+    {
+      "id": "approach_frame_60",
+      "image_path": "task_goals/pasteur_lid_approach_right_0060.jpg",
+      "ellipse": {
+        "center_px": [140, 324],
+        "axes_px": [128, 65],
+        "angle_deg": -8
+      },
+      "expected_window_ready": false
+    },
+    {
+      "id": "grip_start_frame_82",
+      "image_path": "task_goals/pasteur_lid_grip_start_right_0082_q90.jpg",
+      "ellipse": {
+        "center_px": [182, 322],
+        "axes_px": [121, 66],
+        "angle_deg": -8
+      },
+      "expected_window_ready": true
+    },
+    {
+      "id": "grip_hold_frame_90",
+      "image_path": "task_goals/pasteur_lid_grip_hold_right_0090.jpg",
+      "ellipse": {
+        "center_px": [188, 322],
+        "axes_px": [121, 66],
+        "angle_deg": -8
+      },
+      "expected_window_ready": true
+    }
+  ]
+}

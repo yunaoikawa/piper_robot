@@ -1,49 +1,60 @@
 {
-  "schema": "piper_robot.sam_lid_task/v1",
-  "object": {
-    "name": "transparent petri dish lid",
-    "runtime_apriltag_required": false,
-    "head_prompt": "transparent round petri dish lid with blue cross"
+  "schema": "piper_robot.sam_target_task/v2",
+  "target": {
+    "semantic_name": "transparent round planar object",
+    "sam_prompt": "transparent round petri dish lid with blue cross",
+    "shape_class": "thin_planar",
+    "transparent": true,
+    "runtime_apriltag_required": false
   },
-  "demonstration_goal": {
+  "demonstration_reference": {
     "selection": "start of longest gripper-closed run",
     "frame_index": 82,
     "right_image_path": "src/configs/task_goals/pasteur_lid_grip_start_right_0082_q90.jpg",
     "right_image_sha256": "81fe0362647d567b3765252ed82135f806241a20c7e21e8817c90bd7d3256b8a",
     "source_png_sha256": "829d465a4972cbd3e2b3fcefc194e00a56d90ef354a4f86d18e0ad9cd8441ea5",
     "right_image_shape_hw": [480, 640],
-    "user_confirmed_lid_ellipse": {
-      "center_px": [182, 322],
-      "axes_px": [121, 66],
-      "angle_deg": -8
-    }
-  },
-  "head_coarse_alignment": {
-    "lid_feature": "left endpoint of SAM lid ellipse",
-    "gripper_feature": "right terminal of dominant cyan component inside the SAM gripper mask",
-    "desired_gripper_minus_lid_uv_px": [0.0, 0.0],
-    "tolerance_px": 6.0,
-    "purpose": "pregrasp only; the right-camera demonstration goal controls final alignment"
-  },
-  "right_fine_alignment": {
-    "feature": "blue lid marker center",
-    "goal_px": [189.7, 296.8],
-    "tolerance_px": 8.0,
-    "require_lid_visible": true,
-    "reference_image_role": "demonstration_goal.right_image_path"
-  },
-  "descent": {
-    "separate_operator_approval_required": true,
-    "maximum_head_view_angle_deg": 40.0,
-    "require_right_lid_visible": true,
-    "require_torque_monitor": true
-  },
-  "grasp": {
-    "separate_operator_approval_required": true,
-    "empty_close_ratio": 0.01,
-    "success_requires": [
-      "gripper remains blocked above empty_close_ratio",
-      "blue lid marker remains visible in the right camera"
+    "target_annotation": {
+      "role": "offline grasp-window calibration only",
+      "ellipse": {
+        "center_px": [182, 322],
+        "axes_px": [121, 66],
+        "angle_deg": -8
+      }
+    },
+    "grasp_orientation_wxyz": [
+      0.7035955765,
+      0.7044862455,
+      -0.0904229502,
+      -0.0218193651
     ]
+  },
+  "grasp_window": {
+    "ablation_manifest": "src/configs/pasteur_grasp_window_ablation.json",
+    "selection_artifact": "src/configs/pasteur_grasp_window_selection.json",
+    "candidate_methods": [
+      "WHITE_WINDOW",
+      "MASK_GEOMETRY",
+      "HYBRID"
+    ],
+    "selected_method": "HYBRID",
+    "coordinate_system": "light finger pad local frame",
+    "runtime_absolute_pixels_forbidden": true
+  },
+  "preclose_gates": {
+    "maximum_orientation_error_deg": 3.0,
+    "maximum_tip_clearance_m": 0.002,
+    "maximum_tip_penetration_m": 0.001,
+    "maximum_normalized_image_gap": 0.08,
+    "maximum_descent_progress_ratio_at_contact": 0.30,
+    "minimum_torque_change_nm": 0.10,
+    "maximum_recoveries": 4
+  },
+  "closure": {
+    "empty_close_ratio": 0.01,
+    "maximum_monitor_s": 6.0,
+    "sample_period_s": 0.2,
+    "verification_lift_m": 0.002,
+    "minimum_target_follow_m": 0.001
   }
 }

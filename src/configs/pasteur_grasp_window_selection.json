@@ -1,0 +1,60 @@
+{
+  "schema": "piper_robot.grasp_window_ablation/v1",
+  "selected_method": "HYBRID",
+  "selection_reason": "zero false positives, then maximum recall, then fail-closed conjunction, then minimum latency",
+  "template": {
+    "method": "HYBRID",
+    "square_center_uv": [
+      0.8010635517967067,
+      -0.6578585490577822
+    ],
+    "square_side_u": 1.0852772917982112,
+    "reference_center_uv": [
+      0.8010369494789693,
+      -0.657873069210176
+    ],
+    "reference_quantiles_uv": [
+      0.30775569188842894,
+      1.2943714117049845,
+      -1.023387792567083,
+      -0.29232930554848136
+    ],
+    "minimum_target_inside_fraction": 0.9,
+    "maximum_center_error_scale": 0.1,
+    "maximum_quantile_error_scale": 0.1
+  },
+  "dataset_sha256": "e3d88816f88486a0791fbcfd94fd0ca9a3060090a4b3105b92acd97da7deea5b",
+  "sample_count": 3,
+  "metrics": [
+    {
+      "method": "WHITE_WINDOW",
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_positives": 2,
+      "true_negatives": 1,
+      "recall": 1.0
+    },
+    {
+      "method": "MASK_GEOMETRY",
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_positives": 2,
+      "true_negatives": 1,
+      "recall": 1.0
+    },
+    {
+      "method": "HYBRID",
+      "false_positives": 0,
+      "false_negatives": 0,
+      "true_positives": 2,
+      "true_negatives": 1,
+      "recall": 1.0
+    }
+  ],
+  "independent_required_gates": [
+    "tool_horizontal",
+    "tip_at_support",
+    "stable_nonempty_closure",
+    "target_follows_verification_lift"
+  ]
+}

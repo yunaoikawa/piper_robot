@@ -369,6 +369,48 @@ shifted. Frame 81 numerically probes X/Y/yaw and converges the wrist tag to the
 stored successful-grasp corners before closing. Each correction is capped at
 2 mm / 2 degrees and failure to converge prevents resume.
 
+## Generic SAM target grasp window
+
+The autonomous path no longer closes from an absolute right-camera pixel
+coordinate. `rollout/grasp_window.py` detects the light finger pad beside the
+cyan tool body on every frame and expresses the SAM target mask in that local
+tool frame. This makes translation and image resolution irrelevant. The
+successful demonstration defines both a forward square ("white window") and
+target-mask quantiles. Run their labelled offline ablation with:
+
+```bash
+python src/run_grasp_window_ablation.py \
+  --manifest src/configs/pasteur_grasp_window_ablation.json \
+  --output-dir /tmp/pasteur_grasp_window_ablation
+```
+
+The current small dataset selects the fail-closed `HYBRID` conjunction. The
+window is an insertion test, not proof of contact: an image can match while the
+tool is still floating. `src/run_autonomous_sam_lid_grasp.py` therefore closes
+only when all of these independent conditions pass:
+
+1. a fresh SAM target mask matches the demonstrated tool-relative window;
+2. the light finger pad has reached the target in normalized image distance;
+3. the measured end-effector orientation matches the demonstrated grasp;
+4. MuJoCo's gripper mesh is within the configured two-sided tolerance of the
+   RGB-D support plane;
+5. closure stabilizes above the empty-close aperture; and
+6. the target follows the two-millimetre verification lift.
+
+When only the support-distance gate remains, the controller descends along the
+observed plane normal in at most two-millimetre, MuJoCo-validated steps. A
+simultaneous motion stall and torque change before the support plane is treated
+as early fingertip contact; the controller lifts four millimetres to release
+it and holds. It does not guess a lateral direction until a wrist-image
+Jacobian for the current camera mounting has been validated.
+
+The state transitions are in
+`rollout/autonomous_grasp_state_machine.py`, so these decisions do not depend
+on an interactive Codex session. The task schema calls the lid a generic
+thin-planar target; AprilTags are not required at runtime. The present camera
+to robot calibration is intentionally unaccepted, so live execution remains
+fail-closed until a new multi-pose calibration is explicitly validated.
+
 ## Regression check — DO THIS FIRST, before any real task
 
 The live path now includes calibrated torque monitoring and marker-anchored
