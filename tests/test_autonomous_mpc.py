@@ -14,6 +14,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rollout.autonomous_mpc import (
+    AnalyticObstacleSet,
     AtomicRunState,
     AutonomousStop,
     ChunkExecutor,
@@ -25,6 +26,7 @@ from rollout.autonomous_mpc import (
     check_pregrasp,
     decide_replan,
     plan_lift_translate_descend,
+    select_collision_aware_plan,
     validate_calibration,
 )
 
@@ -76,6 +78,27 @@ assert all(
     for earlier, later in zip(plan.waypoints, plan.waypoints[1:])
 )
 
+
+class CorridorValidator:
+    def __init__(self):
+        self.mujoco = type("M", (), {"q_waypoints": []})()
+
+    def __call__(self, pose):
+        x, y, _ = pose.xyz
+        if 0.43 < x < 0.57 and abs(y) < 0.025:
+            raise AutonomousStop("central obstacle")
+        return 0.030
+
+
+detour = select_collision_aware_plan(
+    Pose(IDENTITY, (0.30, 0.0, 0.75)),
+    (0.70, 0.0, 0.70),
+    validator_factory=CorridorValidator,
+    detour_m=0.08,
+)
+assert detour.metadata["corridor"] in {"detour_left", "detour_right"}
+assert "translate_detour" in detour.metadata["stage_order"]
+
 try:
     plan_lift_translate_descend(start, (0.4, 0.0, 0.7), validator=lambda pose: None)
 except AutonomousStop:
@@ -90,6 +113,7 @@ grid = ESDFGrid(
     body_radius_m=0.020,
 )
 assert abs(grid.clearance(Pose(IDENTITY, (0.15, 0.15, 0.15))) - 0.030) < 1e-6
+assert abs(grid.point_clearance((0.15, 0.15, 0.15), radius_m=0.010) - 0.040) < 1e-6
 assert grid.clearance(Pose(IDENTITY, (-0.1, 0.0, 0.0))) is None
 
 model_validator = MuJoCoIKValidator(
@@ -102,6 +126,46 @@ assert np.allclose(
     model_validator.validate(measured_model_pose),
     model_validator.previous_q,
 )
+
+
+class RecordingESDF:
+    voxel = 0.01
+
+    def __init__(self):
+        self.points = []
+
+    def point_clearance(self, point, *, radius_m=0.0):
+        self.points.append((np.asarray(point), radius_m))
+        return 0.10 - radius_m
+
+
+recording_esdf = RecordingESDF()
+whole_arm_clearance = model_validator.esdf_clearance(recording_esdf)
+assert whole_arm_clearance is not None
+assert whole_arm_clearance <= 0.03  # phone proxy is included at 70 mm radius
+assert len(recording_esdf.points) > 30
+
+obstacle_pose = np.eye(4)
+obstacle_pose[2, 3] = 0.70
+transparent_body = AnalyticObstacleSet(
+    [
+        {
+            "instance_id": "dish-body",
+            "status": "confirmed",
+            "role": "target_container",
+            "pose_robot": obstacle_pose.tolist(),
+            "geometry": {
+                "type": "cylinder",
+                "radius_m": 0.045,
+                "height_m": 0.015,
+                "pose_anchor": "top_center",
+                "uncertainty_margin_m": 0.005,
+            },
+        }
+    ]
+)
+assert transparent_body.clearance([(np.array([0.0, 0.0, 0.70]), 0.0)]) < 0
+assert transparent_body.clearance([(np.array([0.10, 0.0, 0.70]), 0.0)]) > 0
 
 reference = snapshot()
 assert (

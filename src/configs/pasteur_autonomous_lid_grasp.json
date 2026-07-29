@@ -12,10 +12,38 @@
   "esdf_npz": null,
   "mujoco_model": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",
   "sam_endpoint": "tcp://127.0.0.1:15563",
+  "daily_scene": {
+    "state_path": "runs/pasteur_daily_scene.json",
+    "ui_url": "http://100.127.18.64:8765/",
+    "expected_objects": [
+      {
+        "instance_id": "petri-lid-target",
+        "semantic_name": "petri dish lid",
+        "role": "target_lid",
+        "transparent": true,
+        "geometry": {"type": "cylinder", "radius_m": 0.045, "height_m": 0.002, "pose_anchor": "top_center"}
+      },
+      {
+        "instance_id": "petri-container",
+        "semantic_name": "petri dish body",
+        "sam_prompt": "transparent round petri dish base and side wall",
+        "role": "target_container",
+        "transparent": true,
+        "geometry": {"type": "cylinder", "radius_m": 0.045, "height_m": 0.015, "pose_anchor": "top_center", "uncertainty_margin_m": 0.005}
+      },
+      {
+        "instance_id": "microscope",
+        "semantic_name": "microscope",
+        "sam_prompt": "microscope and microscope stage",
+        "geometry": {"type": "measured_static_surface"}
+      }
+    ]
+  },
   "planner": {
     "lift_m": 0.04,
     "pregrasp_height_m": 0.015,
     "final_height_m": 0.003,
+    "lateral_detour_m": 0.070,
     "minimum_clearance_m": 0.015,
     "ee_collision_radius_m": 0.025
   },

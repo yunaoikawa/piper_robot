@@ -152,8 +152,10 @@ class ESDFGrid:
                 body_radius_m=body_radius_m,
             )
 
-    def clearance(self, pose: Pose) -> float | None:
-        point_robot = np.asarray((*pose.xyz, 1.0), dtype=float)
+    def point_clearance(
+        self, xyz_robot: Sequence[float], *, radius_m: float = 0.0
+    ) -> float | None:
+        point_robot = np.asarray((*xyz_robot, 1.0), dtype=float)
         point = (self.T_esdf_robot @ point_robot)[:3]
         # Stored arrays are z,y,x and voxel values live at cell centres.
         xyz_index = (point - self.origin) / self.voxel - 0.5
@@ -184,7 +186,10 @@ class ESDFGrid:
                         * (wz if dz else 1 - wz)
                     )
                     interpolated += weight * values[dz, dy, dx]
-        return float(interpolated - self.body_radius_m)
+        return float(interpolated - float(radius_m))
+
+    def clearance(self, pose: Pose) -> float | None:
+        return self.point_clearance(pose.xyz, radius_m=self.body_radius_m)
 
 
 class MuJoCoIKValidator:
@@ -235,6 +240,31 @@ class MuJoCoIKValidator:
         self.baseline_contacts = self._contact_pairs()
         self.last_q = right_q.copy()
         self.q_waypoints: list[list[float]] = []
+        # Conservative link capsules in the physical-right/model-left branch.
+        # Radii describe the actual Piper links, not a task or image layout.
+        self.link_capsules = (
+            ("left_arm_link0", "left_arm_link1", 0.058),
+            ("left_arm_link1", "left_arm_link2", 0.052),
+            ("left_arm_link2", "left_arm_link3", 0.055),
+            ("left_arm_link3", "left_arm_link4", 0.050),
+            ("left_arm_link4", "left_arm_link5", 0.044),
+            ("left_arm_link5", "left_arm_link6", 0.042),
+            ("left_arm_link6", "left_arm_gripper_base", 0.035),
+        )
+        self.attached_spheres = (
+            ("left_arm_gripper_base", 0.055),
+            ("left_arm_iphone_body", 0.070),
+        )
+
+    def set_right_q(self, right_q: Sequence[float]) -> None:
+        """Pose the physical right arm directly for recorded-trajectory replay."""
+
+        right_q = np.asarray(right_q, dtype=float)
+        if right_q.shape != (6,) or not np.all(np.isfinite(right_q)):
+            raise ValueError("right_q must contain six finite values")
+        self.solver.init(right_q)
+        self.previous_q = right_q.copy()
+        self.last_q = right_q.copy()
 
     def _contact_pairs(self):
         self.data.qpos[:] = self.solver.configuration.q
@@ -270,17 +300,129 @@ class MuJoCoIKValidator:
         self.q_waypoints.append(q.tolist())
         return q
 
+    def robot_proxy_samples(self, *, sample_spacing_m: float = 0.0075):
+        self.data.qpos[:] = self.solver.configuration.q
+        self.mujoco.mj_forward(self.solver.model, self.data)
+        spacing = max(0.005, float(sample_spacing_m))
+        samples: list[tuple[np.ndarray, float]] = []
+
+        def body_xyz(name):
+            body_id = self.solver.model.body(name).id
+            return np.asarray(self.data.xpos[body_id], dtype=float)
+
+        for first_name, second_name, radius in self.link_capsules:
+            first = body_xyz(first_name)
+            second = body_xyz(second_name)
+            length = float(np.linalg.norm(second - first))
+            count = max(2, int(math.ceil(length / spacing)) + 1)
+            for fraction in np.linspace(0.0, 1.0, count):
+                samples.append(
+                    (first + fraction * (second - first), float(radius))
+                )
+        for body_name, radius in self.attached_spheres:
+            samples.append((body_xyz(body_name), float(radius)))
+        return samples
+
+    def esdf_clearance(
+        self, esdf: ESDFGrid, *, sample_spacing_m: float | None = None
+    ) -> float | None:
+        """Minimum measured clearance for all right-arm link proxies."""
+
+        spacing = (
+            max(esdf.voxel * 0.75, 0.005)
+            if sample_spacing_m is None
+            else float(sample_spacing_m)
+        )
+        clearances: list[float] = []
+        for point, radius in self.robot_proxy_samples(
+            sample_spacing_m=spacing
+        ):
+            value = esdf.point_clearance(point, radius_m=radius)
+            if value is None:
+                return None
+            clearances.append(value)
+        return min(clearances) if clearances else None
+
+
+class AnalyticObstacleSet:
+    """Known-object proxies supplementing unreliable transparent depth."""
+
+    def __init__(self, objects: Sequence[dict]):
+        self.objects = []
+        for item in objects:
+            if item.get("status") != "confirmed":
+                continue
+            if item.get("role") == "target_lid":
+                continue
+            geometry = item.get("geometry") or {}
+            pose = np.asarray(item.get("pose_robot"), dtype=float)
+            if geometry.get("type") != "cylinder" or pose.shape != (4, 4):
+                continue
+            radius = float(geometry["radius_m"])
+            height = float(geometry["height_m"])
+            margin = float(geometry.get("uncertainty_margin_m", 0.0))
+            transform = pose.copy()
+            if geometry.get("pose_anchor") == "top_center":
+                transform[:3, 3] -= transform[:3, 2] * (height / 2.0)
+            self.objects.append(
+                (
+                    str(item.get("instance_id", "obstacle")),
+                    np.linalg.inv(transform),
+                    radius,
+                    height,
+                    margin,
+                )
+            )
+
+    @staticmethod
+    def _cylinder_sdf(local_xyz, radius, height):
+        radial = float(np.linalg.norm(local_xyz[:2])) - radius
+        axial = abs(float(local_xyz[2])) - height / 2.0
+        outside = float(np.linalg.norm(np.maximum([radial, axial], 0.0)))
+        inside = min(max(radial, axial), 0.0)
+        return outside + inside
+
+    def clearance(self, samples) -> float:
+        if not self.objects:
+            return math.inf
+        result = math.inf
+        for point, body_radius in samples:
+            homogeneous = np.asarray((*point, 1.0), dtype=float)
+            for _, inverse, radius, height, margin in self.objects:
+                local = (inverse @ homogeneous)[:3]
+                result = min(
+                    result,
+                    self._cylinder_sdf(local, radius, height)
+                    - body_radius
+                    - margin,
+                )
+        return float(result)
+
 
 class CompositePoseValidator:
     """Require both measured-space clearance and MuJoCo kinematic validity."""
 
-    def __init__(self, esdf: ESDFGrid, mujoco_validator: MuJoCoIKValidator):
+    def __init__(
+        self,
+        esdf: ESDFGrid,
+        mujoco_validator: MuJoCoIKValidator,
+        analytic_obstacles: AnalyticObstacleSet | None = None,
+    ):
         self.esdf = esdf
         self.mujoco = mujoco_validator
+        self.analytic_obstacles = analytic_obstacles
 
     def __call__(self, pose: Pose) -> float | None:
         self.mujoco.validate(pose)
-        return self.esdf.clearance(pose)
+        measured = self.mujoco.esdf_clearance(self.esdf)
+        if measured is None or self.analytic_obstacles is None:
+            return measured
+        analytic = self.analytic_obstacles.clearance(
+            self.mujoco.robot_proxy_samples(
+                sample_spacing_m=max(self.esdf.voxel * 0.75, 0.005)
+            )
+        )
+        return min(measured, analytic)
 
 
 def _normalise_quaternion(quaternion: Sequence[float]) -> np.ndarray:
@@ -363,6 +505,7 @@ def plan_lift_translate_descend(
     pregrasp_height_m: float = 0.015,
     final_height_m: float = 0.003,
     validator: Callable[[Pose], float | None] | None = None,
+    transit_xy_m: Sequence[float] | None = None,
     now_s: float | None = None,
 ) -> TrajectoryPlan:
     """Plan the conservative stage order: lift, XY, pregrasp, descend."""
@@ -378,16 +521,30 @@ def plan_lift_translate_descend(
     safe_z = max(float(start.xyz[2]) + lift_m, float(target[2]) + pregrasp_height_m + lift_m)
     stages = [
         ("lift", Pose(start.wxyz, (start.xyz[0], start.xyz[1], safe_z))),
-        ("translate_xy", Pose(orientation, (float(target[0]), float(target[1]), safe_z))),
-        (
+    ]
+    if transit_xy_m is not None:
+        transit = np.asarray(transit_xy_m, dtype=float)
+        if transit.shape != (2,) or not np.all(np.isfinite(transit)):
+            raise ValueError("transit_xy_m must be a finite 2-vector")
+        stages.append(
+            (
+                "translate_detour",
+                Pose(orientation, (float(transit[0]), float(transit[1]), safe_z)),
+            )
+        )
+    stages.extend(
+        [
+            ("translate_xy", Pose(orientation, (float(target[0]), float(target[1]), safe_z))),
+            (
             "approach",
             Pose(orientation, (float(target[0]), float(target[1]), float(target[2] + pregrasp_height_m))),
-        ),
-        (
+            ),
+            (
             "descend",
             Pose(orientation, (float(target[0]), float(target[1]), float(target[2] + final_height_m))),
-        ),
-    ]
+            ),
+        ]
+    )
     cursor = start
     elapsed = 0.0
     waypoints: list[TimedWaypoint] = []
@@ -418,6 +575,74 @@ def plan_lift_translate_descend(
         minimum_clearance_m=None if math.isinf(minimum_clearance) else minimum_clearance,
         metadata={"stage_order": [name for name, _ in stages], "control_hz": CONTROL_HZ},
     )
+
+
+def select_collision_aware_plan(
+    start: Pose,
+    target_xyz_m: Sequence[float],
+    *,
+    validator_factory: Callable[[], CompositePoseValidator],
+    grasp_orientation_wxyz: Sequence[float] | None = None,
+    lift_m: float = 0.040,
+    pregrasp_height_m: float = 0.015,
+    final_height_m: float = 0.003,
+    detour_m: float = 0.070,
+) -> TrajectoryPlan:
+    """Try direct and both lateral corridors, then select the safest short plan."""
+
+    target = np.asarray(target_xyz_m, dtype=float)
+    travel = target[:2] - np.asarray(start.xyz[:2], dtype=float)
+    norm = float(np.linalg.norm(travel))
+    perpendicular = (
+        np.array([0.0, 1.0])
+        if norm < 1e-9
+        else np.array([-travel[1], travel[0]]) / norm
+    )
+    midpoint = 0.5 * (target[:2] + np.asarray(start.xyz[:2], dtype=float))
+    corridors = [
+        ("direct", None),
+        ("detour_left", midpoint + perpendicular * float(detour_m)),
+        ("detour_right", midpoint - perpendicular * float(detour_m)),
+    ]
+    accepted: list[tuple[float, TrajectoryPlan]] = []
+    rejected: dict[str, str] = {}
+    for name, transit in corridors:
+        validator = validator_factory()
+        try:
+            plan = plan_lift_translate_descend(
+                start,
+                target,
+                grasp_orientation_wxyz=grasp_orientation_wxyz,
+                lift_m=lift_m,
+                pregrasp_height_m=pregrasp_height_m,
+                final_height_m=final_height_m,
+                validator=validator,
+                transit_xy_m=transit,
+            )
+        except AutonomousStop as error:
+            rejected[name] = str(error)
+            continue
+        duration = plan.waypoints[-1].t_s
+        clearance = float(plan.minimum_clearance_m)
+        # Prefer clearance, but do not take a very long detour for sub-mm gains.
+        score = clearance - 0.0001 * duration
+        plan.metadata.update(
+            corridor=name,
+            rejected_corridors=dict(rejected),
+            mujoco_q_waypoints=validator.mujoco.q_waypoints,
+        )
+        accepted.append((score, plan))
+    if not accepted:
+        raise AutonomousStop(
+            "all approach corridors rejected: "
+            + json.dumps(rejected, sort_keys=True)
+        )
+    accepted.sort(key=lambda item: item[0], reverse=True)
+    selected = accepted[0][1]
+    selected.metadata["rejected_corridors"] = rejected
+    selected.metadata["candidate_count"] = len(corridors)
+    selected.metadata["accepted_candidate_count"] = len(accepted)
+    return selected
 
 
 def decide_replan(

@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robot.camera_id import configure_camera_map_by_udid
 from rollout.autonomous_mpc import (
+    AnalyticObstacleSet,
     AtomicRunState,
     AutonomousStop,
     ChunkExecutor,
@@ -40,6 +41,7 @@ from rollout.autonomous_mpc import (
     plan_lift_translate_descend,
     plan_to_dict,
     quaternion_angle_deg,
+    select_collision_aware_plan,
     validate_calibration,
 )
 from rollout.autonomous_grasp_state_machine import (
@@ -48,6 +50,11 @@ from rollout.autonomous_grasp_state_machine import (
     decide_state,
 )
 from rollout.descent_probe import assess_descent_probe, assess_lowest_point
+from rollout.daily_scene import (
+    DailySceneStore,
+    SceneNotConfirmed,
+    SceneObject,
+)
 from rollout.grasp_contact_verification import assess_stable_closure
 from rollout.grasp_readiness import PrecloseThresholds, assess_preclose
 from rollout.grasp_window import (
@@ -111,15 +118,101 @@ def _instance_id(artifacts):
     return None
 
 
+def _calibration_id(calibration):
+    return hashlib.sha256(
+        json.dumps(calibration, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:16]
+
+
+def _daily_scene_object_proposals(
+    config, task, reference, image, inventory=None
+):
+    inventory = inventory or {}
+    catalog = config.get("daily_scene", {}).get("expected_objects", [])
+    objects = []
+    for index, expected in enumerate(catalog):
+        role = expected.get("role")
+        is_target = role == "target_lid"
+        shares_target_pose = role in {"target_lid", "target_container"}
+        pose = None
+        confidence = 0.0
+        mask_path = None
+        if shares_target_pose and reference.target_xyz_m is not None:
+            pose = np.eye(4)
+            pose[:3, 3] = np.asarray(reference.target_xyz_m, dtype=float)
+            confidence = 1.0
+            mask_path = image.get("sam_overlay")
+        detected = inventory.get(str(expected.get("instance_id", "")))
+        if detected is not None:
+            confidence = max(confidence, float(detected["confidence"]))
+            mask_path = detected.get("overlay", mask_path)
+        objects.append(
+            SceneObject(
+                instance_id=str(
+                    expected.get("instance_id", f"expected-{index}")
+                ),
+                semantic_name=str(expected["semantic_name"]),
+                geometry=dict(expected["geometry"]),
+                role=role,
+                pose_robot=None if pose is None else pose.tolist(),
+                confidence=confidence,
+                status="uncertain",
+                source=(
+                    "sam_rgbd"
+                    if is_target
+                    else (
+                        "sam_rgbd_inventory"
+                        if detected is not None
+                        else (
+                            "target_assembly_proxy"
+                            if shares_target_pose
+                            else "expected_daily_inventory"
+                        )
+                    )
+                ),
+                transparent=bool(expected.get("transparent", False)),
+                mask_path=mask_path,
+                depth_quality=(
+                    "support_plane_proxy"
+                    if shares_target_pose
+                    else (
+                        "rgb_only_instance"
+                        if detected is not None
+                        else "not_observed"
+                    )
+                ),
+            )
+        )
+    if not objects:
+        target = task["target"]
+        pose = np.eye(4)
+        pose[:3, 3] = np.asarray(reference.target_xyz_m, dtype=float)
+        objects.append(
+            SceneObject(
+                instance_id=reference.target_instance_id or "target-1",
+                semantic_name=target["semantic_name"],
+                geometry={"type": target["shape_class"]},
+                role="target_lid",
+                pose_robot=pose.tolist(),
+                confidence=1.0,
+                status="uncertain",
+                transparent=bool(target.get("transparent", False)),
+                mask_path=image.get("sam_overlay"),
+                depth_quality="support_plane_proxy",
+            )
+        )
+    return objects
+
+
 def _runner_args(config, output_dir):
     return SimpleNamespace(
         torque_config=config["torque_config"],
         scene_config=config["scene_config"],
         sam_endpoint=config["sam_endpoint"],
         output_dir=str(Path(output_dir) / "head"),
-        holding_kp=[7.0] * 6,
+        holding_kp=[7.0, 7.0, 7.0, 5.0, 5.0, 5.0],
         holding_kd=[0.3] * 6,
-        motion_kp=[7.0] * 6,
+        motion_kp=[7.0, 7.0, 7.0, 5.0, 5.0, 5.0],
         motion_kd=[0.3] * 6,
         gain_ramp_s=1.0,
         mode_settle_s=0.5,
@@ -255,6 +348,70 @@ class LivePerception:
             T_camera_robot=np.linalg.inv(self.transform),
         )
         return str(path)
+
+    def scan_inventory(self, expected_objects):
+        """Run closed-set SAM prompts for the operator's daily inventory."""
+
+        artifacts = self.runner.last_observation_artifacts or {}
+        raw_path = artifacts.get("raw_image")
+        image = cv2.imread(str(raw_path)) if raw_path else None
+        if image is None:
+            raise AutonomousStop("daily inventory RGB image is unavailable")
+        overlay = image.copy()
+        detections = {}
+        for expected in expected_objects:
+            if expected.get("role") == "target_lid":
+                continue
+            prompt = expected.get("sam_prompt") or expected["semantic_name"]
+            result = self.runner.sam.segment(
+                image,
+                frame_id=self.runner.frame_id,
+                timestamp=float(self.runner.last_head_timestamp),
+                prompt=str(prompt),
+                confidence_threshold=0.05,
+            )
+            self.runner.frame_id += 1
+            if not result.candidates:
+                continue
+            candidate = max(result.candidates, key=lambda item: item.score)
+            mask = np.asarray(candidate.mask, dtype=np.uint8)
+            if mask.shape != image.shape[:2]:
+                mask = cv2.resize(
+                    mask,
+                    (image.shape[1], image.shape[0]),
+                    interpolation=cv2.INTER_NEAREST,
+                )
+            mask = mask > 0
+            if np.count_nonzero(mask) < 20:
+                continue
+            tint = np.zeros_like(overlay)
+            tint[mask] = (40, 180, 255)
+            overlay = cv2.addWeighted(overlay, 1.0, tint, 0.35, 0)
+            contours, _ = cv2.findContours(
+                mask.astype(np.uint8),
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE,
+            )
+            cv2.drawContours(overlay, contours, -1, (0, 255, 255), 2)
+            x, y, _, _ = cv2.boundingRect(mask.astype(np.uint8))
+            cv2.putText(
+                overlay,
+                str(expected["semantic_name"]),
+                (x, max(20, y - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 255),
+                2,
+            )
+            detections[str(expected["instance_id"])] = {
+                "confidence": float(candidate.score),
+            }
+        path = self.output_dir / "daily_inventory_sam.png"
+        if not cv2.imwrite(str(path), overlay):
+            raise AutonomousStop("could not save daily inventory overlay")
+        for detection in detections.values():
+            detection["overlay"] = str(path)
+        return detections, str(path)
 
     def head_snapshot(self):
         _, _, image, timestamp = self.runner.observe(0.0)
@@ -423,6 +580,12 @@ def run_live(config, args, state, calibration):
     transform = validate_calibration(
         calibration, camera_udid=expected["head"]
     )
+    calibration_id = _calibration_id(calibration)
+    daily_store = DailySceneStore(
+        config.get("daily_scene", {}).get(
+            "state_path", "runs/pasteur_daily_scene.json"
+        )
+    )
     torque = _json(config["torque_config"])
     runner = right = None
     try:
@@ -466,24 +629,81 @@ def run_live(config, args, state, calibration):
         if acquisition.state != GraspState.COARSE_ALIGN:
             raise AutonomousStop("generic target could not be acquired")
 
-        def make_plan(snapshot):
-            simulation = MuJoCoIKValidator(
-                config["mujoco_model"],
-                runner.rpc.get_right_joint_positions(),
-                left_q=runner.rpc.get_left_joint_positions(),
+        try:
+            daily_scene = daily_store.require_confirmed(
+                calibration_id=calibration_id
             )
-            validator = CompositePoseValidator(perception.esdf, simulation)
-            candidate = plan_lift_translate_descend(
+        except SceneNotConfirmed as error:
+            existing = daily_store.load()
+            if existing is None or existing.status in {
+                "change_reported",
+                "confirmed",
+            }:
+                inventory, inventory_image = perception.scan_inventory(
+                    config.get("daily_scene", {}).get(
+                        "expected_objects", []
+                    )
+                )
+                existing = daily_store.propose(
+                    objects=_daily_scene_object_proposals(
+                        config, task, reference, image, inventory
+                    ),
+                    calibration_id=calibration_id,
+                    camera_ids=expected,
+                    images={
+                        "head_sam": image["sam_overlay"],
+                        "daily_inventory": inventory_image,
+                    },
+                    reason="daily_scan",
+                )
+            state.update(
+                "WAITING_FOR_DAILY_SCENE_CONFIRMATION",
+                daily_scene=existing.to_dict(),
+                daily_scene_ui=config.get("daily_scene", {}).get(
+                    "ui_url", "http://127.0.0.1:8765/"
+                ),
+            )
+            raise AutonomousStop(
+                f"{error}; confirm revision {existing.revision} in the daily-scene UI"
+            )
+        scene_revision = daily_scene.revision
+        state.event(
+            "daily_scene_bound",
+            scene_id=daily_scene.scene_id,
+            revision=scene_revision,
+            confirmed_by=daily_scene.confirmed_by,
+        )
+
+        def make_plan(snapshot):
+            analytic_obstacles = AnalyticObstacleSet(
+                [item.__dict__ for item in daily_scene.objects]
+            )
+
+            def validator_factory():
+                return CompositePoseValidator(
+                    perception.esdf,
+                    MuJoCoIKValidator(
+                        config["mujoco_model"],
+                        runner.rpc.get_right_joint_positions(),
+                        left_q=runner.rpc.get_left_joint_positions(),
+                    ),
+                    analytic_obstacles=analytic_obstacles,
+                )
+
+            candidate = select_collision_aware_plan(
                 snapshot.ee_pose,
                 snapshot.target_xyz_m,
+                validator_factory=validator_factory,
                 grasp_orientation_wxyz=grasp_orientation,
                 lift_m=float(config["planner"]["lift_m"]),
                 pregrasp_height_m=float(config["planner"]["pregrasp_height_m"]),
                 final_height_m=float(config["planner"]["final_height_m"]),
-                validator=validator,
+                detour_m=float(
+                    config["planner"].get("lateral_detour_m", 0.070)
+                ),
             )
-            candidate.metadata["mujoco_q_waypoints"] = simulation.q_waypoints
             candidate.metadata["mujoco_model"] = config["mujoco_model"]
+            candidate.metadata["daily_scene_revision"] = scene_revision
             return candidate
 
         plan = make_plan(reference)
@@ -522,6 +742,14 @@ def run_live(config, args, state, calibration):
             while True:
                 replan_now = False
                 for index, chunk in enumerate(candidate.chunks()):
+                    try:
+                        daily_store.require_confirmed(
+                            revision=scene_revision,
+                            calibration_id=calibration_id,
+                        )
+                    except SceneNotConfirmed as error:
+                        executor.sender.hold()
+                        raise AutonomousStop(str(error)) from error
                     commanded = executor.execute(chunk)
                     current, image = perception.head_snapshot()
                     decision = decide_replan(
@@ -545,6 +773,21 @@ def run_live(config, args, state, calibration):
                             "fresh observation unavailable"
                         )
                     if decision.action == "REPLAN":
+                        if "target_shift" in decision.reasons or (
+                            "target_instance_changed" in decision.reasons
+                        ):
+                            changed = daily_store.report_change(
+                                "automatic RGB-D/SAM target change detection"
+                            )
+                            executor.sender.hold()
+                            state.event(
+                                "daily_scene_invalidated",
+                                revision=changed.revision,
+                                reasons=decision.reasons,
+                            )
+                            raise AutonomousStop(
+                                "bench scene changed; operator reconfirmation required"
+                            )
                         plan_reference = current
                         replan_now = True
                         break
@@ -932,10 +1175,11 @@ def run_live(config, args, state, calibration):
             raise AutonomousStop("post-lift grasp verification failed")
         return 0
     except BaseException as error:
-        state.update(
-            "ABORTED",
-            error={"type": type(error).__name__, "message": str(error)},
-        )
+        if state.payload.get("status") != "WAITING_FOR_DAILY_SCENE_CONFIRMATION":
+            state.update(
+                "ABORTED",
+                error={"type": type(error).__name__, "message": str(error)},
+            )
         if runner is not None and not args.dry_run:
             try:
                 from rollout.autonomous_mpc import AbsoluteCartesianTargetSender
