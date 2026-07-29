@@ -10,7 +10,11 @@ import numpy as np
 
 from rollout.daily_scene import DailySceneStore
 from rollout.semantic_scene_pipeline import MaskObservation
-from src.build_semantic_scene import _position_articulated_model, build
+from src.build_semantic_scene import (
+    _canonicalize_mesh,
+    _position_articulated_model,
+    build,
+)
 
 
 def _fixture(tmp_path: Path):
@@ -165,7 +169,8 @@ def test_articulated_root_placement_uses_named_anchors_and_sam_height(tmp_path):
                 "anchor_xyz_level_m": {
                     "left": [-0.2, 0.4, 0.0],
                     "right": [0.1, -0.1, 0.0],
-                }
+                },
+                "level_heights_m": {"right_platform": 0.01},
             }
         )
     )
@@ -212,6 +217,82 @@ def test_articulated_root_placement_uses_named_anchors_and_sam_height(tmp_path):
     assert 'name="left/base_link"' in positioned
     assert "-0.2200000000" in positioned
     assert "-0.2700000000" in positioned
+
+
+def test_canonical_axis_and_shared_base_height_are_applied_together(tmp_path):
+    model = tmp_path / "robot.xml"
+    model.write_text(
+        "<mujoco><worldbody>"
+        '<body name="left/base_link" pos="0 0.25 0"/>'
+        '<body name="right/base_link" pos="0 -0.25 0"/>'
+        "</worldbody></mujoco>"
+    )
+    calibration = tmp_path / "calibration.json"
+    calibration.write_text(
+        json.dumps(
+            {
+                "anchor_xyz_level_m": {
+                    "left": [-0.2, 0.4, 0.0],
+                    "right": [0.1, -0.1, 0.0],
+                },
+                "level_heights_m": {"right_platform": 0.01},
+            }
+        )
+    )
+    height, width = 12, 16
+    vertices = np.zeros((height, width, 3), dtype=float)
+    vertices[..., 0] = np.linspace(-0.4, 0.4, width)
+    vertices[..., 1] = np.linspace(-0.3, 0.5, height)[:, None]
+    left_mask = np.zeros((height, width), dtype=bool)
+    right_mask = np.zeros((height, width), dtype=bool)
+    left_mask[7:11, 2:6] = True
+    right_mask[2:6, 10:14] = True
+    vertices[..., 2][left_mask] = -0.22
+    vertices[..., 2][right_mask] = -0.27
+    profile = {
+        "scene_axis_sign": [-1, 1, 1],
+        "robot_model": str(model),
+        "robot_placement": {
+            "semantic_name": "robot",
+            "anchor_map": "anchor_xyz_level_m",
+            "yaw_offset_rad": -np.pi / 2,
+            "shared_base_height": {
+                "support_level": "right_platform",
+                "mount_below_support_m": 0.197,
+            },
+            "instances": [
+                {"body": "left/base_link", "anchor": "left"},
+                {"body": "right/base_link", "anchor": "right"},
+            ],
+        },
+    }
+    mesh = _canonicalize_mesh(
+        {
+            "vertices": vertices.reshape(-1, 3),
+            "valid": np.ones(height * width, dtype=bool),
+            "faces": np.array([[0, 1, width]], dtype=np.int32),
+        },
+        profile,
+    )
+    observation = MaskObservation(
+        "robot", "robot", "robot", "unused", 1.0, "accepted", 0.0
+    )
+    _, report = _position_articulated_model(
+        profile=profile,
+        calibration_report=str(calibration),
+        owned=[(observation, left_mask | right_mask)],
+        mesh=mesh,
+        shape_hw=(height, width),
+        output_dir=tmp_path,
+    )
+    left = report["base_xyz_level_m"]["left/base_link"]
+    right = report["base_xyz_level_m"]["right/base_link"]
+    assert left[:2] == [0.2, 0.4]
+    assert right[:2] == [-0.1, -0.1]
+    assert left[2] == right[2] == 0.01 - 0.197
+    assert report["raw_sam_base_height_m"]["left/base_link"] != report[
+        "raw_sam_base_height_m"
+    ]["right/base_link"]
 
 
 def test_operator_can_mark_false_unknown_candidate_absent_and_resume(tmp_path):

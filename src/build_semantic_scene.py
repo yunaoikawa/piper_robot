@@ -127,6 +127,7 @@ def _position_articulated_model(
             "reason": "calibration_report_or_robot_placement_missing",
         }
     calibration = json.loads(Path(calibration_report).read_text())
+    axis_sign = _scene_axis_sign(profile)
     anchors = calibration.get(placement.get("anchor_map", "anchor_xyz_level_m"))
     if not isinstance(anchors, dict):
         raise ValueError("calibration report does not contain the robot anchor map")
@@ -177,6 +178,7 @@ def _position_articulated_model(
     for instance in instance_configs:
         anchor_name = str(instance["anchor"])
         anchor = _vector3(anchors[anchor_name], f"anchor {anchor_name}")
+        anchor *= axis_sign
         selected_index = min(
             range(len(remaining)),
             key=lambda index: float(
@@ -188,6 +190,24 @@ def _position_articulated_model(
         selected = remaining.pop(selected_index)
         anchor[2] = float(np.quantile(selected[:, 2], 0.01))
         positions[str(instance["body"])] = anchor
+    raw_base_heights = {
+        name: float(position[2]) for name, position in positions.items()
+    }
+    shared_height = placement.get("shared_base_height")
+    enforced_base_height = None
+    if shared_height:
+        support_name = str(shared_height["support_level"])
+        support_heights = calibration.get("level_heights_m", {})
+        if support_name not in support_heights:
+            raise ValueError(
+                f"calibration report lacks support height {support_name!r}"
+            )
+        enforced_base_height = (
+            float(support_heights[support_name])
+            - float(shared_height["mount_below_support_m"])
+        )
+        for position in positions.values():
+            position[2] = enforced_base_height
     first = positions[str(instance_configs[0]["body"])]
     second = positions[str(instance_configs[1]["body"])]
     baseline = first[:2] - second[:2]
@@ -219,13 +239,19 @@ def _position_articulated_model(
     return runtime_profile, {
         "required": True,
         "accepted": True,
-        "method": "named_calibration_anchors_plus_sam_component_base_heights",
+        "method": (
+            "named_calibration_anchors_plus_shared_mount_height"
+            if shared_height
+            else "named_calibration_anchors_plus_sam_component_base_heights"
+        ),
         "calibration_report": str(Path(calibration_report).resolve()),
         "source_model": str(source),
         "positioned_model": str(positioned.resolve()),
         "base_xyz_level_m": {
             name: value.tolist() for name, value in positions.items()
         },
+        "raw_sam_base_height_m": raw_base_heights,
+        "shared_base_height_m": enforced_base_height,
         "shared_upright_yaw_rad": yaw,
     }
 
@@ -235,6 +261,36 @@ def _vector3(value, name: str) -> np.ndarray:
     if result.shape != (3,) or not np.all(np.isfinite(result)):
         raise ValueError(f"{name} must contain three finite numbers")
     return result.copy()
+
+
+def _scene_axis_sign(profile: dict) -> np.ndarray:
+    sign = _vector3(
+        profile.get("scene_axis_sign", [1.0, 1.0, 1.0]),
+        "scene_axis_sign",
+    )
+    if not np.all(np.isin(sign, (-1.0, 1.0))):
+        raise ValueError("scene_axis_sign entries must each be -1 or +1")
+    return sign
+
+
+def _canonicalize_mesh(mesh: dict, profile: dict) -> dict:
+    sign = _scene_axis_sign(profile)
+    result = dict(mesh)
+    result["vertices"] = np.asarray(mesh["vertices"], dtype=float) * sign
+    faces = np.asarray(mesh["faces"], dtype=np.int32)
+    if float(np.prod(sign)) < 0.0:
+        faces = faces[:, [0, 2, 1]]
+    result["faces"] = faces
+    return result
+
+
+def _viewer_camera_eye(profile: dict) -> tuple[float, float, float]:
+    return tuple(
+        _vector3(
+            profile.get("viewer_camera_eye", [-1.55, 0.0, 0.95]),
+            "viewer_camera_eye",
+        )
+    )
 
 
 def _run_sam(
@@ -531,6 +587,7 @@ def _anchor_matched_observations(
     if not calibration_report:
         return observations
     report = json.loads(Path(calibration_report).read_text())
+    axis_sign = _scene_axis_sign(profile)
     anchors_by_semantic: dict[str, list[np.ndarray]] = {}
     placement = profile.get("robot_placement", {})
     robot_name = placement.get("semantic_name")
@@ -541,7 +598,7 @@ def _anchor_matched_observations(
     ]
     if robot_name and all(item is not None for item in robot_anchors):
         anchors_by_semantic[str(robot_name)] = [
-            _vector3(item, f"{robot_name} anchor")
+            _vector3(item, f"{robot_name} anchor") * axis_sign
             for item in robot_anchors
         ]
 
@@ -554,7 +611,9 @@ def _anchor_matched_observations(
             try:
                 for key in path:
                     value = value[key]
-                selected.append(_vector3(value, f"{semantic_name} anchor"))
+                selected.append(
+                    _vector3(value, f"{semantic_name} anchor") * axis_sign
+                )
             except (KeyError, TypeError, ValueError):
                 continue
         if selected:
@@ -758,6 +817,7 @@ def _write_mobile_view(
     objects: list[dict],
     observed: list[dict],
     supports: list[dict] | None = None,
+    camera_eye: tuple[float, float, float] = (-1.55, 0.0, 0.95),
 ) -> None:
     traces = []
     for record in objects:
@@ -851,10 +911,16 @@ def _write_mobile_view(
         }],
         scene={
             "aspectmode": "data",
-            "xaxis": {"title": "X / right (m)"},
-            "yaxis": {"title": "Y / forward (m)"},
+            "xaxis": {"title": "X / forward (m)"},
+            "yaxis": {"title": "Y / left (m)"},
             "zaxis": {"title": "Z / up (m)"},
-            "camera": {"eye": {"x": 1.35, "y": -1.55, "z": 0.95}},
+            "camera": {
+                "eye": {
+                    "x": camera_eye[0],
+                    "y": camera_eye[1],
+                    "z": camera_eye[2],
+                }
+            },
         },
     )
     figure.write_html(
@@ -863,7 +929,11 @@ def _write_mobile_view(
     )
 
 
-def _write_esdf_mobile(path: Path, esdf: dict) -> None:
+def _write_esdf_mobile(
+    path: Path,
+    esdf: dict,
+    camera_eye: tuple[float, float, float] = (-1.55, 0.0, 0.95),
+) -> None:
     origin = np.asarray(esdf["origin_xyz_m"], dtype=float)
     voxel = float(esdf["voxel_size_m"])
     observed_free = np.asarray(esdf["observed"]) & ~np.asarray(esdf["occupied"])
@@ -911,10 +981,16 @@ def _write_esdf_mobile(path: Path, esdf: dict) -> None:
         margin={"l": 0, "r": 0, "t": 55, "b": 0},
         scene={
             "aspectmode": "data",
-            "xaxis": {"title": "X / right (m)"},
-            "yaxis": {"title": "Y / forward (m)"},
+            "xaxis": {"title": "X / forward (m)"},
+            "yaxis": {"title": "Y / left (m)"},
             "zaxis": {"title": "Z / up (m)"},
-            "camera": {"eye": {"x": 1.35, "y": -1.55, "z": 0.95}},
+            "camera": {
+                "eye": {
+                    "x": camera_eye[0],
+                    "y": camera_eye[1],
+                    "z": camera_eye[2],
+                }
+            },
         },
     )
     figure.write_html(
@@ -982,7 +1058,11 @@ def _write_esdf_artifacts(
         output / "scene_esdf.npz",
         **{key: value for key, value in esdf.items() if key != "schema"},
     )
-    _write_esdf_mobile(output / "esdf.html", esdf)
+    _write_esdf_mobile(
+        output / "esdf.html",
+        esdf,
+        camera_eye=_viewer_camera_eye(profile),
+    )
     return {
         "schema": esdf["schema"],
         "shape": list(np.asarray(esdf["esdf_m"]).shape),
@@ -995,15 +1075,19 @@ def _write_esdf_artifacts(
     }
 
 
-def _camera_origin_from_report(path: str | None) -> np.ndarray | None:
+def _camera_origin_from_report(
+    path: str | None,
+    profile: dict,
+) -> np.ndarray | None:
     if not path:
         return None
     payload = json.loads(Path(path).read_text())
     transform = payload.get("T_level_camera")
+    if transform is None:
+        return None
     return (
-        None
-        if transform is None
-        else np.asarray(transform, dtype=float)[:3, 3]
+        np.asarray(transform, dtype=float)[:3, 3]
+        * _scene_axis_sign(profile)
     )
 
 
@@ -1125,10 +1209,26 @@ def _resume_confirmed(args) -> dict:
                 Path(args.output_dir) / "scene.xml",
                 Path(args.output_dir) / "mujoco.html",
                 keyframe="synchronized" if qpos is not None else None,
+                camera_eye=_viewer_camera_eye(profile),
             )
             scene["artifacts"]["mujoco_mobile_view"] = str(
                 (Path(args.output_dir) / "mujoco.html").resolve()
             )
+            try:
+                model.key("home")
+                render(
+                    Path(args.output_dir) / "scene.xml",
+                    Path(args.output_dir) / "mujoco_home.html",
+                    keyframe="home",
+                    camera_eye=_viewer_camera_eye(profile),
+                )
+                scene["artifacts"]["mujoco_home_mobile_view"] = str(
+                    (
+                        Path(args.output_dir) / "mujoco_home.html"
+                    ).resolve()
+                )
+            except KeyError:
+                pass
         except Exception as error:
             scene["mujoco_compile"]["mobile_render_error"] = str(error)
         if model.nq:
@@ -1168,8 +1268,12 @@ def _resume_confirmed(args) -> dict:
         scene["objects"],
         observed,
         scene.get("supports", []),
+        camera_eye=_viewer_camera_eye(profile),
     )
-    mesh = load_organized_mesh(scene["inputs"]["mesh"]["path"])
+    mesh = _canonicalize_mesh(
+        load_organized_mesh(scene["inputs"]["mesh"]["path"]),
+        profile,
+    )
     calibration_report = scene.get("robot_placement", {}).get(
         "calibration_report"
     )
@@ -1179,7 +1283,10 @@ def _resume_confirmed(args) -> dict:
         records=scene["objects"],
         supports=scene.get("supports", []),
         profile=profile,
-        camera_origin=_camera_origin_from_report(calibration_report),
+        camera_origin=_camera_origin_from_report(
+            calibration_report,
+            profile,
+        ),
         model=model,
         data=data,
     )
@@ -1222,7 +1329,7 @@ def build(args) -> dict:
     rgb_full = cv2.imread(str(args.rgb), cv2.IMREAD_COLOR)
     if rgb_full is None:
         raise FileNotFoundError(args.rgb)
-    mesh = load_organized_mesh(args.mesh)
+    mesh = _canonicalize_mesh(load_organized_mesh(args.mesh), profile)
     shape_hw = tuple(
         int(item)
         for item in profile.get("organized_shape_hw", rgb_full.shape[:2])
@@ -1439,7 +1546,11 @@ def build(args) -> dict:
         output / "sam_overlay.png",
     )
     _write_mobile_view(
-        output / "index.html", records, observed_surfaces, supports
+        output / "index.html",
+        records,
+        observed_surfaces,
+        supports,
+        camera_eye=_viewer_camera_eye(profile),
     )
     _write_mjcf(
         output / "scene.xml", records, profile, robot_qpos, supports
@@ -1462,6 +1573,7 @@ def build(args) -> dict:
         readiness["reasons"].append("mujoco_compile_failed")
         model = None
     scene_mobile = None
+    home_mobile = None
     articulation = {"ok": False, "reason": "mujoco_compile_failed"}
     if model is not None:
         try:
@@ -1471,8 +1583,22 @@ def build(args) -> dict:
                 output / "scene.xml",
                 output / "mujoco.html",
                 keyframe="synchronized" if robot_qpos is not None else None,
+                camera_eye=_viewer_camera_eye(profile),
             )
             scene_mobile = str((output / "mujoco.html").resolve())
+            try:
+                model.key("home")
+                render(
+                    output / "scene.xml",
+                    output / "mujoco_home.html",
+                    keyframe="home",
+                    camera_eye=_viewer_camera_eye(profile),
+                )
+                home_mobile = str(
+                    (output / "mujoco_home.html").resolve()
+                )
+            except KeyError:
+                pass
         except Exception as error:
             compile_result["mobile_render_error"] = str(error)
         if model.nq:
@@ -1502,7 +1628,8 @@ def build(args) -> dict:
         supports=supports,
         profile=profile,
         camera_origin=_camera_origin_from_report(
-            getattr(args, "calibration_report", None)
+            getattr(args, "calibration_report", None),
+            profile,
         ),
         model=model,
         data=data,
@@ -1518,7 +1645,12 @@ def build(args) -> dict:
             "profile": str(Path(args.profile).resolve()),
             "catalog": profile["catalog_path"],
         },
-        "frame": "levelled_rgbd",
+        "frame": "canonical_lab_rgbd",
+        "frame_transform": {
+            "source": "levelled_rgbd",
+            "axis_sign": _scene_axis_sign(profile).tolist(),
+            "convention": "X forward, Y left, Z up",
+        },
         "robot_state": {
             "qpos": robot_qpos,
             "source": robot_state_source,
@@ -1535,6 +1667,7 @@ def build(args) -> dict:
             "mobile_view": str((output / "index.html").resolve()),
             "mujoco": str((output / "scene.xml").resolve()),
             "mujoco_mobile_view": scene_mobile,
+            "mujoco_home_mobile_view": home_mobile,
             "articulation_video": articulation.get("path"),
             "esdf": str((output / "scene_esdf.npz").resolve()),
             "esdf_mobile_view": str((output / "esdf.html").resolve()),

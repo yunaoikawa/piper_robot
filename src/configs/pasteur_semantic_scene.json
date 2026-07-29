@@ -10,6 +10,8 @@
     "petri_lid"
   ],
   "organized_shape_hw": [192, 256],
+  "scene_axis_sign": [-1, 1, 1],
+  "viewer_camera_eye": [-1.55, 0.0, 0.95],
   "sam_candidate_threshold": 0.2,
   "sam_full_frame_attempts": 3,
   "sam_roi_padding_px": 24.0,
@@ -67,7 +69,11 @@
   "robot_placement": {
     "semantic_name": "robot",
     "anchor_map": "anchor_xyz_level_m",
-    "yaw_offset_rad": 1.5707963267948966,
+    "yaw_offset_rad": -1.5707963267948966,
+    "shared_base_height": {
+      "support_level": "right_platform",
+      "mount_below_support_m": 0.197
+    },
     "instances": [
       {"body": "left/base_link", "anchor": "left_piper_base"},
       {"body": "right/base_link", "anchor": "right_piper_base"}
