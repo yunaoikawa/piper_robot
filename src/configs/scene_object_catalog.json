@@ -15,7 +15,7 @@
     },
     {
       "name": "incubator",
-      "prompts": ["laboratory incubator", "small lab refrigerator"],
+      "prompts": ["laboratory incubator", "small lab refrigerator", "white appliance"],
       "completion": "template",
       "primitive": "box",
       "nominal_size_m": [0.28, 0.25, 0.35],
@@ -38,7 +38,7 @@
     },
     {
       "name": "culture_media_bottle",
-      "prompts": ["culture media bottle", "laboratory media bottle"],
+      "prompts": ["culture media bottle", "laboratory media bottle", "white bottle cap"],
       "completion": "primitive",
       "primitive": "cylinder",
       "nominal_size_m": [0.075, 0.075, 0.16],
@@ -50,7 +50,7 @@
     },
     {
       "name": "petri_dish",
-      "prompts": ["petri dish body", "petri dish"],
+      "prompts": ["petri dish body", "petri dish", "transparent round dish"],
       "completion": "template",
       "primitive": "cylinder",
       "nominal_size_m": [0.09, 0.09, 0.014],
@@ -62,7 +62,7 @@
     },
     {
       "name": "petri_lid",
-      "prompts": ["transparent petri dish lid", "petri dish lid"],
+      "prompts": ["transparent petri dish lid", "petri dish lid", "transparent round dish lid"],
       "completion": "template",
       "primitive": "cylinder",
       "nominal_size_m": [0.094, 0.094, 0.006],

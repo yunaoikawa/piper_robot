@@ -11,9 +11,49 @@
   ],
   "organized_shape_hw": [192, 256],
   "sam_candidate_threshold": 0.2,
+  "sam_full_frame_attempts": 3,
   "sam_roi_padding_px": 24.0,
   "sam_roi_scale": 4.0,
-  "sam_timeout_ms": 30000,
+  "sam_roi_max_full_frame_fraction": 0.35,
+  "sam_instance_nms_iou": 0.55,
+  "sam_fallback_grid": [5, 4],
+  "sam_fallback_window_fraction": 0.30,
+  "sam_tiled_fallback_objects": [
+    "microscope",
+    "culture_media_bottle",
+    "petri_dish",
+    "petri_lid"
+  ],
+  "maximum_instances": {
+    "robot": 4,
+    "incubator": 1,
+    "microscope": 1,
+    "culture_media_bottle": 4,
+    "petri_dish": 4,
+    "petri_lid": 4
+  },
+  "semantic_anchor_selection": {
+    "culture_media_bottle": [
+      [
+        "semantic_observations",
+        "culture_media_bottle_left",
+        "proxy_center_level_m"
+      ]
+    ],
+    "petri_dish": [
+      [
+        "anchor_xyz_level_m",
+        "petri_dish"
+      ]
+    ],
+    "petri_lid": [
+      [
+        "anchor_xyz_level_m",
+        "petri_dish"
+      ]
+    ]
+  },
+  "sam_timeout_ms": 120000,
   "accepted_mask_score": 1.0,
   "default_minimum_confidence": 0.72,
   "minimum_depth_points": 12,

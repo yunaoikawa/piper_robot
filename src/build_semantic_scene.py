@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+import itertools
 import json
 from pathlib import Path
 import sys
@@ -19,7 +20,11 @@ import plotly.graph_objects as go
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rollout.daily_scene import DailySceneStore, SceneObject
-from rollout.sam_segmentation import SamSegmentationClient
+from rollout.sam_segmentation import (
+    MaskCandidate,
+    SamSegmentationClient,
+    SegmentationResult,
+)
 from rollout.sam_segmentation import (
     compute_candidate_roi,
     extract_enlarged_roi,
@@ -34,6 +39,7 @@ from rollout.semantic_scene_pipeline import (
     detect_unknown_objects,
     discover_supports,
     exclusive_masks,
+    load_mask,
     load_organized_mesh,
     load_profile,
     quality_score,
@@ -242,6 +248,126 @@ def _run_sam(
         endpoint, timeout_ms=int(profile.get("sam_timeout_ms", 20000))
     )
     observations = []
+
+    def maximum_instances(name: str) -> int | None:
+        raw = profile.get("maximum_instances", {}).get(name)
+        return None if raw is None else max(1, int(raw))
+
+    def box_iou(first: np.ndarray, second: np.ndarray) -> float:
+        x0 = max(float(first[0]), float(second[0]))
+        y0 = max(float(first[1]), float(second[1]))
+        x1 = min(float(first[2]), float(second[2]))
+        y1 = min(float(first[3]), float(second[3]))
+        intersection = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+        first_area = max(0.0, float(first[2] - first[0])) * max(
+            0.0, float(first[3] - first[1])
+        )
+        second_area = max(0.0, float(second[2] - second[0])) * max(
+            0.0, float(second[3] - second[1])
+        )
+        union = first_area + second_area - intersection
+        return 0.0 if union <= 0.0 else intersection / union
+
+    def limited_candidates(
+        candidates: tuple[MaskCandidate, ...], name: str
+    ) -> tuple[MaskCandidate, ...]:
+        limit = maximum_instances(name)
+        if limit is None:
+            return candidates
+        selected = []
+        threshold = float(profile.get("sam_instance_nms_iou", 0.55))
+        for candidate in sorted(
+            candidates, key=lambda item: item.score, reverse=True
+        ):
+            if any(
+                box_iou(candidate.box_xyxy, kept.box_xyxy) >= threshold
+                for kept in selected
+            ):
+                continue
+            selected.append(candidate)
+            if len(selected) >= limit:
+                break
+        return tuple(selected)
+
+    def tiled_fallback(
+        prompt: str, name: str, frame_id: int
+    ) -> tuple[SegmentationResult | None, int]:
+        columns, rows = [
+            int(item)
+            for item in profile.get("sam_fallback_grid", [5, 4])
+        ]
+        fraction = float(profile.get("sam_fallback_window_fraction", 0.30))
+        height, width = rgb.shape[:2]
+        tile_width = max(32, int(round(width * fraction)))
+        tile_height = max(32, int(round(height * fraction)))
+        starts_x = np.rint(
+            np.linspace(0, max(0, width - tile_width), columns)
+        ).astype(int)
+        starts_y = np.rint(
+            np.linspace(0, max(0, height - tile_height), rows)
+        ).astype(int)
+        proposals = []
+        inference_ms = 0.0
+        model = "sam3"
+        for y0 in starts_y:
+            for x0 in starts_x:
+                x1 = min(width, int(x0) + tile_width)
+                y1 = min(height, int(y0) + tile_height)
+                frame_id += 1
+                result = client.segment(
+                    rgb[int(y0):y1, int(x0):x1],
+                    frame_id=frame_id,
+                    timestamp=time.time(),
+                    prompt=prompt,
+                    confidence_threshold=float(
+                        profile.get("sam_candidate_threshold", 0.20)
+                    ),
+                )
+                inference_ms += float(result.inference_ms)
+                model = result.model
+                for candidate in result.candidates:
+                    proposals.append(
+                        (
+                            float(candidate.score),
+                            int(x0),
+                            int(y0),
+                            candidate,
+                        )
+                    )
+        if not proposals:
+            return None, frame_id
+        candidates = []
+        for _, x0, y0, candidate in sorted(
+            proposals, key=lambda item: item[0], reverse=True
+        ):
+            full_mask = np.zeros((height, width), dtype=bool)
+            tile_mask = np.asarray(candidate.mask, dtype=bool)
+            tile_height_actual, tile_width_actual = tile_mask.shape
+            full_mask[
+                y0:y0 + tile_height_actual,
+                x0:x0 + tile_width_actual,
+            ] = tile_mask
+            offset = np.array([x0, y0, x0, y0], dtype=float)
+            candidates.append(
+                MaskCandidate(
+                    mask=full_mask,
+                    box_xyxy=np.asarray(candidate.box_xyxy, dtype=float)
+                    + offset,
+                    score=float(candidate.score),
+                )
+            )
+        candidates = list(limited_candidates(tuple(candidates), name))
+        return (
+            SegmentationResult(
+                frame_id=frame_id,
+                source_timestamp=time.time(),
+                model=model,
+                inference_ms=inference_ms,
+                candidates=tuple(candidates),
+            ),
+            frame_id,
+        )
+
     try:
         frame_id = 0
         for name in profile.get("objects", list(catalog)):
@@ -250,6 +376,10 @@ def _run_sam(
             best_prompt = None
             for prompt in definition.prompts:
                 frame_id += 1
+                print(
+                    f"SAM coarse: object={name} prompt={prompt!r}",
+                    flush=True,
+                )
                 coarse = client.segment(
                     rgb,
                     frame_id=frame_id,
@@ -259,17 +389,72 @@ def _run_sam(
                         profile.get("sam_candidate_threshold", 0.20)
                     ),
                 )
+                retry_count = int(profile.get("sam_full_frame_attempts", 3))
+                for attempt in range(2, retry_count + 1):
+                    if coarse.candidates:
+                        break
+                    frame_id += 1
+                    print(
+                        "SAM coarse retry: "
+                        f"object={name} prompt={prompt!r} "
+                        f"attempt={attempt}",
+                        flush=True,
+                    )
+                    coarse = client.segment(
+                        rgb,
+                        frame_id=frame_id,
+                        timestamp=time.time(),
+                        prompt=prompt,
+                        confidence_threshold=float(
+                            profile.get("sam_candidate_threshold", 0.20)
+                        ),
+                    )
+                if (
+                    not coarse.candidates
+                    and name
+                    in set(profile.get("sam_tiled_fallback_objects", ()))
+                ):
+                    print(
+                        f"SAM tiled fallback: object={name} prompt={prompt!r}",
+                        flush=True,
+                    )
+                    tiled, frame_id = tiled_fallback(prompt, name, frame_id)
+                    if tiled is not None:
+                        coarse = tiled
                 result = coarse
                 if coarse.candidates:
                     try:
+                        refinement_candidates = limited_candidates(
+                            tuple(coarse.candidates), name
+                        )
                         roi = compute_candidate_roi(
-                            coarse.candidates,
+                            refinement_candidates,
                             full_shape_hw=rgb.shape[:2],
                             padding_px=float(profile.get("sam_roi_padding_px", 24.0)),
                             scale=float(profile.get("sam_roi_scale", 4.0)),
                         )
+                        x0, y0, x1, y1 = roi.crop_xyxy
+                        crop_fraction = (
+                            (x1 - x0) * (y1 - y0)
+                            / float(rgb.shape[0] * rgb.shape[1])
+                        )
+                        if crop_fraction > float(
+                            profile.get(
+                                "sam_roi_max_full_frame_fraction", 0.35
+                            )
+                        ):
+                            raise ValueError(
+                                "candidate union is too large for useful ROI "
+                                f"refinement ({crop_fraction:.3f} of frame)"
+                            )
                         enlarged = extract_enlarged_roi(rgb, roi)
                         frame_id += 1
+                        print(
+                            "SAM fine: "
+                            f"object={name} prompt={prompt!r} "
+                            f"shape={enlarged.shape[:2]}",
+                            flush=True,
+                        )
                         fine = client.segment(
                             enlarged,
                             frame_id=frame_id,
@@ -298,12 +483,11 @@ def _run_sam(
                         best_prompt = prompt
             if best_result is None:
                 continue
+            candidates = limited_candidates(
+                tuple(best_result.candidates), name
+            )
             for instance_index, candidate in enumerate(
-                sorted(
-                    best_result.candidates,
-                    key=lambda item: item.score,
-                    reverse=True,
-                ),
+                sorted(candidates, key=lambda item: item.score, reverse=True),
                 1,
             ):
                 path = output_dir / "masks" / f"{name}-{instance_index}.png"
@@ -326,6 +510,121 @@ def _run_sam(
     finally:
         client.close()
     return observations
+
+
+def _anchor_matched_observations(
+    observations: list[MaskObservation],
+    *,
+    profile: dict,
+    calibration_report: str | None,
+    mesh: dict[str, np.ndarray],
+    shape_hw: tuple[int, int],
+) -> list[MaskObservation]:
+    """Select semantic instances nearest named 3D anchors.
+
+    SAM confidence alone cannot distinguish a robot arm from a visually
+    similar microscope strut or a bottle cap from a gripper cap.  Anchors are
+    projected into the organized RGB-D image, then a minimum-cost one-to-one
+    assignment selects masks by image distance with confidence as a tie-break.
+    """
+
+    if not calibration_report:
+        return observations
+    report = json.loads(Path(calibration_report).read_text())
+    anchors_by_semantic: dict[str, list[np.ndarray]] = {}
+    placement = profile.get("robot_placement", {})
+    robot_name = placement.get("semantic_name")
+    anchor_map = report.get(placement.get("anchor_map", ""), {})
+    robot_anchors = [
+        anchor_map.get(item.get("anchor"))
+        for item in placement.get("instances", ())
+    ]
+    if robot_name and all(item is not None for item in robot_anchors):
+        anchors_by_semantic[str(robot_name)] = [
+            _vector3(item, f"{robot_name} anchor")
+            for item in robot_anchors
+        ]
+
+    for semantic_name, paths in profile.get(
+        "semantic_anchor_selection", {}
+    ).items():
+        selected = []
+        for path in paths:
+            value = report
+            try:
+                for key in path:
+                    value = value[key]
+                selected.append(_vector3(value, f"{semantic_name} anchor"))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if selected:
+            anchors_by_semantic[str(semantic_name)] = selected
+
+    vertices = mesh["vertices"]
+    valid_indices = np.flatnonzero(mesh["valid"])
+    valid_vertices = vertices[valid_indices]
+    diagonal = float(np.hypot(*shape_hw))
+    retained = list(observations)
+    for semantic_name, anchors in anchors_by_semantic.items():
+        candidates = [
+            item for item in observations
+            if item.semantic_name == semantic_name
+        ]
+        if len(candidates) <= len(anchors):
+            continue
+        anchor_pixels = []
+        for anchor in anchors:
+            delta = valid_vertices - anchor
+            # Image association should be dominated by lateral placement; Z
+            # remains a weak cue because the visible mask rarely reaches a
+            # base hidden below a platform.
+            distance = (
+                delta[:, 0] ** 2
+                + delta[:, 1] ** 2
+                + 0.10 * delta[:, 2] ** 2
+            )
+            flat_index = int(valid_indices[int(np.argmin(distance))])
+            row, column = np.unravel_index(flat_index, shape_hw)
+            anchor_pixels.append(np.array([column, row], dtype=float))
+        costs = np.zeros((len(anchors), len(candidates)), dtype=float)
+        for candidate_index, candidate in enumerate(candidates):
+            mask = load_mask(candidate.mask_path, shape_hw)
+            rows, columns = np.nonzero(mask)
+            if not len(columns):
+                costs[:, candidate_index] = 1e6
+                continue
+            pixels = np.column_stack((columns, rows)).astype(float)
+            for anchor_index, anchor_pixel in enumerate(anchor_pixels):
+                pixel_distance = np.min(
+                    np.linalg.norm(pixels - anchor_pixel, axis=1)
+                ) / max(diagonal, 1.0)
+                costs[anchor_index, candidate_index] = (
+                    pixel_distance - 0.02 * candidate.sam_score
+                )
+        best = None
+        for assignment in itertools.permutations(
+            range(len(candidates)), len(anchors)
+        ):
+            cost = sum(
+                costs[anchor_index, candidate_index]
+                for anchor_index, candidate_index in enumerate(assignment)
+            )
+            if best is None or cost < best[0]:
+                best = (cost, assignment)
+        selected_ids = {
+            id(candidates[index]) for index in best[1]
+        }
+        retained = [
+            item for item in retained
+            if item.semantic_name != semantic_name or id(item) in selected_ids
+        ]
+        print(
+            "Anchor selection: "
+            f"object={semantic_name} kept={len(selected_ids)} "
+            f"from={len(candidates)}",
+            flush=True,
+        )
+    return retained
 
 
 def _overlay(rgb, owned, objects, unknown, output: Path):
@@ -920,23 +1219,40 @@ def build(args) -> dict:
                     *[float(item) for item in right_q],
                 ]
                 robot_state_source = str(capture_manifest.resolve())
-    rgb = cv2.imread(str(args.rgb), cv2.IMREAD_COLOR)
-    if rgb is None:
+    rgb_full = cv2.imread(str(args.rgb), cv2.IMREAD_COLOR)
+    if rgb_full is None:
         raise FileNotFoundError(args.rgb)
     mesh = load_organized_mesh(args.mesh)
-    shape_hw = tuple(int(item) for item in profile.get("organized_shape_hw", rgb.shape[:2]))
-    if rgb.shape[:2] != shape_hw:
-        rgb = cv2.resize(rgb, (shape_hw[1], shape_hw[0]), interpolation=cv2.INTER_AREA)
+    shape_hw = tuple(
+        int(item)
+        for item in profile.get("organized_shape_hw", rgb_full.shape[:2])
+    )
+    rgb_organized = (
+        rgb_full
+        if rgb_full.shape[:2] == shape_hw
+        else cv2.resize(
+            rgb_full,
+            (shape_hw[1], shape_hw[0]),
+            interpolation=cv2.INTER_AREA,
+        )
+    )
     if len(mesh["vertices"]) != int(np.prod(shape_hw)):
         raise ValueError("profile organized_shape_hw does not match mesh")
 
     observations = (
         _parse_mask_specs(args.mask, profile)
         if args.mask
-        else _run_sam(rgb, profile, catalog, args.sam_endpoint, output)
+        else _run_sam(rgb_full, profile, catalog, args.sam_endpoint, output)
     )
     if not observations:
         raise RuntimeError("SAM did not detect any configured object")
+    observations = _anchor_matched_observations(
+        observations,
+        profile=profile,
+        calibration_report=getattr(args, "calibration_report", None),
+        mesh=mesh,
+        shape_hw=shape_hw,
+    )
     owned = exclusive_masks(observations, shape_hw)
     profile, robot_placement = _position_articulated_model(
         profile=profile,
@@ -1115,7 +1431,13 @@ def build(args) -> dict:
     if not articulated_placement_ready:
         readiness["reasons"].append("articulated_base_placement_unaccepted")
 
-    _overlay(rgb, owned, records, unknown, output / "sam_overlay.png")
+    _overlay(
+        rgb_organized,
+        owned,
+        records,
+        unknown,
+        output / "sam_overlay.png",
+    )
     _write_mobile_view(
         output / "index.html", records, observed_surfaces, supports
     )
