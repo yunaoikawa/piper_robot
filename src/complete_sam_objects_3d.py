@@ -61,9 +61,8 @@ def _arm_mesh(model_path, q, side):
         fa = int(model.mesh_faceadr[mesh_id])
         fn = int(model.mesh_facenum[mesh_id])
         part = np.asarray(model.mesh_vert[va : va + vn], float)
-        mesh_rotation = np.empty(9)
-        mujoco.mju_quat2Mat(mesh_rotation, model.mesh_quat[mesh_id])
-        part = (mesh_rotation.reshape(3, 3) @ part.T).T + model.mesh_pos[mesh_id]
+        # mesh_vert is already normalized into MuJoCo's runtime mesh frame.
+        # Applying mesh_pos/mesh_quat again detaches links and grippers.
         geom_rotation = np.asarray(data.geom_xmat[geom_id]).reshape(3, 3)
         part = (geom_rotation @ part.T).T + data.geom_xpos[geom_id] - base
         part_faces = np.asarray(model.mesh_face[fa : fa + fn], int)
@@ -184,6 +183,34 @@ def complete(args):
             calibration["anchor_xyz_level_m"]["right_piper_base"], float
         ),
     }
+    component_count, component_labels, component_stats, _ = (
+        cv2.connectedComponentsWithStats(
+            masks["robot"].astype(np.uint8), 8
+        )
+    )
+    component_ids = sorted(
+        range(1, component_count),
+        key=lambda index: component_stats[index, cv2.CC_STAT_AREA],
+        reverse=True,
+    )[:2]
+    component_points = [
+        vertices[(component_labels == index).reshape(-1) & valid]
+        for index in component_ids
+    ]
+    remaining = list(component_points)
+    for name in ("right_robot", "left_robot"):
+        anchor = base_by_name[name]
+        selected_index = min(
+            range(len(remaining)),
+            key=lambda index: float(
+                np.linalg.norm(
+                    np.median(remaining[index][:, :2], axis=0) - anchor[:2]
+                )
+            ),
+        )
+        selected = remaining.pop(selected_index)
+        # The base mesh bottom is z=0 in the MacBook MJCF.
+        anchor[2] = float(np.quantile(selected[:, 2], 0.01))
     base_vector = base_by_name["left_robot"][:2] - base_by_name["right_robot"][:2]
     # The source MJCF has right->left along +Y.
     base_yaw = float(np.arctan2(base_vector[1], base_vector[0]) - np.pi / 2)

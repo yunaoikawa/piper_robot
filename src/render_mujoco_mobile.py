@@ -165,10 +165,9 @@ def render(
                 model.mesh_vert[vertex_start : vertex_start + vertex_count],
                 dtype=float,
             )
-            mesh_rotation = _rotation(mujoco, model.mesh_quat[mesh_id])
-            vertices = (
-                mesh_rotation @ vertices.T
-            ).T + np.asarray(model.mesh_pos[mesh_id], dtype=float)
+            # MuJoCo has already normalized mesh_vert into the runtime mesh
+            # frame.  mesh_pos/mesh_quat are bookkeeping for that conversion,
+            # not another render transform.
             faces = np.asarray(
                 model.mesh_face[face_start : face_start + face_count], dtype=int
             )
