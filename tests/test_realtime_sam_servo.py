@@ -230,9 +230,33 @@ class InvalidJointMotionRPC(FakeMotionRPC):
         return np.full(6, np.nan)
 
 
+class FollowingJointMotionRPC(FakeMotionRPC):
+    def __init__(self):
+        super().__init__()
+        self.joints = np.zeros(6)
+        self.joint_commands = []
+
+    def get_right_joint_positions(self):
+        return self.joints.copy()
+
+    def set_right_joint_target(
+        self, target, *, gripper_target, preview_time
+    ):
+        target = np.asarray(target, dtype=float)
+        self.joint_commands.append(
+            (target.copy(), gripper_target, float(preview_time))
+        )
+        self.joints = target.copy()
+        return True
+
+
 def fake_motion_runner(rpc, *, torque_samples=5):
     runner = object.__new__(LiveSamGrasp)
-    runner.args = SimpleNamespace(preview_time=0.06, minimum_progress=0.9)
+    runner.args = SimpleNamespace(
+        preview_time=0.06,
+        minimum_progress=0.9,
+        joint_minimum_progress=0.25,
+    )
     runner.rpc = rpc
     runner.torque_limit = np.ones(6)
     runner.torque_samples = torque_samples
@@ -321,6 +345,18 @@ assert motion_rpc.events[:first_move].count("mode") == 2
 assert motion_rpc.events[-2:] == ["hold", "gain"]
 assert np.allclose(motion_rpc.gains[-1][0], DEFAULT_HOLDING_KP)
 assert np.allclose(motion_rpc.gains[-1][1], DEFAULT_HOLDING_KD)
+
+joint_rpc = FollowingJointMotionRPC()
+joint_runner = fake_motion_runner(joint_rpc)
+joint_actual = joint_runner.move_joint_delta(
+    [0.0, 0.0, 0.003], preview_time=0.10, accumulate=False
+)
+assert np.allclose(joint_actual, [0.0, 0.0, 0.003])
+assert len(joint_rpc.joint_commands) == 3
+assert np.all(np.diff([cmd[0][2] for cmd in joint_rpc.joint_commands]) > 0)
+assert np.isclose(joint_rpc.joint_commands[-1][0][2], 0.003)
+assert all(cmd[1] is None for cmd in joint_rpc.joint_commands)
+assert all(np.isclose(cmd[2], 0.05) for cmd in joint_rpc.joint_commands)
 
 rejecting_rpc = FakeMotionRPC(reject_at=2)
 try:

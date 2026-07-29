@@ -1054,7 +1054,7 @@ def _joint_probe_motion_quality(
 
 
 def _require_valid_joint_probe_motion(quality, stage):
-    if quality["direction_sign"] != 1.0:
+    if quality["direction_sign"] == -1.0:
         raise RuntimeError(
             f"{stage} selected joint moved opposite to its signed request"
         )

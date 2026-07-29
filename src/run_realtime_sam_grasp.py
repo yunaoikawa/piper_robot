@@ -2255,6 +2255,14 @@ class LiveSamGrasp:
             preview_time = self.args.preview_time
         if minimum_progress is None:
             minimum_progress = self.args.joint_minimum_progress
+        preview_time = float(preview_time)
+        if not np.isfinite(preview_time) or not 0.0 < preview_time <= 10.0:
+            raise ValueError("preview_time must be within (0, 10] seconds")
+        requested = np.asarray(delta_joints, dtype=float)
+        if requested.shape != (3,) or not np.all(np.isfinite(requested)):
+            raise ValueError(
+                "joint delta must contain three finite shoulder/elbow values"
+            )
         before = np.asarray(
             self.rpc.get_right_joint_positions(), dtype=float
         )
@@ -2267,20 +2275,37 @@ class LiveSamGrasp:
             target[3:] = before[3:]
         else:
             target = before.copy()
-        target[:3] += np.asarray(delta_joints, dtype=float)
-        self.rpc.set_right_joint_target(
-            target,
-            gripper_target=None,
-            preview_time=preview_time,
-        )
-        self.monitor_settle(preview_time + 0.15)
+        start = before.copy()
+        target[:3] += requested
+
+        # Piper follows the teleoperation-style stream reliably, while one
+        # long-horizon joint target can remain latched at the measured pose.
+        # Interpolate one logical command into short 30 Hz waypoints and run
+        # the caller's torque/state guard between every waypoint.
+        command_rate_hz = 30.0
+        steps = max(1, int(np.ceil(preview_time * command_rate_hz)))
+        period_s = preview_time / steps
+        command_preview_s = 0.05
+        try:
+            for step in range(1, steps + 1):
+                alpha = step / steps
+                waypoint = start + alpha * (target - start)
+                self.rpc.set_right_joint_target(
+                    waypoint,
+                    gripper_target=None,
+                    preview_time=command_preview_s,
+                )
+                self.monitor_settle(period_s)
+        except BaseException:
+            self.hold_measured()
+            raise
+        self.monitor_settle(0.15)
         if accumulate:
             self.joint_command = target.copy()
         after = np.asarray(
             self.rpc.get_right_joint_positions(), dtype=float
         )
         actual = after[:3] - before[:3]
-        requested = np.asarray(delta_joints, dtype=float)
         if np.linalg.norm(requested) > 0.003:
             progress = np.linalg.norm(actual) / np.linalg.norm(requested)
             if progress < minimum_progress:
