@@ -12,7 +12,7 @@ import mujoco
 import numpy as np
 import plotly.graph_objects as go
 
-from export_sam_objects_3d import COLORS  # type: ignore
+from export_sam_objects_3d import COLORS, _compact_mesh  # type: ignore
 from render_mujoco_mobile import _box, _cylinder  # type: ignore
 
 
@@ -46,7 +46,7 @@ def _arm_mesh(model_path, q, side):
             body_id = int(model.body_parentid[body_id])
         return False
 
-    vertices, faces, offset = [], [], 0
+    parts = []
     for geom_id in range(model.ngeom):
         if (
             not belongs_to_arm(int(model.geom_bodyid[geom_id]))
@@ -66,10 +66,9 @@ def _arm_mesh(model_path, q, side):
         part = (mesh_rotation.reshape(3, 3) @ part.T).T + model.mesh_pos[mesh_id]
         geom_rotation = np.asarray(data.geom_xmat[geom_id]).reshape(3, 3)
         part = (geom_rotation @ part.T).T + data.geom_xpos[geom_id] - base
-        vertices.append(part)
-        faces.append(np.asarray(model.mesh_face[fa : fa + fn], int) + offset)
-        offset += len(part)
-    return np.concatenate(vertices), np.concatenate(faces)
+        part_faces = np.asarray(model.mesh_face[fa : fa + fn], int)
+        parts.append((part, part_faces))
+    return parts
 
 
 def _mesh_trace(vertices, faces, name, color, opacity=1.0):
@@ -79,6 +78,31 @@ def _mesh_trace(vertices, faces, name, color, opacity=1.0):
         name=name, color=color, opacity=opacity, flatshading=False,
         hovertemplate=name + "<extra></extra>", showlegend=True,
     )
+
+
+def _safe_mesh_traces(vertices, faces, name, color, opacity=1.0):
+    """Split meshes below mobile WebGL's practical vertex-index limit."""
+    pending = [(vertices, faces)]
+    chunks = []
+    while pending:
+        chunk_vertices, chunk_faces = pending.pop()
+        if len(chunk_vertices) <= 50_000:
+            chunks.append((chunk_vertices, chunk_faces))
+            continue
+        midpoint = len(chunk_faces) // 2
+        for face_half in (chunk_faces[:midpoint], chunk_faces[midpoint:]):
+            compact_vertices, compact_faces = _compact_mesh(
+                chunk_vertices, face_half
+            )
+            pending.append((compact_vertices, compact_faces))
+    traces = []
+    for index, (chunk_vertices, chunk_faces) in enumerate(chunks):
+        trace = _mesh_trace(
+            chunk_vertices, chunk_faces, name, color, opacity
+        )
+        trace.showlegend = index == 0
+        traces.append(trace)
+    return traces
 
 
 def _obj_bounds(path):
@@ -144,7 +168,7 @@ def complete(args):
         "left_robot": np.asarray(state["left_joint_positions_rad"], float),
         "right_robot": np.asarray(state["right_joint_positions_rad"], float),
     }
-    cad_by_name = {
+    cad_parts_by_name = {
         name: _arm_mesh(
             args.robot_model,
             q,
@@ -171,10 +195,22 @@ def complete(args):
         ]
     )
     for name in ("left_robot", "right_robot"):
-        cad, cad_faces = cad_by_name[name]
+        cad_parts = cad_parts_by_name[name]
         translation = base_by_name[name]
-        completed = (base_rotation @ cad.T).T + translation
-        traces.append(_mesh_trace(completed, cad_faces, name, COLORS["robot"]))
+        completed_parts = [
+            ((base_rotation @ part.T).T + translation, part_faces)
+            for part, part_faces in cad_parts
+        ]
+        robot_traces = []
+        for completed, cad_faces in completed_parts:
+            robot_traces.extend(
+                _safe_mesh_traces(
+                    completed, cad_faces, name, COLORS["robot"]
+                )
+            )
+        for index, trace in enumerate(robot_traces):
+            trace.showlegend = index == 0
+        traces.extend(robot_traces)
         report["objects"][name] = {
             "completion": "exact_mujoco_forward_kinematics_at_synchronized_joint_state",
             "model_source": str(Path(args.robot_model).resolve()),
@@ -182,6 +218,10 @@ def complete(args):
             "base_xyz_level_m": translation.tolist(),
             "shared_upright_yaw_deg": float(np.rad2deg(base_yaw)),
             "joint_mapping": "MacBook MJCF joint1..joint5; synchronized joint6 unavailable in that model",
+            "mobile_mesh_trace_count": len(robot_traces),
+            "maximum_trace_vertices": max(
+                len(trace.x) for trace in robot_traces
+            ),
         }
 
     # Robust XY orientation shared by the fixture-style completions.
@@ -322,11 +362,24 @@ def complete(args):
         perpendiculars,
         key=lambda direction: float(np.dot(direction, incubator_hint)),
     )
+    # Operator visual verification is authoritative for display handedness.
+    # Reflect only the lateral display axis: forward/depth and Z stay intact.
+    lateral = np.array([-toward_wall[1], toward_wall[0]])
+    display_reflection_xy = np.eye(2) - 2 * np.outer(lateral, lateral)
+    for trace in traces:
+        xy = display_reflection_xy @ np.vstack(
+            [np.asarray(trace.x, float), np.asarray(trace.y, float)]
+        )
+        trace.x = xy[0]
+        trace.y = xy[1]
+        if isinstance(trace, go.Mesh3d):
+            trace.j, trace.k = trace.k, trace.j
     eye_xy = -toward_wall * 1.65
     report["initial_view"] = {
         "description": "from_between_arms_straight_toward_opposite_wall",
         "arm_midpoint_xy_level_m": arm_midpoint.tolist(),
         "forward_xy": toward_wall.tolist(),
+        "left_right_display_reflection_xy": display_reflection_xy.tolist(),
     }
     figure = go.Figure(traces)
     figure.update_layout(
