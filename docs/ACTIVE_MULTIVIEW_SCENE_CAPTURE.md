@@ -84,6 +84,54 @@ The production path should fuse RGB-D into a projective TSDF, extract a
 polygon mesh, simplify it without closing observed holes, then build the ESDF.
 A Gaussian or triangle-splat model is an additional visual/registration layer.
 
+## Tag-free manual head-camera trial
+
+When camera-to-robot calibration is intentionally deferred and the current
+scene is not safe enough for robot-assisted scanning, use the LiDAR head phone
+only.  The wrist cameras are RGB-only in this setup and must not contribute
+metric depth.
+
+Keep one Record3D connection open while manually repositioning the phone.
+Capture three stopped views with substantial overlap:
+
+```bash
+python src/capture_record3d_multiview.py \
+  --view center --view left --view right \
+  --frames-per-view 7 --robot-state
+```
+
+The command does not send robot commands.  At each prompt, move the phone,
+wait until it is completely stationary, and press Enter.  A burst is rejected
+when its Record3D pose changes by more than 3 mm or 1 degree.
+
+Run SAM and fuse the accepted views:
+
+```bash
+MUJOCO_GL=egl python src/reconstruct_multiview_scene.py \
+  --capture CAPTURE_DIR \
+  --profile src/configs/pasteur_semantic_scene.json \
+  --output-dir OUTPUT_DIR \
+  --voxel-size 0.005 --truncation 0.020
+```
+
+The reconstruction:
+
+- levels the local frame with Record3D gravity without reflecting either axis;
+- masks robot and movable-object returns with SAM before static registration;
+- refines only whole-camera poses with robust point-to-plane residuals;
+- requires at least 30 percent overlap, 10 mm median residual, 25 mm p90
+  residual, and 8 mm cross-view support-height consistency;
+- fuses confidence- and view-angle-weighted TSDF observations while leaving
+  occluded voxels unknown;
+- writes `index.html`, `scene.html`, per-view SAM overlays, measured polygons,
+  and a conservative ESDF.
+
+This trial may become `display_ready`, but it always remains
+`collision_ready=false` and `motion_ready=false`: it improves relative scene
+geometry without accepting a camera-to-robot transform.  If the first capture
+fails, repeat once with wider left/right angles and `--attempt 2`.  A second
+failure records `stage_4_exact_robot_cad_alignment` as the next stage.
+
 ## Next-best-view loop
 
 1. Fuse all accepted frames and update per-object coverage.
