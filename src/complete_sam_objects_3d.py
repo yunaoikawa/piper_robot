@@ -36,12 +36,22 @@ def _arm_mesh(model_path, q, side):
         base_name = f"{side}/base_link"
         joint_mapping = "complete_6dof"
     except KeyError:
-        joint_prefix = "left_" if side == "left" else ""
-        joint_names = [
-            f"{joint_prefix}joint{index}" for index in range(1, 6)
-        ]
-        base_name = "left_base_link" if side == "left" else "base_link"
-        joint_mapping = "legacy_5dof"
+        try:
+            model.joint("joint6")
+            joint_names = [
+                f"joint{index}" for index in range(1, 7)
+            ]
+            base_name = "base_link"
+            joint_mapping = "complete_6dof_nyu_gripper"
+        except KeyError:
+            joint_prefix = "left_" if side == "left" else ""
+            joint_names = [
+                f"{joint_prefix}joint{index}" for index in range(1, 6)
+            ]
+            base_name = (
+                "left_base_link" if side == "left" else "base_link"
+            )
+            joint_mapping = "legacy_5dof"
     for name, value in zip(joint_names, q):
         joint = model.joint(name)
         data.qpos[int(joint.qposadr[0])] = value
@@ -177,9 +187,13 @@ def complete(args):
         "left_robot": np.asarray(state["left_joint_positions_rad"], float),
         "right_robot": np.asarray(state["right_joint_positions_rad"], float),
     }
+    model_by_name = {
+        "left_robot": args.left_robot_model,
+        "right_robot": args.right_robot_model,
+    }
     cad_result_by_name = {
         name: _arm_mesh(
-            args.robot_model,
+            model_by_name[name],
             q,
             "left" if name == "left_robot" else "right",
         )
@@ -253,7 +267,7 @@ def complete(args):
         traces.extend(robot_traces)
         report["objects"][name] = {
             "completion": "exact_mujoco_forward_kinematics_at_synchronized_joint_state",
-            "model_source": str(Path(args.robot_model).resolve()),
+            "model_source": str(Path(model_by_name[name]).resolve()),
             "base_position_source": "rgbd_base_anchor",
             "base_xyz_level_m": translation.tolist(),
             "shared_upright_yaw_deg": float(np.rad2deg(base_yaw)),
@@ -465,8 +479,12 @@ def main():
         help="exactly two measured support OBJ files",
     )
     parser.add_argument(
-        "--robot-model",
-        default="robot/arm/mujoco/bimanual_piper_table.xml",
+        "--left-robot-model",
+        default="robot/arm/mujoco/piper_left.xml",
+    )
+    parser.add_argument(
+        "--right-robot-model",
+        default="robot/arm/mujoco/piper_right.xml",
     )
     args = parser.parse_args()
     if len(args.platform_obj) != 2:
