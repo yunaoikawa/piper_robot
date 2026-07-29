@@ -11,7 +11,6 @@ import cv2
 import mujoco
 import numpy as np
 import plotly.graph_objects as go
-from scipy.spatial import cKDTree
 
 from export_sam_objects_3d import COLORS  # type: ignore
 from render_mujoco_mobile import _box, _cylinder  # type: ignore
@@ -28,16 +27,31 @@ def _primitive(kind, size, center, yaw=0.0):
     return (rotation @ vertices.T).T + center, faces
 
 
-def _arm_mesh(model_path, q):
+def _arm_mesh(model_path, q, side):
     model = mujoco.MjModel.from_xml_path(str(model_path))
     data = mujoco.MjData(model)
-    data.qpos[:6] = q
+    joint_prefix = "left_" if side == "left" else ""
+    for index, value in enumerate(q[:5], 1):
+        joint = model.joint(f"{joint_prefix}joint{index}")
+        data.qpos[int(joint.qposadr[0])] = value
     mujoco.mj_forward(model, data)
-    base = data.body("left/base_link").xpos.copy()
+    base_name = "left_base_link" if side == "left" else "base_link"
+    base_id = int(model.body(base_name).id)
+    base = data.body(base_name).xpos.copy()
+
+    def belongs_to_arm(body_id):
+        while body_id:
+            if body_id == base_id:
+                return True
+            body_id = int(model.body_parentid[body_id])
+        return False
+
     vertices, faces, offset = [], [], 0
     for geom_id in range(model.ngeom):
-        body_name = model.body(model.geom_bodyid[geom_id]).name
-        if not body_name.startswith("left/") or model.geom_group[geom_id] != 2:
+        if (
+            not belongs_to_arm(int(model.geom_bodyid[geom_id]))
+            or model.geom_group[geom_id] != 2
+        ):
             continue
         mesh_id = int(model.geom_dataid[geom_id])
         if mesh_id < 0:
@@ -56,41 +70,6 @@ def _arm_mesh(model_path, q):
         faces.append(np.asarray(model.mesh_face[fa : fa + fn], int) + offset)
         offset += len(part)
     return np.concatenate(vertices), np.concatenate(faces)
-
-
-def _fit_yaw(cad, observed):
-    cad_fit = cad[:: max(1, len(cad) // 3500)]
-    observed_fit = observed[:: max(1, len(observed) // 3000)]
-    best = None
-    for yaw in np.linspace(-np.pi, np.pi, 37, endpoint=False):
-        rotation = np.array(
-            [[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]]
-        )
-        translation = np.median(observed_fit, axis=0) - rotation @ np.median(cad_fit, axis=0)
-        for _ in range(18):
-            transformed = (rotation @ cad_fit.T).T + translation
-            tree = cKDTree(transformed)
-            distance, index = tree.query(observed_fit)
-            keep = distance <= min(np.quantile(distance, 0.72), 0.10)
-            source = cad_fit[index[keep]]
-            target = observed_fit[keep]
-            source_xy = source[:, :2] - np.mean(source[:, :2], axis=0)
-            target_xy = target[:, :2] - np.mean(target[:, :2], axis=0)
-            u, _, vt = np.linalg.svd(source_xy.T @ target_xy)
-            rxy = vt.T @ u.T
-            if np.linalg.det(rxy) < 0:
-                vt[-1] *= -1
-                rxy = vt.T @ u.T
-            rotation = np.eye(3)
-            rotation[:2, :2] = rxy
-            translation = np.median(target - (rotation @ source.T).T, axis=0)
-        transformed = (rotation @ cad_fit.T).T + translation
-        distance, _ = cKDTree(transformed).query(observed_fit)
-        score = float(np.median(distance))
-        candidate = (score, rotation.copy(), translation.copy())
-        if best is None or score < best[0]:
-            best = candidate
-    return best
 
 
 def _mesh_trace(vertices, faces, name, color, opacity=1.0):
@@ -156,42 +135,53 @@ def complete(args):
     ) = support_candidates
     traces, report = [], {"schema": "piper_robot.sam_object_completion/v1", "objects": {}}
 
-    # Complete both arms with the repository Piper CAD and synchronized joints.
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(
-        masks["robot"].astype(np.uint8), 8
-    )
-    components = sorted(
-        range(1, count), key=lambda index: stats[index, cv2.CC_STAT_AREA], reverse=True
-    )[:2]
-    observed_arms = [vertices[(labels == index).reshape(-1) & valid] for index in components]
+    # Preserve the repository MuJoCo kinematics exactly.  RGB-D determines
+    # only the two base positions and their common upright yaw; it must never
+    # independently rotate articulated arms to chase partial SAM surfaces.
     manifest = json.loads((Path(args.capture) / "manifest.json").read_text())
     state = manifest["robot_state"]["after"]
     q_by_name = {
         "left_robot": np.asarray(state["left_joint_positions_rad"], float),
         "right_robot": np.asarray(state["right_joint_positions_rad"], float),
     }
-    cad_by_name = {name: _arm_mesh(args.robot_model, q) for name, q in q_by_name.items()}
-    fits = {}
-    for component_index, observed in enumerate(observed_arms):
-        for name, (cad, _) in cad_by_name.items():
-            fits[(component_index, name)] = _fit_yaw(cad, observed)
-    permutations = [
-        ("left_robot", "right_robot"), ("right_robot", "left_robot")
-    ]
-    assignment = min(
-        permutations,
-        key=lambda names: sum(fits[(index, name)][0] for index, name in enumerate(names)),
+    cad_by_name = {
+        name: _arm_mesh(
+            args.robot_model,
+            q,
+            "left" if name == "left_robot" else "right",
+        )
+        for name, q in q_by_name.items()
+    }
+    base_by_name = {
+        "left_robot": np.asarray(
+            calibration["anchor_xyz_level_m"]["left_piper_base"], float
+        ),
+        "right_robot": np.asarray(
+            calibration["anchor_xyz_level_m"]["right_piper_base"], float
+        ),
+    }
+    base_vector = base_by_name["left_robot"][:2] - base_by_name["right_robot"][:2]
+    # The source MJCF has right->left along +Y.
+    base_yaw = float(np.arctan2(base_vector[1], base_vector[0]) - np.pi / 2)
+    base_rotation = np.array(
+        [
+            [np.cos(base_yaw), -np.sin(base_yaw), 0],
+            [np.sin(base_yaw), np.cos(base_yaw), 0],
+            [0, 0, 1],
+        ]
     )
-    for index, name in enumerate(assignment):
+    for name in ("left_robot", "right_robot"):
         cad, cad_faces = cad_by_name[name]
-        score, rotation, translation = fits[(index, name)]
-        completed = (rotation @ cad.T).T + translation
+        translation = base_by_name[name]
+        completed = (base_rotation @ cad.T).T + translation
         traces.append(_mesh_trace(completed, cad_faces, name, COLORS["robot"]))
         report["objects"][name] = {
-            "completion": "synchronized_piper_cad_fitted_to_individual_sam_component",
-            "median_visible_surface_residual_m": score,
-            "translation_level_m": translation.tolist(),
-            "yaw_deg": float(np.rad2deg(np.arctan2(rotation[1, 0], rotation[0, 0]))),
+            "completion": "exact_mujoco_forward_kinematics_at_synchronized_joint_state",
+            "model_source": str(Path(args.robot_model).resolve()),
+            "base_position_source": "rgbd_base_anchor",
+            "base_xyz_level_m": translation.tolist(),
+            "shared_upright_yaw_deg": float(np.rad2deg(base_yaw)),
+            "joint_mapping": "MacBook MJCF joint1..joint5; synchronized joint6 unavailable in that model",
         }
 
     # Robust XY orientation shared by the fixture-style completions.
@@ -316,13 +306,22 @@ def complete(args):
             traces.append(_mesh_trace(vertices, selected, f"observed_{name}", "#243447", 0.16))
     arm_positions = np.asarray(
         [
-            report["objects"]["left_robot"]["translation_level_m"],
-            report["objects"]["right_robot"]["translation_level_m"],
+            report["objects"]["left_robot"]["base_xyz_level_m"],
+            report["objects"]["right_robot"]["base_xyz_level_m"],
         ]
     )
     arm_midpoint = np.mean(arm_positions[:, :2], axis=0)
-    toward_wall = incubator_center[:2] - arm_midpoint
-    toward_wall /= np.linalg.norm(toward_wall)
+    arm_baseline = arm_positions[0, :2] - arm_positions[1, :2]
+    arm_baseline /= np.linalg.norm(arm_baseline)
+    perpendiculars = (
+        np.array([-arm_baseline[1], arm_baseline[0]]),
+        np.array([arm_baseline[1], -arm_baseline[0]]),
+    )
+    incubator_hint = incubator_center[:2] - arm_midpoint
+    toward_wall = max(
+        perpendiculars,
+        key=lambda direction: float(np.dot(direction, incubator_hint)),
+    )
     eye_xy = -toward_wall * 1.65
     report["initial_view"] = {
         "description": "from_between_arms_straight_toward_opposite_wall",
@@ -372,7 +371,10 @@ def main():
         required=True,
         help="exactly two measured support OBJ files",
     )
-    parser.add_argument("--robot-model", default="robot/arm/mujoco/bimanual_piper_table.xml")
+    parser.add_argument(
+        "--robot-model",
+        default="robot/piper-mujoco/xml/lab-scene.xml",
+    )
     args = parser.parse_args()
     if len(args.platform_obj) != 2:
         parser.error("--platform-obj must be supplied exactly twice")
