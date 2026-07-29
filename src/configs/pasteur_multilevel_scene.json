@@ -1,0 +1,30 @@
+{
+  "schema": "piper_robot.multilevel_scene_config/v1",
+  "capture_orientation": "landscape_clockwise",
+  "regions": {
+    "left_table": [0.00, 0.53, 0.57, 0.96],
+    "right_platform": [0.47, 0.99, 0.66, 0.98],
+    "white_wall": [0.69, 0.99, 0.00, 0.61]
+  },
+  "anchors": {
+    "left_piper_base": {"pixel_uv": [0.18, 0.48], "support": "left_table"},
+    "right_piper_base": {"pixel_uv": [0.30, 0.80], "support": "right_platform"},
+    "petri_dish": {"pixel_uv": [0.70, 0.83], "support": "right_platform"},
+    "microscope": {"pixel_uv": [0.44, 0.51], "support": "left_table"},
+    "incubator": {"pixel_uv": [0.89, 0.78], "support": "right_platform"}
+  },
+  "semantic_objects": {
+    "culture_media_bottle_left": {
+      "type": "culture_media_bottle",
+      "blue_label_roi": [0.47, 0.55, 0.56, 0.66],
+      "proxy_size_m": [0.075, 0.075, 0.16],
+      "occlusion": "mostly_hidden_between_platforms"
+    },
+    "culture_media_bottle_right": {
+      "type": "culture_media_bottle",
+      "blue_label_roi": [0.59, 0.64, 0.53, 0.61],
+      "proxy_size_m": [0.075, 0.075, 0.16],
+      "occlusion": "mostly_hidden_between_platforms"
+    }
+  }
+}
