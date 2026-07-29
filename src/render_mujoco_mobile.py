@@ -10,51 +10,176 @@ import numpy as np
 import plotly.graph_objects as go
 
 
+def _box(size):
+    x, y, z = np.asarray(size, dtype=float)
+    vertices = np.array(
+        [[sx * x, sy * y, sz * z] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]
+    )
+    faces = np.array(
+        [
+            [0, 1, 3], [0, 3, 2], [4, 6, 7], [4, 7, 5],
+            [0, 4, 5], [0, 5, 1], [2, 3, 7], [2, 7, 6],
+            [0, 2, 6], [0, 6, 4], [1, 5, 7], [1, 7, 3],
+        ]
+    )
+    return vertices, faces
+
+
+def _cylinder(radius, half_height, segments=24):
+    angles = np.linspace(0, 2 * np.pi, segments, endpoint=False)
+    ring = np.c_[radius * np.cos(angles), radius * np.sin(angles)]
+    vertices = np.vstack(
+        [
+            np.c_[ring, np.full(segments, -half_height)],
+            np.c_[ring, np.full(segments, half_height)],
+            [0, 0, -half_height],
+            [0, 0, half_height],
+        ]
+    )
+    bottom, top = 2 * segments, 2 * segments + 1
+    faces = []
+    for index in range(segments):
+        following = (index + 1) % segments
+        faces.extend(
+            [
+                [index, following, segments + following],
+                [index, segments + following, segments + index],
+                [bottom, following, index],
+                [top, segments + index, segments + following],
+            ]
+        )
+    return vertices, np.asarray(faces)
+
+
+def _sphere(radius, latitude=10, longitude=20):
+    vertices = [[0, 0, radius], [0, 0, -radius]]
+    for row in range(1, latitude):
+        phi = np.pi * row / latitude
+        for column in range(longitude):
+            theta = 2 * np.pi * column / longitude
+            vertices.append(
+                [
+                    radius * np.sin(phi) * np.cos(theta),
+                    radius * np.sin(phi) * np.sin(theta),
+                    radius * np.cos(phi),
+                ]
+            )
+    faces = []
+    for column in range(longitude):
+        following = (column + 1) % longitude
+        faces.append([0, 2 + column, 2 + following])
+        faces.append(
+            [
+                1,
+                2 + (latitude - 2) * longitude + following,
+                2 + (latitude - 2) * longitude + column,
+            ]
+        )
+    for row in range(latitude - 2):
+        base = 2 + row * longitude
+        following_base = base + longitude
+        for column in range(longitude):
+            following = (column + 1) % longitude
+            faces.extend(
+                [
+                    [base + column, following_base + column, following_base + following],
+                    [base + column, following_base + following, base + following],
+                ]
+            )
+    return np.asarray(vertices), np.asarray(faces)
+
+
 def _rotation(mujoco, quaternion):
     matrix = np.empty(9, dtype=float)
     mujoco.mju_quat2Mat(matrix, np.asarray(quaternion, dtype=float))
     return matrix.reshape(3, 3)
 
 
-def render(model_path, output, *, right_q=None, left_q=None):
+def render(model_path, output, *, right_q=None, left_q=None, keyframe=None):
     import mujoco
 
     model = mujoco.MjModel.from_xml_path(str(model_path))
     data = mujoco.MjData(model)
-    for prefix, values in (("left_arm", right_q), ("right_arm", left_q)):
+    if model.nkey:
+        key_id = 0 if keyframe is None else model.key(keyframe).id
+        mujoco.mj_resetDataKeyframe(model, data, key_id)
+
+    def has_joint(name):
+        try:
+            model.joint(name)
+            return True
+        except KeyError:
+            return False
+
+    joint_prefixes = (
+        (
+            "left_arm" if has_joint("left_arm_joint1") else "",
+            right_q,
+        ),
+        (
+            "right_arm" if has_joint("right_arm_joint1") else "left_",
+            left_q,
+        ),
+    )
+    for prefix, values in joint_prefixes:
         if values is None:
             continue
         for index, value in enumerate(values, 1):
-            address = model.joint(f"{prefix}_joint{index}").qposadr[0]
+            candidates = (
+                f"{prefix}_joint{index}",
+                f"{prefix}joint{index}",
+            )
+            joint = next(
+                (model.joint(name) for name in candidates if has_joint(name)),
+                None,
+            )
+            if joint is None:
+                break
+            address = joint.qposadr[0]
             data.qpos[address] = float(value)
     mujoco.mj_forward(model, data)
 
     traces = []
     for geom_id in range(model.ngeom):
-        if int(model.geom_type[geom_id]) != int(mujoco.mjtGeom.mjGEOM_MESH):
+        if int(model.geom_group[geom_id]) == 3:
             continue
-        mesh_id = int(model.geom_dataid[geom_id])
-        if mesh_id < 0:
+        geom_type = int(model.geom_type[geom_id])
+        size = np.asarray(model.geom_size[geom_id], dtype=float)
+        if geom_type == int(mujoco.mjtGeom.mjGEOM_MESH):
+            mesh_id = int(model.geom_dataid[geom_id])
+            if mesh_id < 0:
+                continue
+            vertex_start = int(model.mesh_vertadr[mesh_id])
+            vertex_count = int(model.mesh_vertnum[mesh_id])
+            face_start = int(model.mesh_faceadr[mesh_id])
+            face_count = int(model.mesh_facenum[mesh_id])
+            vertices = np.asarray(
+                model.mesh_vert[vertex_start : vertex_start + vertex_count],
+                dtype=float,
+            )
+            mesh_rotation = _rotation(mujoco, model.mesh_quat[mesh_id])
+            vertices = (
+                mesh_rotation @ vertices.T
+            ).T + np.asarray(model.mesh_pos[mesh_id], dtype=float)
+            faces = np.asarray(
+                model.mesh_face[face_start : face_start + face_count], dtype=int
+            )
+        elif geom_type == int(mujoco.mjtGeom.mjGEOM_BOX):
+            vertices, faces = _box(size[:3])
+        elif geom_type == int(mujoco.mjtGeom.mjGEOM_CYLINDER):
+            vertices, faces = _cylinder(size[0], size[1])
+        elif geom_type == int(mujoco.mjtGeom.mjGEOM_CAPSULE):
+            vertices, faces = _cylinder(size[0], size[1])
+        elif geom_type == int(mujoco.mjtGeom.mjGEOM_SPHERE):
+            vertices, faces = _sphere(size[0])
+        elif geom_type == int(mujoco.mjtGeom.mjGEOM_PLANE):
+            vertices, faces = _box((min(size[0], 2.0), min(size[1], 2.0), 0.002))
+        else:
             continue
-        vertex_start = int(model.mesh_vertadr[mesh_id])
-        vertex_count = int(model.mesh_vertnum[mesh_id])
-        face_start = int(model.mesh_faceadr[mesh_id])
-        face_count = int(model.mesh_facenum[mesh_id])
-        vertices = np.asarray(
-            model.mesh_vert[vertex_start : vertex_start + vertex_count],
-            dtype=float,
-        )
-        mesh_rotation = _rotation(mujoco, model.mesh_quat[mesh_id])
-        vertices = (
-            mesh_rotation @ vertices.T
-        ).T + np.asarray(model.mesh_pos[mesh_id], dtype=float)
         geom_rotation = np.asarray(data.geom_xmat[geom_id], dtype=float).reshape(3, 3)
         vertices = (
             geom_rotation @ vertices.T
         ).T + np.asarray(data.geom_xpos[geom_id], dtype=float)
-        faces = np.asarray(
-            model.mesh_face[face_start : face_start + face_count], dtype=int
-        )
         rgba = np.asarray(model.geom_rgba[geom_id], dtype=float)
         body_name = model.body(model.geom_bodyid[geom_id]).name
         traces.append(
@@ -99,16 +224,22 @@ def render(model_path, output, *, right_q=None, left_q=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", required=True)
+    parser.add_argument(
+        "--model",
+        default="robot/piper-mujoco/xml/lab-scene.xml",
+        help="defaults to the MacBook-authored nominal lab scene",
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--right-q", nargs=6, type=float)
     parser.add_argument("--left-q", nargs=6, type=float)
+    parser.add_argument("--keyframe")
     args = parser.parse_args(argv)
     render(
         args.model,
         args.output,
         right_q=args.right_q,
         left_q=args.left_q,
+        keyframe=args.keyframe,
     )
     print(args.output)
 

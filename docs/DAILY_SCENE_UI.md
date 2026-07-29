@@ -40,3 +40,17 @@ conda run -n robot-test python src/replay_scene_collision.py \
   --daily-scene runs/pasteur_daily_scene.json \
   --output /tmp/collision_replay.json
 ```
+
+Serve the nominal MacBook-authored lab XML as an interactive phone view:
+
+```bash
+conda run -n robot-test python src/render_mujoco_mobile.py \
+  --output /tmp/piper_mujoco_mobile/index.html
+python -m http.server 8780 --bind 0.0.0.0 \
+  --directory /tmp/piper_mujoco_mobile
+```
+
+The renderer defaults to `robot/piper-mujoco/xml/lab-scene.xml` and its first
+keyframe. It renders primitive MuJoCo geoms as well as meshes. This scene is a
+nominal layout: its own XML notes that the incubator was moved into simulated
+reach, so daily SAM/RGB-D remains authoritative for collision planning.
