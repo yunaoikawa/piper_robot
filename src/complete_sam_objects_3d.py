@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""Complete accepted SAM/RGB-D surfaces into estimated closed 3D objects."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import cv2
+import mujoco
+import numpy as np
+import plotly.graph_objects as go
+from scipy.spatial import cKDTree
+
+from export_sam_objects_3d import COLORS  # type: ignore
+from render_mujoco_mobile import _box, _cylinder  # type: ignore
+
+
+def _primitive(kind, size, center, yaw=0.0):
+    if kind == "box":
+        vertices, faces = _box(size)
+    else:
+        vertices, faces = _cylinder(size[0], size[1], segments=28)
+    rotation = np.array(
+        [[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]]
+    )
+    return (rotation @ vertices.T).T + center, faces
+
+
+def _arm_mesh(model_path, q):
+    model = mujoco.MjModel.from_xml_path(str(model_path))
+    data = mujoco.MjData(model)
+    data.qpos[:6] = q
+    mujoco.mj_forward(model, data)
+    base = data.body("left/base_link").xpos.copy()
+    vertices, faces, offset = [], [], 0
+    for geom_id in range(model.ngeom):
+        body_name = model.body(model.geom_bodyid[geom_id]).name
+        if not body_name.startswith("left/") or model.geom_group[geom_id] != 2:
+            continue
+        mesh_id = int(model.geom_dataid[geom_id])
+        if mesh_id < 0:
+            continue
+        va = int(model.mesh_vertadr[mesh_id])
+        vn = int(model.mesh_vertnum[mesh_id])
+        fa = int(model.mesh_faceadr[mesh_id])
+        fn = int(model.mesh_facenum[mesh_id])
+        part = np.asarray(model.mesh_vert[va : va + vn], float)
+        mesh_rotation = np.empty(9)
+        mujoco.mju_quat2Mat(mesh_rotation, model.mesh_quat[mesh_id])
+        part = (mesh_rotation.reshape(3, 3) @ part.T).T + model.mesh_pos[mesh_id]
+        geom_rotation = np.asarray(data.geom_xmat[geom_id]).reshape(3, 3)
+        part = (geom_rotation @ part.T).T + data.geom_xpos[geom_id] - base
+        vertices.append(part)
+        faces.append(np.asarray(model.mesh_face[fa : fa + fn], int) + offset)
+        offset += len(part)
+    return np.concatenate(vertices), np.concatenate(faces)
+
+
+def _fit_yaw(cad, observed):
+    cad_fit = cad[:: max(1, len(cad) // 3500)]
+    observed_fit = observed[:: max(1, len(observed) // 3000)]
+    best = None
+    for yaw in np.linspace(-np.pi, np.pi, 37, endpoint=False):
+        rotation = np.array(
+            [[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]]
+        )
+        translation = np.median(observed_fit, axis=0) - rotation @ np.median(cad_fit, axis=0)
+        for _ in range(18):
+            transformed = (rotation @ cad_fit.T).T + translation
+            tree = cKDTree(transformed)
+            distance, index = tree.query(observed_fit)
+            keep = distance <= min(np.quantile(distance, 0.72), 0.10)
+            source = cad_fit[index[keep]]
+            target = observed_fit[keep]
+            source_xy = source[:, :2] - np.mean(source[:, :2], axis=0)
+            target_xy = target[:, :2] - np.mean(target[:, :2], axis=0)
+            u, _, vt = np.linalg.svd(source_xy.T @ target_xy)
+            rxy = vt.T @ u.T
+            if np.linalg.det(rxy) < 0:
+                vt[-1] *= -1
+                rxy = vt.T @ u.T
+            rotation = np.eye(3)
+            rotation[:2, :2] = rxy
+            translation = np.median(target - (rotation @ source.T).T, axis=0)
+        transformed = (rotation @ cad_fit.T).T + translation
+        distance, _ = cKDTree(transformed).query(observed_fit)
+        score = float(np.median(distance))
+        candidate = (score, rotation.copy(), translation.copy())
+        if best is None or score < best[0]:
+            best = candidate
+    return best
+
+
+def _mesh_trace(vertices, faces, name, color, opacity=1.0):
+    return go.Mesh3d(
+        x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2],
+        i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
+        name=name, color=color, opacity=opacity, flatshading=False,
+        hovertemplate=name + "<extra></extra>", showlegend=True,
+    )
+
+
+def complete(args):
+    archive = np.load(args.mesh)
+    vertices = np.asarray(archive["vertices_xyz_m"], float)
+    faces = np.asarray(archive["faces"], int)
+    valid = np.asarray(archive["valid_vertex_mask"], bool)
+    shape = (192, 256)
+
+    def mask(path):
+        image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        return cv2.resize(image, (shape[1], shape[0]), interpolation=cv2.INTER_AREA) > 100
+
+    masks = {
+        "robot": mask(args.robot_mask),
+        "microscope": mask(args.microscope_mask),
+        "incubator": mask(args.incubator_mask),
+        "bottle": mask(args.bottle_mask),
+    }
+    points = {
+        name: vertices[value.reshape(-1) & valid] for name, value in masks.items()
+    }
+    traces, report = [], {"schema": "piper_robot.sam_object_completion/v1", "objects": {}}
+
+    # Complete both arms with the repository Piper CAD and synchronized joints.
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        masks["robot"].astype(np.uint8), 8
+    )
+    components = sorted(
+        range(1, count), key=lambda index: stats[index, cv2.CC_STAT_AREA], reverse=True
+    )[:2]
+    observed_arms = [vertices[(labels == index).reshape(-1) & valid] for index in components]
+    manifest = json.loads((Path(args.capture) / "manifest.json").read_text())
+    state = manifest["robot_state"]["after"]
+    q_by_name = {
+        "left_robot": np.asarray(state["left_joint_positions_rad"], float),
+        "right_robot": np.asarray(state["right_joint_positions_rad"], float),
+    }
+    cad_by_name = {name: _arm_mesh(args.robot_model, q) for name, q in q_by_name.items()}
+    fits = {}
+    for component_index, observed in enumerate(observed_arms):
+        for name, (cad, _) in cad_by_name.items():
+            fits[(component_index, name)] = _fit_yaw(cad, observed)
+    permutations = [
+        ("left_robot", "right_robot"), ("right_robot", "left_robot")
+    ]
+    assignment = min(
+        permutations,
+        key=lambda names: sum(fits[(index, name)][0] for index, name in enumerate(names)),
+    )
+    for index, name in enumerate(assignment):
+        cad, cad_faces = cad_by_name[name]
+        score, rotation, translation = fits[(index, name)]
+        completed = (rotation @ cad.T).T + translation
+        traces.append(_mesh_trace(completed, cad_faces, name, COLORS["robot"]))
+        report["objects"][name] = {
+            "completion": "synchronized_piper_cad_fitted_to_individual_sam_component",
+            "median_visible_surface_residual_m": score,
+            "translation_level_m": translation.tolist(),
+            "yaw_deg": float(np.rad2deg(np.arctan2(rotation[1, 0], rotation[0, 0]))),
+        }
+
+    # Robust XY orientation shared by the fixture-style completions.
+    def yaw_and_bounds(object_points):
+        xy = object_points[:, :2] - np.median(object_points[:, :2], axis=0)
+        _, _, vt = np.linalg.svd(xy)
+        yaw = float(np.arctan2(vt[0, 1], vt[0, 0]))
+        low, high = np.quantile(object_points, [0.02, 0.98], axis=0)
+        return yaw, low, high
+
+    yaw, low, high = yaw_and_bounds(points["incubator"])
+    center = (low + high) / 2
+    incubator_parts = [
+        ("incubator_body", "box", np.array([0.14, 0.125, 0.175]), center, yaw),
+        ("incubator_door", "box", np.array([0.132, 0.006, 0.17]),
+         center + np.array([0.10 * np.cos(yaw), 0.10 * np.sin(yaw), 0]), yaw + 1.25),
+    ]
+    for name, kind, size, part_center, angle in incubator_parts:
+        v, f = _primitive(kind, size, part_center, angle)
+        traces.append(_mesh_trace(v, f, name, COLORS["incubator"], 0.9))
+    report["objects"]["incubator"] = {
+        "completion": "oriented_280x250x350mm_incubator_plus_open_door",
+        "center_level_m": center.tolist(), "yaw_deg": np.rad2deg(yaw),
+    }
+
+    yaw, low, high = yaw_and_bounds(points["microscope"])
+    center = (low + high) / 2
+    z0, z1 = low[2], high[2]
+    microscope_parts = [
+        ("microscope_base", "box", [0.13, 0.10, 0.025], [center[0], center[1], z0 + 0.025], yaw),
+        ("microscope_stage", "box", [0.11, 0.09, 0.018], [center[0], center[1], z0 + 0.17], yaw),
+        ("microscope_column", "box", [0.035, 0.045, (z1-z0)*0.38],
+         [center[0]+0.08*np.cos(yaw), center[1]+0.08*np.sin(yaw), (z0+z1)/2], yaw),
+        ("microscope_head", "box", [0.10, 0.07, 0.055], [center[0], center[1], z1-0.06], yaw),
+        ("microscope_eyepiece_1", "cylinder", [0.018, 0.07],
+         [center[0]-0.035*np.sin(yaw), center[1]+0.035*np.cos(yaw), z1+0.04], yaw),
+        ("microscope_eyepiece_2", "cylinder", [0.018, 0.07],
+         [center[0]+0.035*np.sin(yaw), center[1]-0.035*np.cos(yaw), z1+0.04], yaw),
+    ]
+    for name, kind, size, part_center, angle in microscope_parts:
+        v, f = _primitive(kind, np.asarray(size), np.asarray(part_center), angle)
+        traces.append(_mesh_trace(v, f, name, COLORS["microscope"], 0.9))
+    report["objects"]["microscope"] = {
+        "completion": "semantic_multi_primitive_microscope", "center_level_m": center.tolist()
+    }
+
+    label = np.median(points["bottle"], axis=0)
+    calibration = json.loads(Path(args.calibration_report).read_text())
+    camera = np.asarray(calibration["T_level_camera"], float)[:3, 3]
+    away = label[:2] - camera[:2]
+    away /= np.linalg.norm(away)
+    bottle_center = label.copy()
+    bottle_center[:2] += 0.0375 * away
+    v, f = _primitive("cylinder", np.array([0.0375, 0.08]), bottle_center)
+    traces.append(_mesh_trace(v, f, "culture_media_bottle", "#ff8c1a", 0.9))
+    report["objects"]["culture_media_bottle"] = {
+        "completion": "75mm_diameter_160mm_tall_cylinder_from_visible_label",
+        "center_level_m": bottle_center.tolist(),
+    }
+
+    # Keep measured surfaces as a translucent accuracy reference.
+    for name, object_mask in masks.items():
+        vertex_mask = object_mask.reshape(-1) & valid
+        selected = faces[np.all(vertex_mask[faces], axis=1)]
+        if len(selected):
+            traces.append(_mesh_trace(vertices, selected, f"observed_{name}", "#243447", 0.16))
+    figure = go.Figure(traces)
+    figure.update_layout(
+        title="SAM-guided completed 3D objects (dark = observed RGB-D)",
+        paper_bgcolor="#f8fafc", margin={"l": 0, "r": 0, "t": 52, "b": 0},
+        legend={"orientation": "h", "y": 1.01},
+        scene={
+            "aspectmode": "data", "bgcolor": "#eef2f7",
+            "xaxis": {"title": "X (m)"}, "yaxis": {"title": "Y (m)"}, "zaxis": {"title": "Z (m)"},
+            "camera": {"eye": {"x": 1.35, "y": -1.55, "z": 1.05}},
+        },
+    )
+    output = Path(args.output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    figure.write_html(
+        output / "index.html", include_plotlyjs=True, full_html=True,
+        config={"responsive": True, "displaylogo": False, "scrollZoom": True},
+    )
+    (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+    return report
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mesh", required=True)
+    parser.add_argument("--capture", required=True)
+    parser.add_argument("--calibration-report", required=True)
+    parser.add_argument("--robot-mask", required=True)
+    parser.add_argument("--microscope-mask", required=True)
+    parser.add_argument("--incubator-mask", required=True)
+    parser.add_argument("--bottle-mask", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--robot-model", default="robot/arm/mujoco/bimanual_piper_table.xml")
+    args = parser.parse_args()
+    print(json.dumps(complete(args), indent=2))
+
+
+if __name__ == "__main__":
+    main()
