@@ -333,7 +333,80 @@ class ProbeExecutionJournal:
         return committed
 
 
-def _right_state(rpc):
+class JointProbeExecutionJournal(ProbeExecutionJournal):
+    """Joint-specific durable journal; never masquerades as Cartesian data."""
+
+    def __init__(
+        self,
+        path,
+        *,
+        joint_index,
+        requested_first_three_delta_rad,
+        motion_token_sha256=None,
+    ):
+        joint_index = int(joint_index)
+        requested = np.asarray(
+            requested_first_three_delta_rad, dtype=float
+        )
+        if (
+            joint_index not in (0, 1, 2)
+            or requested.shape != (3,)
+            or not np.all(np.isfinite(requested))
+            or np.count_nonzero(requested) != 1
+            or requested[joint_index] == 0.0
+        ):
+            raise ValueError("invalid single-joint probe journal request")
+        self.path = Path(path).resolve() if path is not None else None
+        self.axis = f"joint_{joint_index}"
+        started = datetime.now(timezone.utc).isoformat()
+        self.payload = {
+            "schema": "sam_joint_probe/v1",
+            "record_id": uuid.uuid4().hex,
+            "created_at_utc": started,
+            "status": f"SINGLE_JOINT_{joint_index}_PROBE_PREPARING",
+            "probe_kind": "right_arm_single_joint_diagnostic",
+            "execution": {
+                "stage": "capturing_pre_motion_observation",
+                "motion_attempted": False,
+                "motion_command_completed": False,
+                "immediate_motion_validated": False,
+                "settled_motion_validated": False,
+                "failure_timing": None,
+                "started_at_utc": started,
+                "updated_at_utc": started,
+            },
+            "motion": {
+                "command_space": "right_joint_position",
+                "commanded_joint_index": joint_index,
+                "requested_delta_rad": float(requested[joint_index]),
+                "requested_first_three_delta_rad": requested.tolist(),
+                "command_count_limit": 1,
+                "accumulate": False,
+            },
+            "excluded_actions": {
+                "left_arm": True,
+                "gripper": True,
+                "cartesian_descent": True,
+                "home_or_return": True,
+            },
+        }
+        if motion_token_sha256 is not None:
+            token_hash = str(motion_token_sha256)
+            if (
+                len(token_hash) != 64
+                or any(char not in "0123456789abcdef" for char in token_hash)
+            ):
+                raise ValueError(
+                    "motion token SHA-256 must be a lowercase hex digest"
+                )
+            self.payload["authorization"] = {
+                "motion_token_sha256": token_hash
+            }
+        if self.path is not None:
+            _exclusive_write_json(self.path, self.payload)
+
+
+def _right_state(rpc, *, require_finite_torque=True):
     pose = np.asarray(rpc.get_right_ee_pose().parameters(), dtype=float)
     q = np.asarray(rpc.get_right_joint_positions(), dtype=float)
     torque = np.asarray(rpc.get_right_joint_torque(), dtype=float)
@@ -343,7 +416,10 @@ def _right_state(rpc):
         or torque.shape != (6,)
         or not np.all(np.isfinite(pose))
         or not np.all(np.isfinite(q))
-        or not np.all(np.isfinite(torque))
+        or (
+            require_finite_torque
+            and not np.all(np.isfinite(torque))
+        )
     ):
         raise RuntimeError("invalid right-arm state in calibration journal")
     return {
@@ -818,7 +894,9 @@ def _probe_motion_quality(actual_xyz, requested_xyz):
     }
 
 
-def _probe_orientation_quality(before_pose, after_pose):
+def _probe_orientation_quality(
+    before_pose, after_pose, *, maximum_change_deg=0.5
+):
     before = np.asarray(before_pose, dtype=float)
     after = np.asarray(after_pose, dtype=float)
     if before.shape != (7,) or after.shape != (7,):
@@ -835,7 +913,12 @@ def _probe_orientation_quality(before_pose, after_pose):
     after_q = after[:4] / after_norm
     cosine = float(np.clip(abs(before_q @ after_q), 0.0, 1.0))
     change_deg = float(np.degrees(2.0 * np.arccos(cosine)))
-    maximum_change_deg = 0.5
+    maximum_change_deg = float(maximum_change_deg)
+    if (
+        not np.isfinite(maximum_change_deg)
+        or maximum_change_deg <= 0.0
+    ):
+        raise ValueError("maximum orientation change must be positive")
     return {
         "change_deg": change_deg,
         "maximum_change_deg": maximum_change_deg,
@@ -885,6 +968,173 @@ def _require_valid_probe_orientation(quality, stage):
             f"{stage} tool orientation changed by "
             f"{float(quality['change_deg']):.6g} deg, exceeding 0.5 deg"
         )
+
+
+def _joint_probe_motion_quality(
+    measured_all_joint_delta,
+    requested_first_three_delta,
+    joint_index,
+    *,
+    command_reported_first_three_delta=None,
+):
+    measured = np.asarray(measured_all_joint_delta, dtype=float)
+    requested = np.asarray(requested_first_three_delta, dtype=float)
+    joint_index = int(joint_index)
+    if (
+        measured.shape != (6,)
+        or requested.shape != (3,)
+        or joint_index not in (0, 1, 2)
+        or not np.all(np.isfinite(measured))
+        or not np.all(np.isfinite(requested))
+    ):
+        raise ValueError("invalid measured single-joint probe motion")
+    requested_scalar = float(requested[joint_index])
+    if (
+        requested_scalar == 0.0
+        or np.count_nonzero(requested) != 1
+    ):
+        raise ValueError("joint probe request must command exactly one joint")
+    reported = None
+    report_mismatch = None
+    if command_reported_first_three_delta is not None:
+        reported = np.asarray(
+            command_reported_first_three_delta, dtype=float
+        )
+        if reported.shape != (3,) or not np.all(np.isfinite(reported)):
+            raise ValueError("joint motion command returned invalid motion")
+        report_mismatch = float(
+            np.max(np.abs(reported - measured[:3]))
+        )
+
+    selected_actual = float(measured[joint_index])
+    progress = selected_actual / requested_scalar
+    direction = (
+        None
+        if selected_actual == 0.0
+        else float(np.sign(selected_actual * requested_scalar))
+    )
+    other_indices = [index for index in range(3) if index != joint_index]
+    maximum_other = 0.002
+    maximum_wrist = 0.002
+    minimum_progress = 0.25
+    maximum_progress = 1.50
+    maximum_report_mismatch = 0.001
+    other_drift = measured[other_indices]
+    wrist_drift = measured[3:]
+    accepted = bool(
+        direction == 1.0
+        and minimum_progress <= progress <= maximum_progress
+        and np.max(np.abs(other_drift)) <= maximum_other
+        and np.max(np.abs(wrist_drift)) <= maximum_wrist
+        and (
+            report_mismatch is None
+            or report_mismatch <= maximum_report_mismatch
+        )
+    )
+    return {
+        "commanded_joint_index": joint_index,
+        "requested_delta_rad": requested_scalar,
+        "selected_actual_delta_rad": selected_actual,
+        "signed_progress_ratio": float(progress),
+        "direction_sign": direction,
+        "other_first_three_joint_indices": other_indices,
+        "other_first_three_joint_delta_rad": other_drift.tolist(),
+        "wrist_joint_delta_rad": wrist_drift.tolist(),
+        "maximum_abs_other_first_three_joint_drift_rad": maximum_other,
+        "maximum_abs_wrist_joint_drift_rad": maximum_wrist,
+        "minimum_signed_progress_ratio": minimum_progress,
+        "maximum_signed_progress_ratio": maximum_progress,
+        "command_reported_first_three_delta_rad": (
+            None if reported is None else reported.tolist()
+        ),
+        "maximum_command_report_mismatch_rad": maximum_report_mismatch,
+        "command_report_mismatch_rad": report_mismatch,
+        "accepted": accepted,
+    }
+
+
+def _require_valid_joint_probe_motion(quality, stage):
+    if quality["direction_sign"] != 1.0:
+        raise RuntimeError(
+            f"{stage} selected joint moved opposite to its signed request"
+        )
+    progress = float(quality["signed_progress_ratio"])
+    if progress < float(quality["minimum_signed_progress_ratio"]):
+        raise RuntimeError(
+            f"{stage} selected joint progress was below "
+            f"{quality['minimum_signed_progress_ratio']:.2f}"
+        )
+    if progress > float(quality["maximum_signed_progress_ratio"]):
+        raise RuntimeError(
+            f"{stage} selected joint progress exceeded "
+            f"{quality['maximum_signed_progress_ratio']:.2f}"
+        )
+    other = np.asarray(
+        quality["other_first_three_joint_delta_rad"], dtype=float
+    )
+    if np.max(np.abs(other)) > float(
+        quality["maximum_abs_other_first_three_joint_drift_rad"]
+    ):
+        raise RuntimeError(
+            f"{stage} non-commanded shoulder/elbow joint drift "
+            "exceeded 0.002 rad"
+        )
+    wrist = np.asarray(quality["wrist_joint_delta_rad"], dtype=float)
+    if np.max(np.abs(wrist)) > float(
+        quality["maximum_abs_wrist_joint_drift_rad"]
+    ):
+        raise RuntimeError(
+            f"{stage} wrist joint drift exceeded 0.002 rad"
+        )
+    mismatch = quality["command_report_mismatch_rad"]
+    if mismatch is not None and float(mismatch) > float(
+        quality["maximum_command_report_mismatch_rad"]
+    ):
+        raise RuntimeError(
+            f"{stage} measured joint motion disagreed with command result"
+        )
+
+
+def _joint_probe_tool_pose_quality(before_pose, after_pose):
+    before = np.asarray(before_pose, dtype=float)
+    after = np.asarray(after_pose, dtype=float)
+    orientation = _probe_orientation_quality(
+        before, after, maximum_change_deg=0.4
+    )
+    translation = after[4:7] - before[4:7]
+    translation_norm = float(np.linalg.norm(translation))
+    vertical_drift = float(translation[2])
+    maximum_translation_norm = 0.002
+    maximum_abs_vertical_drift = 0.001
+    return {
+        "translation_xyz_m": translation.tolist(),
+        "translation_norm_m": translation_norm,
+        "vertical_drift_m": vertical_drift,
+        "maximum_translation_norm_m": maximum_translation_norm,
+        "maximum_abs_vertical_drift_m": maximum_abs_vertical_drift,
+        "orientation": orientation,
+        "accepted": bool(
+            translation_norm <= maximum_translation_norm
+            and abs(vertical_drift) <= maximum_abs_vertical_drift
+            and orientation["accepted"]
+        ),
+    }
+
+
+def _require_valid_joint_probe_tool_pose(quality, stage):
+    if float(quality["translation_norm_m"]) > float(
+        quality["maximum_translation_norm_m"]
+    ):
+        raise RuntimeError(
+            f"{stage} tool center moved more than 2 mm"
+        )
+    if abs(float(quality["vertical_drift_m"])) > float(
+        quality["maximum_abs_vertical_drift_m"]
+    ):
+        raise RuntimeError(
+            f"{stage} tool vertical drift exceeded 1 mm"
+        )
+    _require_valid_probe_orientation(quality["orientation"], stage)
 
 
 def _probe_observation_record(
@@ -993,6 +1243,695 @@ def execute_single_horizontal_probe(
                     f"{journal_error!r}"
                 )
         raise
+
+
+def execute_single_joint_probe(
+    runner,
+    right_observer,
+    joint_index: int,
+    delta_rad: float,
+    *,
+    preview_time: float,
+    hold_window_s: float = 0.5,
+    probe_context=None,
+    journal_path=None,
+    motion_token_sha256=None,
+    motion_attempt_callback=None,
+):
+    """Execute one right proximal-joint probe with no return or descent."""
+
+    joint_index = int(joint_index)
+    delta_rad = float(delta_rad)
+    preview_time = float(preview_time)
+    if joint_index not in (0, 1, 2):
+        raise ValueError("single joint index must be 0, 1, or 2")
+    if (
+        not np.isfinite(delta_rad)
+        or not 0.0 < abs(delta_rad) <= 0.005
+    ):
+        raise ValueError(
+            "single joint delta magnitude must be within (0, 0.005] rad"
+        )
+    minimum_preview_time = max(1.0, abs(delta_rad) / 0.001)
+    if (
+        not np.isfinite(preview_time)
+        or not minimum_preview_time <= preview_time <= 10.0
+    ):
+        raise ValueError(
+            "single joint preview_time must be within "
+            f"[{minimum_preview_time:.3g}, 10] seconds to keep the "
+            "requested rate at or below 0.001 rad/s"
+        )
+    request = np.zeros(3, dtype=float)
+    request[joint_index] = delta_rad
+    journal = JointProbeExecutionJournal(
+        journal_path,
+        joint_index=joint_index,
+        requested_first_three_delta_rad=request,
+        motion_token_sha256=motion_token_sha256,
+    )
+    try:
+        return _execute_single_joint_probe_body(
+            runner,
+            right_observer,
+            joint_index,
+            request,
+            preview_time=preview_time,
+            hold_window_s=hold_window_s,
+            probe_context=probe_context,
+            journal=journal,
+            motion_attempt_callback=motion_attempt_callback,
+        )
+    except BaseException as error:
+        try:
+            setattr(
+                error,
+                "probe_motion_attempted",
+                journal.motion_attempted,
+            )
+        except Exception:
+            pass
+        try:
+            failure_evidence = getattr(
+                error, "joint_probe_motion_evidence", None
+            )
+            if isinstance(failure_evidence, dict):
+                journal.update(
+                    "recording_post_restore_failure_evidence",
+                    motion=failure_evidence,
+                )
+            journal.fail(error)
+        except BaseException as journal_error:
+            _add_exception_note(
+                error,
+                "joint probe failure journal update also failed: "
+                f"{journal_error!r}",
+            )
+        raise
+
+
+def _execute_single_joint_probe_body(
+    runner,
+    right_observer,
+    joint_index,
+    request,
+    *,
+    preview_time,
+    hold_window_s,
+    probe_context,
+    journal,
+    motion_attempt_callback,
+):
+    torque_limit = np.asarray(
+        getattr(runner, "torque_limit", None), dtype=float
+    )
+    if (
+        torque_limit.shape != (6,)
+        or not np.all(np.isfinite(torque_limit))
+        or np.any(torque_limit <= 0.0)
+    ):
+        raise RuntimeError(
+            "single joint probe requires a valid right-arm torque limit"
+        )
+
+    before_feature, before_error, before_head_path, before_head_timestamp = (
+        runner.observe(0.0)
+    )
+    before_head_artifacts = _snapshot_head_observation_artifacts(
+        runner, before_head_path
+    )
+    context = (
+        _probe_context(
+            runner, before_head_path, before_head_artifacts
+        )
+        if probe_context is None
+        else dict(probe_context)
+    )
+    if not context.get("context_id_sha256"):
+        raise ValueError("probe context requires context_id_sha256")
+    (
+        before_right_geometry,
+        before_right_candidate,
+        before_right_path,
+        before_right_timestamp,
+    ) = right_observer.observe(require_lid=False)
+    before_right_artifacts = _snapshot_right_observation_artifacts(
+        right_observer, before_right_path
+    )
+    pre_motion_hold = verify_right_stationary(
+        runner.rpc,
+        duration_s=hold_window_s,
+        torque_limit=torque_limit,
+    )
+    if not pre_motion_hold["verified"]:
+        raise RuntimeError(
+            "right arm was not stationary before single joint probe"
+        )
+    before_state = pre_motion_hold["final_state"]
+    before_pose = np.asarray(
+        before_state["pose_wxyz_xyz"], dtype=float
+    )
+    before_q = np.asarray(
+        before_state["joint_position_rad"], dtype=float
+    )
+    _probe_orientation_quality(before_pose, before_pose)
+    before_observation = _probe_observation_record(
+        before_feature,
+        before_error,
+        before_head_timestamp,
+        before_right_geometry,
+        before_right_candidate,
+        before_right_timestamp,
+        before_head_artifacts,
+        before_right_artifacts,
+    )
+    motion = {
+        "command_space": "right_joint_position",
+        "commanded_joint_index": int(joint_index),
+        "requested_delta_rad": float(request[joint_index]),
+        "requested_first_three_delta_rad": request.tolist(),
+        "preview_time_s": float(preview_time),
+        "maximum_requested_joint_rate_rad_s": 0.001,
+        "requested_joint_rate_rad_s": float(
+            abs(request[joint_index]) / preview_time
+        ),
+        "accumulate": False,
+        "nonzero_joint_motion_command_count_limit": 1,
+        "pre_motion_hold": pre_motion_hold,
+        "before_state": before_state,
+    }
+    journal.update(
+        "pre_motion_ready",
+        context=context,
+        motion=motion,
+        observation={"before": before_observation},
+    )
+
+    torque_strikes = 0
+    torque_samples = int(getattr(runner, "torque_samples", 1))
+    if torque_samples <= 0:
+        raise RuntimeError("invalid right-arm torque sample threshold")
+
+    preparation_guard_samples = 0
+
+    def check_torque(stage, torque_sample=None):
+        nonlocal torque_strikes
+        nonlocal preparation_guard_samples
+        preparation_state = None
+        if torque_sample is None:
+            preparation_state = _right_state(
+                runner.rpc, require_finite_torque=False
+            )
+            torque_sample = preparation_state["joint_torque_nm"]
+        torque = np.asarray(
+            torque_sample,
+            dtype=float,
+        )
+        if (
+            torque.shape != (6,)
+            or not np.all(np.isfinite(torque))
+        ):
+            raise RuntimeError(
+                f"invalid right torque sample {stage}: {torque.tolist()}"
+            )
+        torque = np.abs(torque)
+        torque_strikes = (
+            torque_strikes + 1
+            if np.any(torque > torque_limit)
+            else 0
+        )
+        if torque_strikes >= torque_samples:
+            raise RuntimeError(
+                f"right torque stop {stage}: "
+                f"{np.round(torque, 3).tolist()}"
+            )
+        if preparation_state is not None:
+            preparation_guard_samples += 1
+            live_pose = np.asarray(
+                preparation_state["pose_wxyz_xyz"], dtype=float
+            )
+            live_q = np.asarray(
+                preparation_state["joint_position_rad"], dtype=float
+            )
+            live_delta = live_q - before_q
+            other_indices = [
+                index for index in range(3) if index != joint_index
+            ]
+            motion["preparation_guard_sample_count"] = (
+                preparation_guard_samples
+            )
+            motion["preparation_guard_last_state"] = preparation_state
+            if abs(float(live_delta[joint_index])) > 0.002:
+                raise RuntimeError(
+                    "selected joint drifted more than 0.002 rad during "
+                    f"motion preparation ({stage})"
+                )
+            if np.max(np.abs(live_delta[other_indices])) > 0.002:
+                raise RuntimeError(
+                    "non-commanded shoulder/elbow joint drift exceeded "
+                    f"0.002 rad during motion preparation ({stage})"
+                )
+            if np.max(np.abs(live_delta[3:])) > 0.002:
+                raise RuntimeError(
+                    "wrist joint drift exceeded 0.002 rad during motion "
+                    f"preparation ({stage})"
+                )
+            preparation_tool_quality = _joint_probe_tool_pose_quality(
+                before_pose, live_pose
+            )
+            _require_valid_joint_probe_tool_pose(
+                preparation_tool_quality,
+                f"motion preparation ({stage})",
+            )
+
+    original_monitor_settle = getattr(runner, "monitor_settle", None)
+    if not callable(original_monitor_settle):
+        raise RuntimeError(
+            "single joint probe requires monitored right-arm settling"
+        )
+
+    def monitored_joint_settle(duration_s):
+        duration_s = float(duration_s)
+        if not np.isfinite(duration_s) or duration_s < 0.0:
+            raise ValueError("invalid joint motion monitoring duration")
+        deadline = time.monotonic() + duration_s
+        while True:
+            try:
+                # Read pose, joints, and torque once.  Let check_torque()
+                # produce the specific fail-closed diagnostic for NaN/Inf
+                # torque instead of losing it in the generic state validator.
+                live_state = _right_state(
+                    runner.rpc, require_finite_torque=False
+                )
+                check_torque(
+                    "during single joint command",
+                    live_state["joint_torque_nm"],
+                )
+                live_pose = np.asarray(
+                    live_state["pose_wxyz_xyz"], dtype=float
+                )
+                live_q = np.asarray(
+                    live_state["joint_position_rad"], dtype=float
+                )
+                live_delta = live_q - before_q
+                other_indices = [
+                    index for index in range(3)
+                    if index != joint_index
+                ]
+                if np.max(np.abs(live_delta[other_indices])) > 0.002:
+                    raise RuntimeError(
+                        "dynamic non-commanded shoulder/elbow joint drift "
+                        "exceeded 0.002 rad"
+                    )
+                if np.max(np.abs(live_delta[3:])) > 0.002:
+                    raise RuntimeError(
+                        "dynamic wrist joint drift exceeded 0.002 rad"
+                    )
+                selected = float(live_delta[joint_index])
+                direction_tolerance = max(
+                    0.0001, 0.05 * abs(float(request[joint_index]))
+                )
+                if (
+                    selected * np.sign(request[joint_index])
+                    < -direction_tolerance
+                ):
+                    raise RuntimeError(
+                        "dynamic selected joint motion opposed signed request"
+                    )
+                if abs(selected) > 1.5 * abs(request[joint_index]):
+                    raise RuntimeError(
+                        "dynamic selected joint motion exceeded 1.50 "
+                        "times its request"
+                    )
+                live_tool_quality = _joint_probe_tool_pose_quality(
+                    before_pose, live_pose
+                )
+                _require_valid_joint_probe_tool_pose(
+                    live_tool_quality, "dynamic"
+                )
+            except BaseException as error:
+                try:
+                    runner.hold_measured()
+                except BaseException as hold_error:
+                    _add_exception_note(
+                        error,
+                        "dynamic joint guard hold also failed: "
+                        f"{hold_error!r}",
+                    )
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                return
+            time.sleep(min(0.05, remaining))
+
+    journal.mark_motion_attempt()
+    if motion_attempt_callback is not None:
+        motion_attempt_callback()
+    motion_error = None
+    prepared = False
+    try:
+        runner._prepare_cartesian_motion(check_torque)
+        prepared = True
+        prepared_state = _right_state(runner.rpc)
+        check_torque(
+            "immediately before single joint command",
+            prepared_state["joint_torque_nm"],
+        )
+        prepared_pose = np.asarray(
+            prepared_state["pose_wxyz_xyz"], dtype=float
+        )
+        prepared_q = np.asarray(
+            prepared_state["joint_position_rad"], dtype=float
+        )
+        preparation_delta = prepared_q - before_q
+        preparation_other_indices = [
+            index for index in range(3) if index != joint_index
+        ]
+        preparation_tool_quality = _joint_probe_tool_pose_quality(
+            before_pose, prepared_pose
+        )
+        motion.update(
+            {
+                "prepared_state": prepared_state,
+                "preparation_all_joint_drift_rad": (
+                    preparation_delta.tolist()
+                ),
+                "preparation_tool_pose_quality": (
+                    preparation_tool_quality
+                ),
+            }
+        )
+        if abs(float(preparation_delta[joint_index])) > 0.002:
+            raise RuntimeError(
+                "selected joint drifted more than 0.002 rad during "
+                "motion preparation"
+            )
+        if np.max(
+            np.abs(preparation_delta[preparation_other_indices])
+        ) > 0.002:
+            raise RuntimeError(
+                "non-commanded shoulder/elbow joint drift exceeded "
+                "0.002 rad during motion preparation"
+            )
+        if np.max(np.abs(preparation_delta[3:])) > 0.002:
+            raise RuntimeError(
+                "wrist joint drift exceeded 0.002 rad during "
+                "motion preparation"
+            )
+        _require_valid_joint_probe_tool_pose(
+            preparation_tool_quality, "motion preparation"
+        )
+        runner.monitor_settle = monitored_joint_settle
+        try:
+            command_reported = runner.move_joint_delta(
+                request,
+                preview_time=preview_time,
+                minimum_progress=0.0,
+                accumulate=False,
+            )
+            command_end_state = _right_state(runner.rpc)
+            check_torque(
+                "immediately after single joint command",
+                command_end_state["joint_torque_nm"],
+            )
+        finally:
+            runner.monitor_settle = original_monitor_settle
+    except BaseException as error:
+        motion_error = error
+        try:
+            setattr(
+                error,
+                "joint_probe_motion_evidence",
+                copy.deepcopy(motion),
+            )
+        except Exception:
+            pass
+        raise
+    finally:
+        if prepared or motion_error is not None:
+            try:
+                runner._finish_cartesian_motion()
+            except BaseException as cleanup_error:
+                if motion_error is None:
+                    raise
+                _add_exception_note(
+                    motion_error,
+                    "right joint probe gain/hold restoration also failed: "
+                    f"{cleanup_error!r}",
+                )
+
+    post_motion_state = _right_state(runner.rpc)
+    check_torque(
+        "after joint-command hold/gain restoration",
+        post_motion_state["joint_torque_nm"],
+    )
+    post_motion_pose = np.asarray(
+        post_motion_state["pose_wxyz_xyz"], dtype=float
+    )
+    post_motion_q = np.asarray(
+        post_motion_state["joint_position_rad"], dtype=float
+    )
+    actual_immediate = post_motion_q - before_q
+    immediate_motion_quality = _joint_probe_motion_quality(
+        actual_immediate,
+        request,
+        joint_index,
+        command_reported_first_three_delta=command_reported,
+    )
+    immediate_tool_pose_quality = _joint_probe_tool_pose_quality(
+        before_pose, post_motion_pose
+    )
+    motion.update(
+        {
+            "command_reported_first_three_delta_rad": np.asarray(
+                command_reported, dtype=float
+            ).tolist(),
+            "command_end_state": command_end_state,
+            "actual_immediate_all_joint_delta_rad": (
+                actual_immediate.tolist()
+            ),
+            "actual_immediate_quality": immediate_motion_quality,
+            "immediate_tool_pose_quality": immediate_tool_pose_quality,
+            "post_motion_state": post_motion_state,
+        }
+    )
+    journal.mark_motion_command_completed(motion)
+    _require_valid_joint_probe_motion(
+        immediate_motion_quality, "immediate"
+    )
+    _require_valid_joint_probe_tool_pose(
+        immediate_tool_pose_quality, "immediate"
+    )
+    journal.mark_immediate_motion_validated(motion)
+
+    initial_hold = verify_right_stationary(
+        runner.rpc,
+        duration_s=hold_window_s,
+        torque_limit=torque_limit,
+    )
+    if not initial_hold["verified"]:
+        runner.hold_measured()
+        initial_hold = verify_right_stationary(
+            runner.rpc,
+            duration_s=hold_window_s,
+            torque_limit=torque_limit,
+        )
+        if not initial_hold["verified"]:
+            raise RuntimeError(
+                "right arm did not become stationary after single joint probe"
+            )
+    after_feature, after_error, after_head_path, after_head_timestamp = (
+        runner.observe(0.0)
+    )
+    after_head_artifacts = _snapshot_head_observation_artifacts(
+        runner, after_head_path
+    )
+    (
+        after_right_geometry,
+        after_right_candidate,
+        after_right_path,
+        after_right_timestamp,
+    ) = right_observer.observe(require_lid=False)
+    after_right_artifacts = _snapshot_right_observation_artifacts(
+        right_observer, after_right_path
+    )
+    hold = verify_right_stationary(
+        runner.rpc,
+        duration_s=hold_window_s,
+        torque_limit=torque_limit,
+    )
+    if not hold["verified"]:
+        runner.hold_measured()
+        hold = verify_right_stationary(
+            runner.rpc,
+            duration_s=hold_window_s,
+            torque_limit=torque_limit,
+        )
+        if not hold["verified"]:
+            raise RuntimeError(
+                "right arm moved during post-joint-probe SAM observation"
+            )
+
+    initial_hold_pose = np.asarray(
+        initial_hold["final_state"]["pose_wxyz_xyz"], dtype=float
+    )
+    initial_hold_q = np.asarray(
+        initial_hold["final_state"]["joint_position_rad"], dtype=float
+    )
+    final_pose = np.asarray(
+        hold["final_state"]["pose_wxyz_xyz"], dtype=float
+    )
+    final_q = np.asarray(
+        hold["final_state"]["joint_position_rad"], dtype=float
+    )
+    observation_xyz_shift = (
+        final_pose[4:7] - initial_hold_pose[4:7]
+    )
+    observation_joint_shift = final_q - initial_hold_q
+    observation_orientation_quality = _probe_orientation_quality(
+        initial_hold_pose, final_pose, maximum_change_deg=0.5
+    )
+    if (
+        np.max(np.abs(observation_xyz_shift)) > 0.0005
+        or np.max(np.abs(observation_joint_shift)) > 0.002
+        or not observation_orientation_quality["accepted"]
+    ):
+        raise RuntimeError(
+            "right arm changed pose while post-joint-probe SAM was running"
+        )
+
+    actual_settled = final_q - before_q
+    settled_motion_quality = _joint_probe_motion_quality(
+        actual_settled, request, joint_index
+    )
+    settled_tool_pose_quality = _joint_probe_tool_pose_quality(
+        before_pose, final_pose
+    )
+    motion.update(
+        {
+            "actual_settled_all_joint_delta_rad": actual_settled.tolist(),
+            "actual_settled_quality": settled_motion_quality,
+            "settled_tool_pose_quality": settled_tool_pose_quality,
+            "initial_hold": initial_hold,
+            "hold": hold,
+            "observation_xyz_shift_m": observation_xyz_shift.tolist(),
+            "observation_joint_shift_rad": (
+                observation_joint_shift.tolist()
+            ),
+            "observation_orientation_quality": (
+                observation_orientation_quality
+            ),
+        }
+    )
+    journal.update("validating_settled_motion", motion=motion)
+    _require_valid_joint_probe_motion(
+        settled_motion_quality, "settled"
+    )
+    _require_valid_joint_probe_tool_pose(
+        settled_tool_pose_quality, "settled"
+    )
+    journal.mark_settled_motion_validated(motion)
+
+    gripper_delta = (
+        after_feature.gripper_feature - before_feature.gripper_feature
+    )
+    lid_delta = (
+        after_feature.lid_grasp_feature - before_feature.lid_grasp_feature
+    )
+    relative_delta = gripper_delta - lid_delta
+    pixel_signal = float(np.linalg.norm(relative_delta[:2]))
+    pixel_noise = max(0.5, float(np.linalg.norm(lid_delta[:2])))
+    signal_to_noise = pixel_signal / pixel_noise
+    usable_for_fit = bool(
+        pixel_signal >= 2.0 and signal_to_noise >= 3.0
+    )
+    after_observation = _probe_observation_record(
+        after_feature,
+        after_error,
+        after_head_timestamp,
+        after_right_geometry,
+        after_right_candidate,
+        after_right_timestamp,
+        after_head_artifacts,
+        after_right_artifacts,
+    )
+    fixed_view = register_fixed_camera_view(
+        before_observation["head_raw_image"],
+        after_observation["head_raw_image"],
+    )
+    if not fixed_view.accepted:
+        raise RuntimeError(
+            "head camera moved during the joint probe: "
+            + fixed_view.reason
+        )
+    stable = context.get("stable", {})
+    expected_models = stable.get("sam_models")
+    if isinstance(expected_models, dict):
+        after_models = {
+            role: after_head_artifacts.get(role, {}).get("model")
+            for role in ("lid", "gripper")
+        }
+        if after_models != expected_models:
+            raise RuntimeError("SAM model changed during the joint probe")
+    observation = {
+        "before": before_observation,
+        "after": after_observation,
+        "gripper_feature_delta": gripper_delta.tolist(),
+        "lid_feature_delta": lid_delta.tolist(),
+        "relative_feature_delta": relative_delta.tolist(),
+        "fixed_camera_during_probe": {
+            "accepted": fixed_view.accepted,
+            "matches": fixed_view.matches,
+            "inliers": fixed_view.inliers,
+            "inlier_fraction": fixed_view.inlier_fraction,
+            "median_inlier_error_px": fixed_view.median_inlier_error_px,
+            "maximum_corner_motion_px": fixed_view.maximum_corner_motion_px,
+        },
+    }
+    journal.update(
+        "validating_post_motion_observation",
+        context=context,
+        motion=motion,
+        observation=observation,
+    )
+    report = {
+        "context": context,
+        "status": f"SINGLE_JOINT_{joint_index}_PROBE_COMMITTED",
+        "probe_kind": "right_arm_single_joint_diagnostic",
+        "motion": motion,
+        "observation": observation,
+        "quality": {
+            "pixel_signal_norm": pixel_signal,
+            "pixel_noise_norm": pixel_noise,
+            "signal_to_noise": signal_to_noise,
+            "image_signal_usable_for_coupled_controller_design": (
+                usable_for_fit
+            ),
+            "usable_for_horizontal_fit": False,
+            "usable_for_fit": False,
+            "reasons": [
+                (
+                    "single-joint motion changes tool Z/orientation and is "
+                    "diagnostic only; do not fit a horizontal controller"
+                ),
+                *[
+                    reason
+                    for reason, rejected in (
+                        ("image motion was below 2 px", pixel_signal < 2.0),
+                        (
+                            "relative image motion SNR was below 3",
+                            signal_to_noise < 3.0,
+                        ),
+                    )
+                    if rejected
+                ],
+            ],
+        },
+        "excluded_actions": copy.deepcopy(
+            journal.payload["excluded_actions"]
+        ),
+    }
+    return journal.commit(report)
 
 
 def _execute_single_horizontal_probe_body(
@@ -1641,10 +2580,33 @@ def main(argv=None):
         "--motion-claim-dir",
         default="/var/tmp/piper_robot_motion_claims",
     )
-    parser.add_argument(
+    execution_group = parser.add_mutually_exclusive_group()
+    execution_group.add_argument(
         "--execute-horizontal",
         action="store_true",
         help="allow right-arm horizontal motion; default is camera-only dry-run",
+    )
+    execution_group.add_argument(
+        "--execute-joint",
+        action="store_true",
+        help=(
+            "allow exactly one right proximal-joint probe; mutually exclusive "
+            "with Cartesian motion"
+        ),
+    )
+    parser.add_argument(
+        "--single-joint-index",
+        type=int,
+        choices=(0, 1, 2),
+        help="0-based right joint index for a one-shot proximal-joint probe",
+    )
+    parser.add_argument(
+        "--single-joint-rad",
+        type=float,
+        help=(
+            "signed one-shot joint delta with magnitude at most 0.005 rad; "
+            "preview must keep requested rate at or below 0.001 rad/s"
+        ),
     )
     args = parser.parse_args(argv)
     if args.single_probe_axis and not args.execute_horizontal:
@@ -1656,26 +2618,77 @@ def main(argv=None):
         )
     if args.execute_horizontal and not args.motion_token:
         parser.error("--execute-horizontal requires --motion-token")
+    joint_arguments_present = (
+        args.single_joint_index is not None
+        or args.single_joint_rad is not None
+    )
+    if joint_arguments_present and not args.execute_joint:
+        parser.error(
+            "--single-joint-index/--single-joint-rad require --execute-joint"
+        )
+    if args.execute_joint and args.single_joint_index is None:
+        parser.error("--execute-joint requires --single-joint-index")
+    if args.execute_joint and args.single_joint_rad is None:
+        parser.error("--execute-joint requires --single-joint-rad")
+    if args.execute_joint and (
+        not np.isfinite(args.single_joint_rad)
+        or not 0.0 < abs(args.single_joint_rad) <= 0.005
+    ):
+        parser.error(
+            "--single-joint-rad magnitude must be within (0, 0.005] rad"
+        )
+    if args.execute_joint:
+        minimum_joint_preview = max(
+            1.0, abs(args.single_joint_rad) / 0.001
+        )
+        if args.preview_time < minimum_joint_preview:
+            parser.error(
+                "--preview-time is too short for --single-joint-rad; "
+                "requested joint rate must be at most 0.001 rad/s"
+            )
+    if args.execute_joint and not args.motion_token:
+        parser.error("--execute-joint requires --motion-token")
+    if not np.isfinite(args.preview_time) or not 0.0 < args.preview_time <= 10.0:
+        parser.error("--preview-time must be within (0, 10] seconds")
 
     execution_claim = None
-    if args.execute_horizontal:
-        execution_claim = claim_motion_execution(
-            args.motion_token,
-            args.motion_claim_dir,
-            args.output_dir,
-            {
+    if args.execute_horizontal or args.execute_joint:
+        if args.execute_joint:
+            intent = {
+                "mode": "single_joint_probe",
+                "joint_index": args.single_joint_index,
+                "delta_rad": args.single_joint_rad,
+                "preview_time_s": args.preview_time,
+                "right_arm": True,
+                "left_arm": False,
+                "gripper": False,
+                "cartesian": False,
+                "descent": False,
+                "home": False,
+                "automatic_return": False,
+                "nonzero_joint_motion_command_count": 1,
+            }
+        else:
+            intent = {
                 "mode": f"single_probe_{args.single_probe_axis}",
                 "axis": args.single_probe_axis,
                 "distance_m": args.single_probe_m,
+                "right_arm": True,
                 "left_arm": False,
                 "gripper": False,
                 "descent": False,
                 "home": False,
-            },
+                "automatic_return": False,
+            }
+        execution_claim = claim_motion_execution(
+            args.motion_token,
+            args.motion_claim_dir,
+            args.output_dir,
+            intent,
         )
 
     # LiveSamGrasp owns camera, SAM, torque monitoring, and right-only RPC.
-    args.control_space = "cartesian"
+    args.control_space = "joint" if args.execute_joint else "cartesian"
     args.minimum_progress = 0.0
     args.joint_minimum_progress = 0.0
     try:
@@ -1715,12 +2728,16 @@ def main(argv=None):
             json.dumps(
                 {
                     "mode": (
-                        f"SINGLE_PROBE_{args.single_probe_axis.upper()}"
-                        if args.single_probe_axis
+                        f"SINGLE_JOINT_{args.single_joint_index}_PROBE"
+                        if args.execute_joint
                         else (
-                            "HORIZONTAL_ONLY"
-                            if args.execute_horizontal
-                            else "DRY_RUN_NO_MOTION"
+                            f"SINGLE_PROBE_{args.single_probe_axis.upper()}"
+                            if args.single_probe_axis
+                            else (
+                                "HORIZONTAL_ONLY"
+                                if args.execute_horizontal
+                                else "DRY_RUN_NO_MOTION"
+                            )
                         )
                     ),
                     "feature_error": raw_error.round(2).tolist(),
@@ -1753,20 +2770,40 @@ def main(argv=None):
             ),
             flush=True,
         )
-        if not args.execute_horizontal:
+        if not (args.execute_horizontal or args.execute_joint):
             return
         record_path = (
             Path(args.output_dir) / "probe_record.json"
         ).resolve()
-        report = execute_single_horizontal_probe(
-            runner,
-            right,
-            args.single_probe_axis,
-            args.single_probe_m,
-            journal_path=record_path,
-            motion_token_sha256=execution_claim.payload["token_sha256"],
-            motion_attempt_callback=execution_claim.mark_motion_attempt,
-        )
+        if args.execute_joint:
+            report = execute_single_joint_probe(
+                runner,
+                right,
+                args.single_joint_index,
+                args.single_joint_rad,
+                preview_time=args.preview_time,
+                journal_path=record_path,
+                motion_token_sha256=(
+                    execution_claim.payload["token_sha256"]
+                ),
+                motion_attempt_callback=(
+                    execution_claim.mark_motion_attempt
+                ),
+            )
+        else:
+            report = execute_single_horizontal_probe(
+                runner,
+                right,
+                args.single_probe_axis,
+                args.single_probe_m,
+                journal_path=record_path,
+                motion_token_sha256=(
+                    execution_claim.payload["token_sha256"]
+                ),
+                motion_attempt_callback=(
+                    execution_claim.mark_motion_attempt
+                ),
+            )
         execution_claim.set_result(
             {
                 "status": report["status"],

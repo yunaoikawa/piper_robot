@@ -28,6 +28,7 @@ from src.run_staged_sam_pregrasp import (
     claim_motion_execution,
     estimate_horizontal_displacement,
     execute_single_horizontal_probe,
+    execute_single_joint_probe,
     fit_horizontal_jacobian,
     main,
     verify_right_stationary,
@@ -73,6 +74,62 @@ except SystemExit as exc:
 assert "--execute-horizontal requires --single-probe-axis" in (
     legacy_cli_stderr.getvalue()
 )
+
+for rejected_argv, expected_cli_error in (
+    (
+        [
+            "--execute-horizontal",
+            "--execute-joint",
+            "--single-probe-axis",
+            "x",
+            "--motion-token",
+            "mutually-exclusive-motion",
+        ],
+        "not allowed with argument --execute-horizontal",
+    ),
+    (
+        ["--execute-joint", "--motion-token", "missing-joint-index"],
+        "--execute-joint requires --single-joint-index",
+    ),
+    (
+        [
+            "--execute-joint",
+            "--single-joint-index",
+            "2",
+            "--single-joint-rad",
+            "0.0051",
+            "--motion-token",
+            "oversize-joint-delta",
+        ],
+        "--single-joint-rad magnitude must be within (0, 0.005] rad",
+    ),
+    (
+        ["--single-joint-index", "2", "--single-joint-rad", "0.003"],
+        "--single-joint-index/--single-joint-rad require --execute-joint",
+    ),
+    (
+        [
+            "--execute-joint",
+            "--single-joint-index",
+            "2",
+            "--single-joint-rad",
+            "0.003",
+            "--preview-time",
+            "2.0",
+            "--motion-token",
+            "joint-rate-too-fast",
+        ],
+        "--preview-time is too short for --single-joint-rad",
+    ),
+):
+    rejected_stderr = io.StringIO()
+    try:
+        with redirect_stderr(rejected_stderr):
+            main(rejected_argv)
+        raise AssertionError("invalid joint CLI was accepted")
+    except SystemExit as exc:
+        assert exc.code == 2
+    assert expected_cli_error in rejected_stderr.getvalue()
 
 
 class FakeCleanupTarget:
@@ -260,6 +317,88 @@ assert fake_main_claim.attempts == 1
 assert fake_main_claim.finalize_calls == [None]
 assert FakeRejectedGeometryMainRunner.last_instance.stop_calls == 1
 assert FakeMainRightObserver.last_instance.stop_calls == 1
+
+joint_main_claim = FakeMainClaim()
+joint_main_intent = {}
+
+
+def fake_claim_joint(token, claim_dir, output_dir, intent):
+    joint_main_intent.update(intent)
+    joint_main_intent["token"] = token
+    joint_main_intent["output_dir"] = output_dir
+    return joint_main_claim
+
+
+def fake_execute_single_joint(
+    runner, right, joint_index, delta_rad, **kwargs
+):
+    kwargs["motion_attempt_callback"]()
+    main_calls["execute_joint"] = {
+        "joint_index": joint_index,
+        "delta_rad": delta_rad,
+        "preview_time": kwargs["preview_time"],
+        "control_space": runner.args.control_space,
+    }
+    return {
+        "status": "SINGLE_JOINT_2_PROBE_COMMITTED",
+        "quality": {"usable_for_fit": False},
+    }
+
+
+patched_joint_main_attributes = {
+    "LiveSamGrasp": staged_pregrasp.LiveSamGrasp,
+    "RightLidObserver": staged_pregrasp.RightLidObserver,
+    "claim_motion_execution": staged_pregrasp.claim_motion_execution,
+    "execute_single_joint_probe": (
+        staged_pregrasp.execute_single_joint_probe
+    ),
+    "_required_sha256": staged_pregrasp._required_sha256,
+}
+try:
+    staged_pregrasp.LiveSamGrasp = FakeRejectedGeometryMainRunner
+    staged_pregrasp.RightLidObserver = FakeMainRightObserver
+    staged_pregrasp.claim_motion_execution = fake_claim_joint
+    staged_pregrasp.execute_single_joint_probe = (
+        fake_execute_single_joint
+    )
+    staged_pregrasp._required_sha256 = lambda *args, **kwargs: "d" * 64
+    with redirect_stdout(io.StringIO()):
+        main(
+            [
+                "--execute-joint",
+                "--single-joint-index",
+                "2",
+                "--single-joint-rad",
+                "+0.003",
+                "--preview-time",
+                "3.0",
+                "--motion-token",
+                "single-joint-approval",
+                "--output-dir",
+                "/tmp/pure-single-joint-probe",
+            ]
+        )
+finally:
+    for name, value in patched_joint_main_attributes.items():
+        setattr(staged_pregrasp, name, value)
+assert main_calls["execute_joint"] == {
+    "joint_index": 2,
+    "delta_rad": 0.003,
+    "preview_time": 3.0,
+    "control_space": "joint",
+}
+assert joint_main_intent["mode"] == "single_joint_probe"
+assert joint_main_intent["nonzero_joint_motion_command_count"] == 1
+assert joint_main_intent["left_arm"] is False
+assert joint_main_intent["gripper"] is False
+assert joint_main_intent["descent"] is False
+assert joint_main_intent["home"] is False
+assert joint_main_intent["automatic_return"] is False
+assert joint_main_intent["token"] == "single-joint-approval"
+assert joint_main_claim.attempts == 1
+assert joint_main_claim.result["usable_for_fit"] is False
+assert joint_main_claim.finalize_calls == [None]
+
 invalid_geometry_record = staged_pregrasp._geometry_quality_record(
     SimpleNamespace(
         accepted=False,
@@ -450,10 +589,15 @@ def _right_artifacts(output_dir):
 class FakeSingleProbeRunner:
     def __init__(self):
         self.moves = []
+        self.joint_moves = []
         self.holds = 0
+        self.prepare_calls = 0
+        self.finish_calls = 0
+        self.high_gain_active = False
         self.observations = 0
         self.rpc = SimpleNamespace()
         self.pose = np.array([1.0, 0.0, 0.0, 0.0, 0.3, 0.0, 0.8])
+        self.joints = np.zeros(6)
         self.output_dir = _artifact_root / "head"
         self.last_observation_artifacts = None
         self.last_geometry_quality = SimpleNamespace(
@@ -494,14 +638,52 @@ class FakeSingleProbeRunner:
         self.head_camera_matrix = np.eye(3)
         self.head_camera_reference_shape = (240, 320)
         self.torque_limit = np.ones(6)
+        self.torque_samples = 2
         self.rpc.get_right_ee_pose = lambda: SimpleNamespace(
             parameters=lambda: self.pose.copy()
         )
-        self.rpc.get_right_joint_positions = lambda: np.zeros(6)
+        self.rpc.get_right_joint_positions = lambda: self.joints.copy()
         self.rpc.get_right_joint_torque = lambda: np.zeros(6)
 
     def hold_measured(self):
         self.holds += 1
+
+    def _prepare_cartesian_motion(self, check_torque):
+        self.prepare_calls += 1
+        check_torque("fake preparation")
+        self.high_gain_active = True
+
+    def _finish_cartesian_motion(self):
+        self.finish_calls += 1
+        self.high_gain_active = False
+
+    def monitor_settle(self, duration_s):
+        return None
+
+    def move_joint_delta(
+        self,
+        request,
+        preview_time=None,
+        minimum_progress=None,
+        *,
+        accumulate=False,
+    ):
+        request = np.asarray(request, dtype=float)
+        self.joint_moves.append(
+            {
+                "request": request.copy(),
+                "preview_time": preview_time,
+                "minimum_progress": minimum_progress,
+                "accumulate": accumulate,
+            }
+        )
+        actual = 0.9 * request
+        self.joints[:3] += actual
+        self.pose[4:7] += np.array(
+            [0.4 * actual[0], 0.3 * actual[1], -0.2 * actual[2]]
+        )
+        self.monitor_settle(0.0)
+        return actual
 
     def move_cartesian_delta(self, request, minimum_progress):
         self.moves.append(
@@ -657,6 +839,500 @@ class SettledPoseDriftRunner(FakeSingleProbeRunner):
                 )
             self._settled_drift_applied = True
         return SimpleNamespace(parameters=lambda: self.pose.copy())
+
+
+class ReverseJointRunner(FakeSingleProbeRunner):
+    def move_joint_delta(
+        self,
+        request,
+        preview_time=None,
+        minimum_progress=None,
+        *,
+        accumulate=False,
+    ):
+        request = np.asarray(request, dtype=float)
+        self.joint_moves.append(
+            {
+                "request": request.copy(),
+                "preview_time": preview_time,
+                "minimum_progress": minimum_progress,
+                "accumulate": accumulate,
+            }
+        )
+        actual = -0.5 * request
+        self.joints[:3] += actual
+        self.monitor_settle(0.0)
+        return actual
+
+
+class LowProgressJointRunner(FakeSingleProbeRunner):
+    def move_joint_delta(
+        self,
+        request,
+        preview_time=None,
+        minimum_progress=None,
+        *,
+        accumulate=False,
+    ):
+        request = np.asarray(request, dtype=float)
+        self.joint_moves.append(
+            {
+                "request": request.copy(),
+                "preview_time": preview_time,
+                "minimum_progress": minimum_progress,
+                "accumulate": accumulate,
+            }
+        )
+        actual = 0.2 * request
+        self.joints[:3] += actual
+        self.monitor_settle(0.0)
+        return actual
+
+
+class OtherJointDriftRunner(FakeSingleProbeRunner):
+    def move_joint_delta(
+        self,
+        request,
+        preview_time=None,
+        minimum_progress=None,
+        *,
+        accumulate=False,
+    ):
+        request = np.asarray(request, dtype=float)
+        self.joint_moves.append(
+            {
+                "request": request.copy(),
+                "preview_time": preview_time,
+                "minimum_progress": minimum_progress,
+                "accumulate": accumulate,
+            }
+        )
+        actual = 0.9 * request
+        self.joints[:3] += actual
+        other = 1 if request[0] != 0.0 else 0
+        self.joints[other] += 0.0021
+        self.monitor_settle(0.0)
+        return actual
+
+
+class WristJointDriftRunner(FakeSingleProbeRunner):
+    def move_joint_delta(
+        self,
+        request,
+        preview_time=None,
+        minimum_progress=None,
+        *,
+        accumulate=False,
+    ):
+        request = np.asarray(request, dtype=float)
+        self.joint_moves.append(
+            {
+                "request": request.copy(),
+                "preview_time": preview_time,
+                "minimum_progress": minimum_progress,
+                "accumulate": accumulate,
+            }
+        )
+        actual = 0.9 * request
+        self.joints[:3] += actual
+        self.joints[4] += 0.0021
+        self.monitor_settle(0.0)
+        return actual
+
+
+class VerticalJointDriftRunner(FakeSingleProbeRunner):
+    def move_joint_delta(
+        self,
+        request,
+        preview_time=None,
+        minimum_progress=None,
+        *,
+        accumulate=False,
+    ):
+        request = np.asarray(request, dtype=float)
+        self.joint_moves.append(
+            {
+                "request": request.copy(),
+                "preview_time": preview_time,
+                "minimum_progress": minimum_progress,
+                "accumulate": accumulate,
+            }
+        )
+        actual = 0.9 * request
+        self.joints[:3] += actual
+        self.pose[6] += 0.0011
+        self.monitor_settle(0.0)
+        return actual
+
+
+class OrientationJointDriftRunner(FakeSingleProbeRunner):
+    def move_joint_delta(
+        self,
+        request,
+        preview_time=None,
+        minimum_progress=None,
+        *,
+        accumulate=False,
+    ):
+        request = np.asarray(request, dtype=float)
+        self.joint_moves.append(
+            {
+                "request": request.copy(),
+                "preview_time": preview_time,
+                "minimum_progress": minimum_progress,
+                "accumulate": accumulate,
+            }
+        )
+        actual = 0.9 * request
+        self.joints[:3] += actual
+        self.pose[:4] = _orientation_wxyz(0.41)
+        self.monitor_settle(0.0)
+        return actual
+
+
+class NonfiniteDynamicTorqueRunner(FakeSingleProbeRunner):
+    def __init__(self):
+        super().__init__()
+        self.torque_reads = 0
+        self.rpc.get_right_joint_torque = self._torque
+
+    def _torque(self):
+        self.torque_reads += 1
+        if self.torque_reads <= 3:
+            return np.zeros(6)
+        return np.full(6, np.nan)
+
+
+class ConsecutiveDynamicTorqueRunner(FakeSingleProbeRunner):
+    def __init__(self):
+        super().__init__()
+        self.torque_limit = np.full(6, 0.5)
+        self.torque_samples = 2
+        self.torque_reads = 0
+        self.rpc.get_right_joint_torque = self._torque
+
+    def _torque(self):
+        self.torque_reads += 1
+        if self.torque_reads <= 3:
+            return np.zeros(6)
+        return np.ones(6)
+
+
+class SelectedPreparationDriftRunner(FakeSingleProbeRunner):
+    def _prepare_cartesian_motion(self, check_torque):
+        super()._prepare_cartesian_motion(check_torque)
+        self.joints[2] += 0.0021
+
+
+class OtherPreparationDriftRunner(FakeSingleProbeRunner):
+    def _prepare_cartesian_motion(self, check_torque):
+        super()._prepare_cartesian_motion(check_torque)
+        self.joints[0] += 0.0021
+
+
+class ToolPreparationDriftRunner(FakeSingleProbeRunner):
+    def _prepare_cartesian_motion(self, check_torque):
+        super()._prepare_cartesian_motion(check_torque)
+        self.pose[6] += 0.0011
+
+
+class DuringPreparationDriftRunner(FakeSingleProbeRunner):
+    def _prepare_cartesian_motion(self, check_torque):
+        self.prepare_calls += 1
+        self.high_gain_active = True
+        self.joints[0] += 0.0021
+        check_torque("fake gain ramp tick")
+
+
+joint_runner = FakeSingleProbeRunner()
+joint_right = FakeSingleProbeRight()
+joint_record = _artifact_root / "single_joint_probe_record.json"
+original_atomic_joint_write = staged_pregrasp._atomic_write_json
+original_exclusive_joint_write = staged_pregrasp._exclusive_write_json
+journal_write_gain_states = []
+
+
+def guarded_atomic_joint_write(path, payload):
+    journal_write_gain_states.append(joint_runner.high_gain_active)
+    assert not joint_runner.high_gain_active
+    return original_atomic_joint_write(path, payload)
+
+
+def guarded_exclusive_joint_write(path, payload):
+    journal_write_gain_states.append(joint_runner.high_gain_active)
+    assert not joint_runner.high_gain_active
+    return original_exclusive_joint_write(path, payload)
+
+
+try:
+    staged_pregrasp._atomic_write_json = guarded_atomic_joint_write
+    staged_pregrasp._exclusive_write_json = guarded_exclusive_joint_write
+    joint_report = execute_single_joint_probe(
+        joint_runner,
+        joint_right,
+        2,
+        0.003,
+        preview_time=3.0,
+        hold_window_s=0.0,
+        probe_context={"context_id_sha256": "joint-test-context"},
+        journal_path=joint_record,
+        motion_token_sha256="c" * 64,
+    )
+finally:
+    staged_pregrasp._atomic_write_json = original_atomic_joint_write
+    staged_pregrasp._exclusive_write_json = original_exclusive_joint_write
+assert journal_write_gain_states
+assert not any(journal_write_gain_states)
+assert len(joint_runner.joint_moves) == 1
+assert np.array_equal(
+    joint_runner.joint_moves[0]["request"], [0.0, 0.0, 0.003]
+)
+assert joint_runner.joint_moves[0]["preview_time"] == 3.0
+assert joint_runner.joint_moves[0]["minimum_progress"] == 0.0
+assert joint_runner.joint_moves[0]["accumulate"] is False
+assert joint_runner.prepare_calls == 1
+assert joint_runner.finish_calls == 1
+assert joint_right.observations == 2
+assert joint_report["schema"] == "sam_joint_probe/v1"
+assert joint_report["probe_kind"] == "right_arm_single_joint_diagnostic"
+assert joint_report["status"] == "SINGLE_JOINT_2_PROBE_COMMITTED"
+assert joint_report["motion"]["commanded_joint_index"] == 2
+assert joint_report["motion"]["requested_delta_rad"] == 0.003
+assert np.allclose(
+    joint_report["motion"]["actual_settled_all_joint_delta_rad"],
+    [0.0, 0.0, 0.0027, 0.0, 0.0, 0.0],
+)
+assert (
+    joint_report["motion"]["immediate_tool_pose_quality"][
+        "maximum_translation_norm_m"
+    ]
+    == 0.002
+)
+assert (
+    joint_report["motion"]["immediate_tool_pose_quality"][
+        "maximum_abs_vertical_drift_m"
+    ]
+    == 0.001
+)
+assert (
+    joint_report["motion"]["immediate_tool_pose_quality"]["orientation"][
+        "maximum_change_deg"
+    ]
+    == 0.4
+)
+assert joint_report["quality"]["usable_for_horizontal_fit"] is False
+assert joint_report["quality"]["usable_for_fit"] is False
+assert (
+    joint_report["quality"][
+        "image_signal_usable_for_coupled_controller_design"
+    ]
+    is True
+)
+assert joint_report["excluded_actions"] == {
+    "left_arm": True,
+    "gripper": True,
+    "cartesian_descent": True,
+    "home_or_return": True,
+}
+joint_payload = json.loads(joint_record.read_text())
+assert joint_payload["authorization"]["motion_token_sha256"] == "c" * 64
+assert joint_payload["execution"]["motion_attempted"] is True
+assert joint_payload["execution"]["motion_command_completed"] is True
+assert joint_payload["execution"]["immediate_motion_validated"] is True
+assert joint_payload["execution"]["settled_motion_validated"] is True
+
+for invalid_index, invalid_delta, expected_message in (
+    (3, 0.003, "index"),
+    (1, 0.0, "magnitude"),
+    (1, 0.0051, "magnitude"),
+):
+    invalid_joint_runner = FakeSingleProbeRunner()
+    try:
+        execute_single_joint_probe(
+            invalid_joint_runner,
+            FakeSingleProbeRight(),
+            invalid_index,
+            invalid_delta,
+            preview_time=3.0,
+        )
+        raise AssertionError("invalid single-joint request was accepted")
+    except ValueError as exc:
+        assert expected_message in str(exc)
+    assert invalid_joint_runner.observations == 0
+    assert len(invalid_joint_runner.joint_moves) == 0
+
+fast_joint_runner = FakeSingleProbeRunner()
+try:
+    execute_single_joint_probe(
+        fast_joint_runner,
+        FakeSingleProbeRight(),
+        2,
+        0.003,
+        preview_time=2.99,
+    )
+    raise AssertionError("excessive requested joint rate was accepted")
+except ValueError as exc:
+    assert "0.001 rad/s" in str(exc)
+assert fast_joint_runner.observations == 0
+assert len(fast_joint_runner.joint_moves) == 0
+
+
+def _assert_joint_probe_failure(runner, record_name, expected_message):
+    record = _artifact_root / record_name
+    try:
+        execute_single_joint_probe(
+            runner,
+            FakeSingleProbeRight(),
+            2,
+            0.003,
+            preview_time=3.0,
+            hold_window_s=0.0,
+            probe_context={"context_id_sha256": "joint-test-context"},
+            journal_path=record,
+        )
+        raise AssertionError("unsafe single-joint probe was committed")
+    except RuntimeError as exc:
+        assert expected_message in str(exc)
+    assert len(runner.joint_moves) == 1
+    assert runner.prepare_calls == 1
+    assert runner.finish_calls == 1
+    payload = json.loads(record.read_text())
+    assert payload["status"] == "SINGLE_JOINT_2_PROBE_FAILED"
+    assert payload["execution"]["motion_attempted"] is True
+    assert payload["execution"]["failure_timing"] == (
+        "during_or_after_motion_attempt"
+    )
+    return payload
+
+
+_assert_joint_probe_failure(
+    ReverseJointRunner(),
+    "reverse_joint_probe_failure.json",
+    "opposed signed request",
+)
+low_progress_payload = _assert_joint_probe_failure(
+    LowProgressJointRunner(),
+    "low_progress_joint_probe_failure.json",
+    "progress was below 0.25",
+)
+assert low_progress_payload["execution"]["motion_command_completed"] is True
+_assert_joint_probe_failure(
+    OtherJointDriftRunner(),
+    "other_joint_probe_failure.json",
+    "non-commanded shoulder/elbow joint drift",
+)
+_assert_joint_probe_failure(
+    WristJointDriftRunner(),
+    "wrist_joint_probe_failure.json",
+    "wrist joint drift",
+)
+_assert_joint_probe_failure(
+    VerticalJointDriftRunner(),
+    "vertical_joint_probe_failure.json",
+    "vertical drift exceeded 1 mm",
+)
+_assert_joint_probe_failure(
+    OrientationJointDriftRunner(),
+    "orientation_joint_probe_failure.json",
+    "tool orientation changed",
+)
+nonfinite_torque_runner = NonfiniteDynamicTorqueRunner()
+_assert_joint_probe_failure(
+    nonfinite_torque_runner,
+    "nonfinite_dynamic_torque_failure.json",
+    "invalid right torque sample during single joint command",
+)
+assert nonfinite_torque_runner.holds == 1
+consecutive_torque_runner = ConsecutiveDynamicTorqueRunner()
+_assert_joint_probe_failure(
+    consecutive_torque_runner,
+    "consecutive_dynamic_torque_failure.json",
+    "right torque stop immediately after single joint command",
+)
+assert consecutive_torque_runner.torque_reads == 5
+
+pre_joint_torque_runner = FakeSingleProbeRunner()
+pre_joint_torque_runner.torque_limit = np.full(6, 0.5)
+pre_joint_torque_runner.rpc.get_right_joint_torque = lambda: np.ones(6)
+pre_joint_torque_record = _artifact_root / "pre_joint_torque_failure.json"
+try:
+    execute_single_joint_probe(
+        pre_joint_torque_runner,
+        FakeSingleProbeRight(),
+        2,
+        0.003,
+        preview_time=3.0,
+        hold_window_s=0.0,
+        probe_context={"context_id_sha256": "joint-test-context"},
+        journal_path=pre_joint_torque_record,
+    )
+    raise AssertionError("high-torque joint probe was executed")
+except RuntimeError as exc:
+    assert "not stationary before" in str(exc)
+assert len(pre_joint_torque_runner.joint_moves) == 0
+assert pre_joint_torque_runner.prepare_calls == 0
+pre_joint_torque_payload = json.loads(pre_joint_torque_record.read_text())
+assert pre_joint_torque_payload["execution"]["motion_attempted"] is False
+assert pre_joint_torque_payload["execution"]["failure_timing"] == (
+    "before_motion_attempt"
+)
+
+for preparation_runner, record_name, expected_message in (
+    (
+        SelectedPreparationDriftRunner(),
+        "selected_preparation_joint_failure.json",
+        "selected joint drifted more than 0.002 rad",
+    ),
+    (
+        OtherPreparationDriftRunner(),
+        "other_preparation_joint_failure.json",
+        "non-commanded shoulder/elbow joint drift",
+    ),
+    (
+        ToolPreparationDriftRunner(),
+        "tool_preparation_joint_failure.json",
+        "vertical drift exceeded 1 mm",
+    ),
+    (
+        DuringPreparationDriftRunner(),
+        "during_preparation_joint_failure.json",
+        "non-commanded shoulder/elbow joint drift",
+    ),
+):
+    preparation_record = _artifact_root / record_name
+    try:
+        execute_single_joint_probe(
+            preparation_runner,
+            FakeSingleProbeRight(),
+            2,
+            0.003,
+            preview_time=3.0,
+            hold_window_s=0.0,
+            probe_context={"context_id_sha256": "joint-test-context"},
+            journal_path=preparation_record,
+        )
+        raise AssertionError(
+            "joint command followed unsafe preparation drift"
+        )
+    except RuntimeError as exc:
+        assert expected_message in str(exc)
+    assert preparation_runner.prepare_calls == 1
+    assert preparation_runner.finish_calls == 1
+    assert len(preparation_runner.joint_moves) == 0
+    preparation_payload = json.loads(preparation_record.read_text())
+    assert preparation_payload["execution"]["motion_attempted"] is True
+    assert (
+        preparation_payload["execution"]["motion_command_completed"]
+        is False
+    )
+    assert (
+        "prepared_state" in preparation_payload["motion"]
+        or "preparation_guard_last_state"
+        in preparation_payload["motion"]
+    )
+    assert preparation_payload["execution"]["failure_timing"] == (
+        "during_or_after_motion_attempt"
+    )
 
 
 single_runner = FakeSingleProbeRunner()
