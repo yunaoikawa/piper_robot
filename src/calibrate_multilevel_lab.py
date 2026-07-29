@@ -229,7 +229,7 @@ def _discover_horizontal_surfaces(
 
 def _draw_validation_overlay(
     rgb, regions, anchors, surfaces, depth_shape, output_path,
-    semantic_observations=None,
+    semantic_observations=None, semantic_exclusions=None,
 ):
     overlay = rgb.copy()
     height, width = overlay.shape[:2]
@@ -273,6 +273,15 @@ def _draw_validation_overlay(
         cv2.putText(
             overlay, name, (p0[0] + 5, p1[1] - 8),
             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 255), 2, cv2.LINE_AA,
+        )
+    for name, exclusion in (semantic_exclusions or {}).items():
+        x0, x1, y0, y1 = exclusion["roi"]
+        p0 = (int(x0 * width), int(y0 * height))
+        p1 = (int(x1 * width), int(y1 * height))
+        cv2.rectangle(overlay, p0, p1, (255, 255, 0), 3)
+        cv2.putText(
+            overlay, name, (p0[0] + 5, p1[1] - 8),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 2, cv2.LINE_AA,
         )
     for index, surface in enumerate(surfaces):
         x, y, w, h = surface["bbox_lowres"]
@@ -431,6 +440,7 @@ def calibrate(
     regions=None,
     anchors=None,
     semantic_objects=None,
+    semantic_exclusions=None,
 ):
     capture_dir = Path(capture_dir)
     output_dir = Path(output_dir)
@@ -569,6 +579,7 @@ def calibrate(
         depth.shape,
         overlay_path,
         semantic_observations,
+        semantic_exclusions,
     )
     measured_mjcf_path, exported_collision_surfaces = (
         _write_measured_support_mjcf(
@@ -722,6 +733,7 @@ table{{border-collapse:collapse;width:100%}}td,th{{padding:6px;border-bottom:1px
 <p><a href="mujoco_supports.html">実測MuJoCo形状だけを操作して見る</a></p>
 <p>紫枠はユーザー確認済みの培養液ボトル青シール領域です。
 ボトル本体は遮蔽中のため、3Dでは半透明円柱と高さ不確実性で表します。</p>
+<p>水色枠はユーザー確認済みの除外領域（右グリッパー爪）です。</p>
 <p class="warn">箱形プロキシは位置未承認なので初期非表示です。凡例タップでのみ表示します。</p>
 </div>
 <div class="card plot">{plot_html}</div>
@@ -770,6 +782,7 @@ table{{border-collapse:collapse;width:100%}}td,th{{padding:6px;border-bottom:1px
         "measured_scene_triangle_count": int(len(scene_faces)),
         "exported_collision_surfaces": exported_collision_surfaces,
         "semantic_observations": semantic_observations,
+        "semantic_exclusions": semantic_exclusions or {},
         "T_level_camera": np.block(
             [
                 [rotation, (-rotation @ origin_camera).reshape(3, 1)],
@@ -799,6 +812,7 @@ def main(argv=None):
         regions=config.get("regions"),
         anchors=config.get("anchors"),
         semantic_objects=config.get("semantic_objects"),
+        semantic_exclusions=config.get("semantic_exclusions"),
     )
     print(json.dumps(report["height_differences_m"], indent=2))
 

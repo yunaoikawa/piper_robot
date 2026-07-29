@@ -19,12 +19,13 @@
       "blue_label_roi": [0.47, 0.55, 0.56, 0.66],
       "proxy_size_m": [0.075, 0.075, 0.16],
       "occlusion": "mostly_hidden_between_platforms"
-    },
-    "culture_media_bottle_right": {
-      "type": "culture_media_bottle",
-      "blue_label_roi": [0.59, 0.64, 0.53, 0.61],
-      "proxy_size_m": [0.075, 0.075, 0.16],
-      "occlusion": "mostly_hidden_between_platforms"
+    }
+  },
+  "semantic_exclusions": {
+    "right_gripper_jaw": {
+      "roi": [0.59, 0.64, 0.53, 0.61],
+      "exclude_from": ["culture_media_bottle"],
+      "confirmed_by": "operator_image_review"
     }
   }
 }
