@@ -95,7 +95,15 @@ def _rotation(mujoco, quaternion):
     return matrix.reshape(3, 3)
 
 
-def render(model_path, output, *, right_q=None, left_q=None, keyframe=None):
+def render(
+    model_path,
+    output,
+    *,
+    right_q=None,
+    left_q=None,
+    keyframe=None,
+    camera_eye=None,
+):
     import mujoco
 
     model = mujoco.MjModel.from_xml_path(str(model_path))
@@ -191,7 +199,7 @@ def render(model_path, output, *, right_q=None, left_q=None, keyframe=None):
                 j=faces[:, 1],
                 k=faces[:, 2],
                 color=f"rgb({int(rgba[0]*255)},{int(rgba[1]*255)},{int(rgba[2]*255)})",
-                opacity=max(0.25, float(rgba[3])),
+                opacity=max(0.05, float(rgba[3])),
                 flatshading=False,
                 name=body_name,
                 hovertemplate=body_name + "<extra></extra>",
@@ -210,7 +218,13 @@ def render(model_path, output, *, right_q=None, left_q=None, keyframe=None):
             xaxis=dict(title="X", backgroundcolor="#ffffff", gridcolor="#cbd5e1"),
             yaxis=dict(title="Y", backgroundcolor="#ffffff", gridcolor="#cbd5e1"),
             zaxis=dict(title="Z", backgroundcolor="#ffffff", gridcolor="#cbd5e1"),
-            camera=dict(eye=dict(x=1.4, y=-1.6, z=1.0)),
+            camera=dict(
+                eye=dict(
+                    x=(camera_eye or (1.4, -1.6, 1.0))[0],
+                    y=(camera_eye or (1.4, -1.6, 1.0))[1],
+                    z=(camera_eye or (1.4, -1.6, 1.0))[2],
+                )
+            ),
         ),
     )
     Path(output).parent.mkdir(parents=True, exist_ok=True)
@@ -233,6 +247,13 @@ def main(argv=None):
     parser.add_argument("--right-q", nargs=6, type=float)
     parser.add_argument("--left-q", nargs=6, type=float)
     parser.add_argument("--keyframe")
+    parser.add_argument(
+        "--camera-eye",
+        nargs=3,
+        type=float,
+        metavar=("X", "Y", "Z"),
+        help="initial Plotly camera direction, e.g. -1.4 1.6 1.0",
+    )
     args = parser.parse_args(argv)
     render(
         args.model,
@@ -240,6 +261,7 @@ def main(argv=None):
         right_q=args.right_q,
         left_q=args.left_q,
         keyframe=args.keyframe,
+        camera_eye=args.camera_eye,
     )
     print(args.output)
 
