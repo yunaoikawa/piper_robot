@@ -102,6 +102,18 @@ def _mesh_trace(vertices, faces, name, color, opacity=1.0):
     )
 
 
+def _obj_bounds(path):
+    vertices = np.asarray(
+        [
+            [float(value) for value in line.split()[1:4]]
+            for line in Path(path).read_text().splitlines()
+            if line.startswith("v ")
+        ],
+        dtype=float,
+    )
+    return vertices.min(axis=0), vertices.max(axis=0)
+
+
 def complete(args):
     archive = np.load(args.mesh)
     vertices = np.asarray(archive["vertices_xyz_m"], float)
@@ -122,6 +134,26 @@ def complete(args):
     points = {
         name: vertices[value.reshape(-1) & valid] for name, value in masks.items()
     }
+    calibration = json.loads(Path(args.calibration_report).read_text())
+    camera = np.asarray(calibration["T_level_camera"], float)[:3, 3]
+    support_candidates = []
+    for path in args.platform_obj:
+        support_low, support_high = _obj_bounds(path)
+        support_candidates.append(
+            (
+                float(np.linalg.norm((support_low + support_high) / 2 - camera)),
+                path,
+                support_low,
+                support_high,
+            )
+        )
+    support_candidates.sort(key=lambda candidate: candidate[0])
+    (_, front_path, front_low, front_high), (
+        _,
+        rear_path,
+        rear_low,
+        rear_high,
+    ) = support_candidates
     traces, report = [], {"schema": "piper_robot.sam_object_completion/v1", "objects": {}}
 
     # Complete both arms with the repository Piper CAD and synchronized joints.
@@ -172,6 +204,8 @@ def complete(args):
 
     yaw, low, high = yaw_and_bounds(points["incubator"])
     center = (low + high) / 2
+    center[2] = float(rear_high[2] + 0.175)
+    incubator_center = center.copy()
     incubator_parts = [
         ("incubator_body", "box", np.array([0.14, 0.125, 0.175]), center, yaw),
         ("incubator_door", "box", np.array([0.132, 0.006, 0.17]),
@@ -207,8 +241,6 @@ def complete(args):
     }
 
     label = np.median(points["bottle"], axis=0)
-    calibration = json.loads(Path(args.calibration_report).read_text())
-    camera = np.asarray(calibration["T_level_camera"], float)[:3, 3]
     away = label[:2] - camera[:2]
     away /= np.linalg.norm(away)
     bottle_center = label.copy()
@@ -220,12 +252,83 @@ def complete(args):
         "center_level_m": bottle_center.tolist(),
     }
 
+    # The two disconnected, same-height support surfaces are the front dish
+    # platform and the rear incubator platform.  Depth from the RGB-D camera
+    # determines front/rear, avoiding an image-left/right assumption.
+    dish_xy = np.asarray(
+        calibration["anchor_xyz_level_m"]["petri_dish"], dtype=float
+    )[:2]
+    front_low[:2] = np.minimum(front_low[:2], dish_xy - 0.065)
+    front_high[:2] = np.maximum(front_high[:2], dish_xy + 0.065)
+    # Ensure the completed incubator footprint is fully supported.
+    rear_low[:2] = np.minimum(
+        rear_low[:2], incubator_center[:2] - np.array([0.16, 0.15])
+    )
+    rear_high[:2] = np.maximum(
+        rear_high[:2], incubator_center[:2] + np.array([0.16, 0.15])
+    )
+    platform_records = []
+    for name, path, low, high in (
+        ("front_dish_platform", front_path, front_low, front_high),
+        ("rear_incubator_platform", rear_path, rear_low, rear_high),
+    ):
+        top = float(high[2])
+        half_size = np.r_[(high[:2] - low[:2]) / 2, 0.025]
+        platform_center = np.r_[(high[:2] + low[:2]) / 2, top - 0.025]
+        v, f = _primitive("box", half_size, platform_center)
+        traces.append(_mesh_trace(v, f, name, "#343b46", 1.0))
+        platform_records.append(
+            {
+                "name": name,
+                "source_surface": str(Path(path).resolve()),
+                "center_level_m": platform_center.tolist(),
+                "size_xyz_m": (2 * half_size).tolist(),
+                "top_height_m": top,
+            }
+        )
+
+    front_top = platform_records[0]["top_height_m"]
+    dish_center = np.r_[dish_xy, front_top + 0.007]
+    lid_center = np.r_[dish_xy, front_top + 0.017]
+    for name, radius, half_height, object_center, color in (
+        ("petri_dish", 0.045, 0.007, dish_center, "#70b7e6"),
+        ("petri_lid", 0.047, 0.003, lid_center, "#4f9dd1"),
+    ):
+        v, f = _primitive(
+            "cylinder", np.array([radius, half_height]), object_center
+        )
+        traces.append(_mesh_trace(v, f, name, color, 0.58))
+    report["objects"]["platforms"] = platform_records
+    report["objects"]["petri_dish"] = {
+        "completion": "transparent_90mm_cylinder_on_front_platform",
+        "center_level_m": dish_center.tolist(),
+    }
+    report["objects"]["petri_lid"] = {
+        "completion": "transparent_94mm_lid_on_dish",
+        "center_level_m": lid_center.tolist(),
+    }
+
     # Keep measured surfaces as a translucent accuracy reference.
     for name, object_mask in masks.items():
         vertex_mask = object_mask.reshape(-1) & valid
         selected = faces[np.all(vertex_mask[faces], axis=1)]
         if len(selected):
             traces.append(_mesh_trace(vertices, selected, f"observed_{name}", "#243447", 0.16))
+    arm_positions = np.asarray(
+        [
+            report["objects"]["left_robot"]["translation_level_m"],
+            report["objects"]["right_robot"]["translation_level_m"],
+        ]
+    )
+    arm_midpoint = np.mean(arm_positions[:, :2], axis=0)
+    toward_wall = incubator_center[:2] - arm_midpoint
+    toward_wall /= np.linalg.norm(toward_wall)
+    eye_xy = -toward_wall * 1.65
+    report["initial_view"] = {
+        "description": "from_between_arms_straight_toward_opposite_wall",
+        "arm_midpoint_xy_level_m": arm_midpoint.tolist(),
+        "forward_xy": toward_wall.tolist(),
+    }
     figure = go.Figure(traces)
     figure.update_layout(
         title="SAM-guided completed 3D objects (dark = observed RGB-D)",
@@ -234,7 +337,13 @@ def complete(args):
         scene={
             "aspectmode": "data", "bgcolor": "#eef2f7",
             "xaxis": {"title": "X (m)"}, "yaxis": {"title": "Y (m)"}, "zaxis": {"title": "Z (m)"},
-            "camera": {"eye": {"x": 1.35, "y": -1.55, "z": 1.05}},
+            "camera": {
+                "eye": {
+                    "x": float(eye_xy[0]),
+                    "y": float(eye_xy[1]),
+                    "z": 0.82,
+                }
+            },
         },
     )
     output = Path(args.output_dir)
@@ -257,8 +366,16 @@ def main():
     parser.add_argument("--incubator-mask", required=True)
     parser.add_argument("--bottle-mask", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--platform-obj",
+        action="append",
+        required=True,
+        help="exactly two measured support OBJ files",
+    )
     parser.add_argument("--robot-model", default="robot/arm/mujoco/bimanual_piper_table.xml")
     args = parser.parse_args()
+    if len(args.platform_obj) != 2:
+        parser.error("--platform-obj must be supplied exactly twice")
     print(json.dumps(complete(args), indent=2))
 
 
