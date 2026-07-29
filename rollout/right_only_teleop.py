@@ -14,6 +14,7 @@ from enum import Enum
 import mink
 import numpy as np
 
+from rollout.autonomous_mpc import AbsoluteCartesianTargetSender
 from rollout.safety import SafetyLayer
 
 
@@ -43,6 +44,7 @@ class RightOnlyTeleop:
         self._engage_armed = False
         self._controller_anchor = None
         self._ee_anchor = None
+        self._target_sender = AbsoluteCartesianTargetSender(self.rpc)
         self._H = mink.SE3.from_rotation(
             mink.SO3.from_matrix(
                 np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]], dtype=float)
@@ -97,9 +99,8 @@ class RightOnlyTeleop:
             return RightTeleopEvent.REJECTED
 
         gripper = 1.0 if controller_state.right_index_trigger < 0.5 else 0.0
-        self.rpc.set_right_ee_target(
-            ee_target=mink.SE3(np.concatenate([rotation.wxyz, position])),
+        self._target_sender.send(
+            mink.SE3(np.concatenate([rotation.wxyz, position])),
             gripper_target=gripper,
-            preview_time=0.05,
         )
         return RightTeleopEvent.ENGAGED if just_engaged else RightTeleopEvent.COMMANDED

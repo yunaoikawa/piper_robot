@@ -3,7 +3,7 @@
 Run: python robot/camera_id.py
 """
 
-import json, time, threading
+import json, os, time, threading
 from pathlib import Path
 import numpy as np
 import cv2
@@ -80,6 +80,62 @@ def load_camera_map():
         return json.loads(CAM_MAP_FILE.read_text())
     print(f"[WARN] No camera map. Run: python robot/camera_id.py")
     return {"head": 0, "right": 1, "left": 2}
+
+
+def connected_camera_udids():
+    """Return the live Record3D index->UDID mapping without opening streams."""
+
+    devices = Record3DStream.get_connected_devices()
+    return {
+        index: str(getattr(device, "udid", ""))
+        for index, device in enumerate(devices)
+    }
+
+
+def configure_camera_map_by_udid(expected_udids, *, preserve_unknown=True):
+    """Atomically configure named cameras from immutable Record3D UDIDs.
+
+    Enumeration order is not stable after reconnects.  Autonomous runs call
+    this before opening a stream, so an index reorder cannot silently swap the
+    head and wrist views.
+    """
+
+    live = connected_camera_udids()
+    reverse = {udid: index for index, udid in live.items() if udid}
+    missing = {
+        name: udid
+        for name, udid in expected_udids.items()
+        if str(udid) not in reverse
+    }
+    if missing:
+        raise RuntimeError(
+            f"expected Record3D camera UDIDs are not connected: {missing}; "
+            f"connected={live}"
+        )
+    mapping = load_camera_map() if preserve_unknown else {}
+    mapping.update(
+        {name: reverse[str(udid)] for name, udid in expected_udids.items()}
+    )
+    temporary = CAM_MAP_FILE.with_name(
+        f".{CAM_MAP_FILE.name}.{os.getpid()}.{time.monotonic_ns()}.tmp"
+    )
+    encoded = (json.dumps(mapping, indent=2) + "\n").encode()
+    descriptor = os.open(
+        temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, CAM_MAP_FILE)
+    except BaseException:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    return mapping, live
 
 
 if __name__ == "__main__":

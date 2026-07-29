@@ -1,0 +1,38 @@
+{
+  "schema": "piper_robot.autonomous_sam_lid_grasp_config/v1",
+  "camera_udids": {
+    "head": "00008101-0015486E1412001E",
+    "right": "00008030-00121D820EE0802E",
+    "left": "00008030-001D39EA2646802E"
+  },
+  "scene_config": "src/configs/pasteur_lid_scene3d.json",
+  "task_config": "src/configs/pasteur_lid_sam_task.json",
+  "torque_config": "src/configs/pasteur_lid_torque.json",
+  "calibration": "src/configs/pasteur_head_robot_calibration.json",
+  "esdf_npz": null,
+  "mujoco_model": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",
+  "sam_endpoint": "tcp://127.0.0.1:15563",
+  "planner": {
+    "lift_m": 0.04,
+    "pregrasp_height_m": 0.015,
+    "final_height_m": 0.003,
+    "minimum_clearance_m": 0.015,
+    "ee_collision_radius_m": 0.025
+  },
+  "replan": {
+    "chunk_s": 0.5,
+    "maximum_replans": 5,
+    "maximum_observation_age_s": 1.0,
+    "maximum_target_shift_m": 0.01,
+    "maximum_position_error_m": 0.005,
+    "maximum_rotation_error_deg": 3.0
+  },
+  "grasp": {
+    "right_goal_px": [189.7, 296.8],
+    "right_tolerance_px": 8.0,
+    "maximum_gripper_lid_m": 0.01,
+    "empty_close_ratio": 0.01,
+    "verification_lift_m": 0.01,
+    "minimum_lid_follow_m": 0.005
+  }
+}
