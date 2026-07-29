@@ -41,6 +41,7 @@ from rollout.autonomous_mpc import (
     plan_to_dict,
     validate_calibration,
 )
+from rollout.grasp_contact_verification import assess_stable_closure
 from rollout.sam_segmentation import detect_blue_cross_center
 from rollout.scene_semantics import LABEL_BACKGROUND, LABEL_LID, LABEL_ROBOT
 from rollout.scene_volume import automatic_grid, integrate_projective_depth
@@ -88,6 +89,7 @@ def _runner_args(config, output_dir):
         mode_settle_s=0.5,
         hold_settle_s=0.25,
         right_can_interface="can_right",
+        depth_frames=15,
     )
 
 
@@ -433,10 +435,38 @@ def run_live(config, args, state, calibration):
 
         before_target = np.asarray(reference.target_xyz_m)
         runner.rpc.close_right_gripper()
-        time.sleep(0.6)
-        ratio = float(runner.rpc.get_right_gripper_exact())
-        if ratio <= float(grasp["empty_close_ratio"]):
-            raise AutonomousStop("gripper fully closed; lid was not captured")
+        closure_samples = []
+        closure = None
+        closure_deadline = time.monotonic() + 6.0
+        while time.monotonic() < closure_deadline:
+            time.sleep(0.2)
+            closure_samples.append(
+                float(runner.rpc.get_right_gripper_exact())
+            )
+            if len(closure_samples) < 5:
+                continue
+            closure = assess_stable_closure(
+                closure_samples,
+                empty_close_ratio=float(grasp["empty_close_ratio"]),
+            )
+            if not closure.still_closing:
+                break
+        if closure is None or closure.still_closing:
+            raise AutonomousStop(
+                "gripper closure did not reach a stable aperture"
+            )
+        ratio = closure.final_open_ratio
+        state.event(
+            "stable_closure",
+            captured=closure.captured,
+            final_open_ratio=ratio,
+            stable_range=closure.stable_range,
+            samples=closure_samples,
+        )
+        if not closure.captured:
+            raise AutonomousStop(
+                "gripper stably closed empty; lid was not captured"
+            )
         lift_finish = Pose(
             reference.ee_pose.wxyz,
             (
@@ -503,11 +533,14 @@ def main(argv=None):
     parser.add_argument("--state", help="defaults to OUTPUT_DIR/run_state.json")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--offline-scene")
+    parser.add_argument("--sam-endpoint")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--reset-calibration", action="store_true")
     args = parser.parse_args(argv)
 
     config = _json(args.config)
+    if args.sam_endpoint:
+        config["sam_endpoint"] = args.sam_endpoint
     calibration_path = config["calibration"]
     if args.reset_calibration:
         _reset_calibration(calibration_path)
