@@ -170,6 +170,7 @@ class ArmNode:
         _HERE = Path(__file__).parent
         self.can_port = can_port
         self.is_left_arm = is_left_arm
+        self._last_ik_warning_time = 0.0
 
         if urdf_path is None:
             if is_left_arm:
@@ -262,9 +263,6 @@ class ArmNode:
         current_q = np.asarray(self.get_joint_positions(), dtype=float)
         self.ik_solver.update_configuration(current_q)
         qd, is_solved = self.ik_solver.solve_ik(ee_target, max_iter=30)
-        if not is_solved:
-            print("[IK] target not solved; holding measured joints", flush=True)
-            return False
         continuous, delta = joint_target_is_continuous(current_q, qd)
         if not continuous:
             print(
@@ -273,6 +271,20 @@ class ArmNode:
                 flush=True,
             )
             return False
+        # Interactive teleoperation historically streamed the continuous
+        # best-effort iterate even when Mink had not yet reached its strict
+        # 1 mm / 0.001 rad convergence threshold.  Rejecting every such
+        # iterate made a healthy arm appear disconnected: the controller
+        # received no joint command at all.  Preserve the established teleop
+        # behavior while retaining the branch-jump rejection above.
+        now = time.monotonic()
+        if not is_solved and now - self._last_ik_warning_time >= 1.0:
+            print(
+                "[IK] target not fully converged; streaming continuous "
+                "best-effort target",
+                flush=True,
+            )
+            self._last_ik_warning_time = now
         cmd = JointState(self.robot_config.joint_dof)
         cmd.pos = qd
         cmd.timestamp = self.piper.get_timestamp() + preview_time
