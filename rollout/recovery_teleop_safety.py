@@ -11,11 +11,60 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
 
 from rollout.torque_safety import TorqueWatchdog
+
+
+def extend_fallback_threshold_for_stationary_pose(
+    rpc: Any,
+    thresholds: dict[str, np.ndarray],
+    *,
+    arm: str,
+    sample_count: int = 25,
+    sample_interval_s: float = 0.01,
+    margin: float = 1.20,
+) -> dict[str, Any]:
+    """Extend a mirrored fallback envelope to cover the current static pose.
+
+    Absolute Piper torque contains a pose-dependent gravity/load component.
+    A threshold copied from the other arm can therefore reject a harmless
+    static pose.  This adjustment is only for an explicitly selected fallback;
+    dedicated per-arm calibration must be used unchanged.
+    """
+
+    if arm not in thresholds:
+        raise ValueError(f"unknown arm {arm!r}")
+    if sample_count < 5 or not 1.0 < margin <= 1.5:
+        raise ValueError("invalid stationary fallback calibration settings")
+    samples = []
+    for index in range(sample_count):
+        torque = np.asarray(
+            getattr(rpc, f"get_{arm}_joint_torque")(),
+            dtype=float,
+        )
+        if torque.shape != (6,) or not np.all(np.isfinite(torque)):
+            raise ValueError(f"invalid stationary {arm} torque sample")
+        samples.append(np.abs(torque))
+        if index + 1 < sample_count and sample_interval_s > 0.0:
+            time.sleep(sample_interval_s)
+    observed = np.max(np.stack(samples), axis=0)
+    original = np.asarray(thresholds[arm], dtype=float).copy()
+    adjusted = np.maximum(original, observed * margin)
+    thresholds[arm] = adjusted
+    return {
+        "arm": arm,
+        "sample_count": sample_count,
+        "sample_interval_s": sample_interval_s,
+        "margin": margin,
+        "observed_max_abs_nm": observed.tolist(),
+        "original_threshold_nm": original.tolist(),
+        "adjusted_threshold_nm": adjusted.tolist(),
+        "changed_joints": np.flatnonzero(adjusted > original).astype(int).tolist(),
+    }
 
 
 class RecoveryTorqueGuard:

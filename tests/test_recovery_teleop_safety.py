@@ -7,7 +7,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from rollout.recovery_teleop_safety import RecoveryTorqueGuard
+from rollout.recovery_teleop_safety import (
+    RecoveryTorqueGuard,
+    extend_fallback_threshold_for_stationary_pose,
+)
 
 
 class FakeRPC:
@@ -48,6 +51,29 @@ def guard(rpc, **kwargs):
 
 
 class RecoveryTorqueGuardTest(unittest.TestCase):
+    def test_stationary_extension_only_raises_needed_joints(self):
+        rpc = FakeRPC()
+        rpc.torque["left"] = np.array([0.2, 0.4, 0.6, 0.8, 1.0, 0.1])
+        thresholds = {
+            "left": np.array([0.3, 0.5, 0.7, 0.7, 1.5, 0.2]),
+            "right": np.ones(6),
+        }
+
+        record = extend_fallback_threshold_for_stationary_pose(
+            rpc,
+            thresholds,
+            arm="left",
+            sample_count=5,
+            sample_interval_s=0.0,
+            margin=1.2,
+        )
+
+        np.testing.assert_allclose(
+            thresholds["left"],
+            [0.3, 0.5, 0.72, 0.96, 1.5, 0.2],
+        )
+        self.assertEqual(record["changed_joints"], [2, 3])
+
     def test_sustained_excess_latches_only_affected_arm_and_holds(self):
         rpc = FakeRPC()
         value = guard(rpc)

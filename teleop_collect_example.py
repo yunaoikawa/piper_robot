@@ -49,7 +49,10 @@ from robot.teleop.oculus_msgs import parse_controller_state
 from robot.camera_id import load_camera_map
 from rollout.calibration_keyboard_jog import load_torque_thresholds
 from rollout.head_stream import HeadCameraStreamServer
-from rollout.recovery_teleop_safety import RecoveryTorqueGuard
+from rollout.recovery_teleop_safety import (
+    RecoveryTorqueGuard,
+    extend_fallback_threshold_for_stationary_pose,
+)
 from rollout.safety import SafetyLayer
 
 VR_TCP_HOST = "192.168.1.48"
@@ -222,6 +225,25 @@ class MinimalTeleopCollector:
                     args.allow_symmetric_left_torque_fallback
                 ),
             )
+            fallback = torque_provenance.get("fallback")
+            if fallback is not None:
+                with self.robot_rpc_lock:
+                    stationary_extension = (
+                        extend_fallback_threshold_for_stationary_pose(
+                            self.robot,
+                            thresholds,
+                            arm=fallback["arm"],
+                        )
+                    )
+                torque_provenance["stationary_fallback_extension"] = (
+                    stationary_extension
+                )
+                print(
+                    "[RECOVERY] Audited stationary-pose extension for "
+                    f"{fallback['arm']} fallback torque envelope; changed joints="
+                    f"{stationary_extension['changed_joints']}",
+                    flush=True,
+                )
             self.recovery_torque_guard = RecoveryTorqueGuard(
                 self.robot,
                 thresholds,
