@@ -436,9 +436,11 @@ is inert if unused.
 
 ## TODO (in priority order)
 
-1. **Characterize torque before using it as a stop** — collect multiple poses
-   and speeds with `--calibrate-torque`. Do not enable one absolute envelope as
-   a general collision reaction.
+1. **Characterize torque before using it as a stop** — recovery teleop now
+   compares measured torque with a slew-limited pose baseline and requires a
+   sustained residual; a multiplied absolute envelope remains the hard stop.
+   Continue collecting multiple poses and speeds with `--calibrate-torque`,
+   especially for a dedicated left-arm envelope.
 2. **Confirm the marker/edge profile** — checkpoint inspection uses the blue
    fiducial to register a narrow ROI, enlarges it 4×, and overlays the expected
    and detected transparent-lid edges for operator confirmation.

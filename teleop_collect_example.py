@@ -250,6 +250,7 @@ class MinimalTeleopCollector:
                 consecutive_samples=torque_provenance["consecutive_samples"],
                 audit_path=args.recovery_audit_log,
                 provenance=torque_provenance,
+                **torque_provenance["recovery_teleop"],
             )
             print(
                 "[RECOVERY] Torque watchdog active; "

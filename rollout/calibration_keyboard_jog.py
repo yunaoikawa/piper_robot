@@ -101,6 +101,7 @@ def load_torque_thresholds(
         "method": payload.get("method"),
         "consecutive_samples": int(payload.get("consecutive_samples", 5)),
         "fallback": fallback,
+        "recovery_teleop": dict(payload.get("recovery_teleop") or {}),
     }
     if provenance["consecutive_samples"] < 1:
         raise ValueError("consecutive_samples must be positive")

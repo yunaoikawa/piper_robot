@@ -12,12 +12,9 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
-
-from rollout.torque_safety import TorqueWatchdog
-
 
 def extend_fallback_threshold_for_stationary_pose(
     rpc: Any,
@@ -77,8 +74,15 @@ class RecoveryTorqueGuard:
         *,
         consecutive_samples: int = 5,
         preview_time_s: float = 0.05,
+        residual_fraction: float = 0.30,
+        residual_floor_nm: float = 0.10,
+        residual_ceiling_nm: float = 0.30,
+        residual_duration_s: float = 0.35,
+        baseline_slew_nm_per_s: float = 0.50,
+        hard_limit_multiplier: float = 2.0,
         audit_path: str | Path | None = None,
         provenance: dict[str, Any] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.rpc = rpc
         self.thresholds = {
@@ -96,12 +100,38 @@ class RecoveryTorqueGuard:
             raise ValueError("torque thresholds must be finite positive shape-(6,) arrays")
         self.consecutive_samples = int(consecutive_samples)
         self.preview_time_s = float(preview_time_s)
-        if self.consecutive_samples < 1 or not 0.0 < self.preview_time_s <= 0.25:
+        self.residual_fraction = float(residual_fraction)
+        self.residual_floor_nm = float(residual_floor_nm)
+        self.residual_ceiling_nm = float(residual_ceiling_nm)
+        self.residual_duration_s = float(residual_duration_s)
+        self.baseline_slew_nm_per_s = float(baseline_slew_nm_per_s)
+        self.hard_limit_multiplier = float(hard_limit_multiplier)
+        self.clock = clock
+        if (
+            self.consecutive_samples < 1
+            or not 0.0 < self.preview_time_s <= 0.25
+            or not 0.0 < self.residual_fraction <= 1.0
+            or not 0.0 < self.residual_floor_nm <= self.residual_ceiling_nm
+            or not 0.05 <= self.residual_duration_s <= 2.0
+            or not 0.0 < self.baseline_slew_nm_per_s <= 2.0
+            or not 1.0 < self.hard_limit_multiplier <= 5.0
+        ):
             raise ValueError("invalid recovery torque guard configuration")
+        self.residual_limits = {
+            arm: np.clip(
+                values * self.residual_fraction,
+                self.residual_floor_nm,
+                self.residual_ceiling_nm,
+            )
+            for arm, values in self.thresholds.items()
+        }
         self.audit_path = Path(audit_path).resolve() if audit_path else None
         self.provenance = dict(provenance or {})
         self.latched: dict[str, dict[str, Any]] = {}
-        self._watchdogs: dict[str, TorqueWatchdog] = {}
+        self._baseline: dict[str, np.ndarray] = {}
+        self._last_check_s: dict[str, float] = {}
+        self._residual_started_s: dict[str, np.ndarray] = {}
+        self._hard_counts: dict[str, np.ndarray] = {}
         for arm in ("left", "right"):
             self.reset(arm)
         self._audit(
@@ -112,6 +142,13 @@ class RecoveryTorqueGuard:
                     for arm, values in self.thresholds.items()
                 },
                 "consecutive_samples": self.consecutive_samples,
+                "residual_limits_nm": {
+                    arm: values.tolist()
+                    for arm, values in self.residual_limits.items()
+                },
+                "residual_duration_s": self.residual_duration_s,
+                "baseline_slew_nm_per_s": self.baseline_slew_nm_per_s,
+                "hard_limit_multiplier": self.hard_limit_multiplier,
                 "provenance": self.provenance,
             }
         )
@@ -123,10 +160,17 @@ class RecoveryTorqueGuard:
             raise ValueError(f"unknown arm {arm!r}")
         if arm in self.latched:
             return
-        self._watchdogs[arm] = TorqueWatchdog(
-            {arm: self.thresholds[arm]},
-            consecutive_limit=self.consecutive_samples,
+        torque = np.asarray(
+            getattr(self.rpc, f"get_{arm}_joint_torque")(),
+            dtype=float,
         )
+        if torque.shape != (6,) or not np.all(np.isfinite(torque)):
+            self._baseline.pop(arm, None)
+        else:
+            self._baseline[arm] = torque.copy()
+        self._last_check_s[arm] = self.clock()
+        self._residual_started_s[arm] = np.full(6, np.nan)
+        self._hard_counts[arm] = np.zeros(6, dtype=int)
 
     def check(self, arm: str) -> bool:
         """Return True when safe; otherwise latch a measured joint hold."""
@@ -134,12 +178,75 @@ class RecoveryTorqueGuard:
         if arm in self.latched:
             return False
         try:
+            now = self.clock()
             torque = np.asarray(
                 getattr(self.rpc, f"get_{arm}_joint_torque")(),
                 dtype=float,
             )
-            safe = self._watchdogs[arm].check(arm, torque)
-            trip = self._watchdogs[arm].tripped
+            if torque.shape != (6,) or not np.all(np.isfinite(torque)):
+                raise ValueError("invalid torque sample")
+            baseline = self._baseline.get(arm)
+            if baseline is None:
+                raise ValueError("invalid engagement torque baseline")
+            dt = float(np.clip(now - self._last_check_s[arm], 0.0, 0.2))
+            self._last_check_s[arm] = now
+            maximum_baseline_step = self.baseline_slew_nm_per_s * dt
+            baseline += np.clip(
+                torque - baseline,
+                -maximum_baseline_step,
+                maximum_baseline_step,
+            )
+            residual = np.abs(torque - baseline)
+            residual_over = residual > self.residual_limits[arm]
+            started = self._residual_started_s[arm]
+            started = np.where(
+                residual_over & np.isnan(started),
+                now,
+                np.where(residual_over, started, np.nan),
+            )
+            self._residual_started_s[arm] = started
+            residual_hit = np.flatnonzero(
+                residual_over & ((now - started) >= self.residual_duration_s)
+            )
+
+            hard_limits = self.thresholds[arm] * self.hard_limit_multiplier
+            hard_over = np.abs(torque) > hard_limits
+            hard_counts = np.where(
+                hard_over,
+                self._hard_counts[arm] + 1,
+                0,
+            )
+            self._hard_counts[arm] = hard_counts
+            hard_hit = np.flatnonzero(
+                hard_counts >= self.consecutive_samples
+            )
+
+            trip = None
+            if hard_hit.size:
+                joint = int(hard_hit[0])
+                trip = {
+                    "arm": arm,
+                    "reason": "hard_absolute_torque",
+                    "joint": joint,
+                    "torque": float(abs(torque[joint])),
+                    "threshold": float(hard_limits[joint]),
+                    "consecutive_samples": int(hard_counts[joint]),
+                    "baseline_nm": baseline.tolist(),
+                    "residual_nm": residual.tolist(),
+                }
+            elif residual_hit.size:
+                joint = int(residual_hit[0])
+                trip = {
+                    "arm": arm,
+                    "reason": "sustained_torque_residual",
+                    "joint": joint,
+                    "torque": float(abs(torque[joint])),
+                    "threshold": float(self.residual_limits[arm][joint]),
+                    "residual_duration_s": float(now - started[joint]),
+                    "baseline_nm": baseline.tolist(),
+                    "residual_nm": residual.tolist(),
+                }
+            safe = trip is None
         except Exception as exc:
             torque = np.asarray([], dtype=float)
             safe = False

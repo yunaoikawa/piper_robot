@@ -2,6 +2,14 @@
   "version": 1,
   "method": "non-contact replay plus active-view envelope, 20% margin",
   "consecutive_samples": 5,
+  "recovery_teleop": {
+    "residual_fraction": 0.3,
+    "residual_floor_nm": 0.1,
+    "residual_ceiling_nm": 0.3,
+    "residual_duration_s": 0.35,
+    "baseline_slew_nm_per_s": 0.5,
+    "hard_limit_multiplier": 2.0
+  },
   "thresholds": {
     "right": [
       0.30050999645143744,

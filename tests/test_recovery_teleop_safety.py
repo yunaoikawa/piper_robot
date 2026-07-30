@@ -38,6 +38,17 @@ class FakeRPC:
         raise AttributeError(name)
 
 
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
 def guard(rpc, **kwargs):
     return RecoveryTorqueGuard(
         rpc,
@@ -76,9 +87,19 @@ class RecoveryTorqueGuardTest(unittest.TestCase):
 
     def test_sustained_excess_latches_only_affected_arm_and_holds(self):
         rpc = FakeRPC()
-        value = guard(rpc)
-        rpc.torque["left"][2] = 1.2
+        clock = FakeClock()
+        value = guard(
+            rpc,
+            clock=clock,
+            residual_duration_s=0.1,
+            baseline_slew_nm_per_s=0.1,
+        )
+        rpc.torque["left"][2] = 0.6
+        clock.advance(0.05)
         self.assertTrue(value.check("left"))
+        clock.advance(0.05)
+        self.assertTrue(value.check("left"))
+        clock.advance(0.05)
         self.assertFalse(value.check("left"))
         self.assertIn("left", value.latched)
         self.assertNotIn("right", value.latched)
@@ -89,13 +110,27 @@ class RecoveryTorqueGuardTest(unittest.TestCase):
     def test_engagement_reset_clears_strikes_but_not_a_latched_stop(self):
         rpc = FakeRPC()
         value = guard(rpc)
-        rpc.torque["right"][:] = 2.0
+        rpc.torque["right"][:] = 2.1
         self.assertTrue(value.check("right"))
         value.reset("right")
         self.assertTrue(value.check("right"))
         self.assertFalse(value.check("right"))
         value.reset("right")
         self.assertFalse(value.check("right"))
+
+    def test_gradual_pose_dependent_load_is_tracked(self):
+        rpc = FakeRPC()
+        clock = FakeClock()
+        value = guard(
+            rpc,
+            clock=clock,
+            residual_duration_s=0.1,
+            baseline_slew_nm_per_s=0.5,
+        )
+        for sample in range(1, 91):
+            clock.advance(1.0 / 30.0)
+            rpc.torque["left"][3] = sample / 90.0
+            self.assertTrue(value.check("left"))
 
     def test_invalid_torque_fails_closed_and_writes_audit(self):
         rpc = FakeRPC()
