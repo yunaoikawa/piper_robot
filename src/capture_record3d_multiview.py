@@ -194,6 +194,8 @@ def main() -> int:
         "capture_mode": "manual_camera_reposition_only",
         "commands_sent": False,
         "repository": git_provenance(),
+        "completed_view_names": [],
+        "views": [],
     }
     write_json(partial_manifest, manifest)
 
@@ -298,6 +300,20 @@ def main() -> int:
             raise RuntimeError(errors[-1])
         view_record = _write_view(session_dir, name, captured)
         saved_views.append(view_record)
+        # Checkpoint every completed burst.  A phone/USB disconnect during a
+        # later view must not make already written RGB-D data undiscoverable.
+        manifest.update(
+            {
+                "status": "collecting",
+                "last_checkpoint_at_utc": utc_iso(),
+                "completed_view_names": [
+                    item["name"] for item in saved_views
+                ],
+                "views": saved_views,
+                "errors": list(errors),
+            }
+        )
+        write_json(partial_manifest, manifest)
         stability = view_record["pose_stability"]
         print(
             f"{name}: 保存完了 "
