@@ -16,7 +16,7 @@ from src.build_multiview_semantic_scene import (
     transform_points,
     voxel_components,
 )
-from src.calibrate_head_robot_from_cad import fit_transform
+from src.calibrate_head_robot_from_cad import _qpos_diversity, fit_transform
 from src.capture_record3d_multiview import _robot_state_stability
 
 
@@ -181,6 +181,29 @@ def test_cad_fit_recovers_synthetic_camera_to_robot_transform():
         fitted[:3, :3] @ truth[:3, :3].T
     ).magnitude()
     assert np.degrees(rotation_error) < 0.3
+
+
+def test_calibration_pose_diversity_requires_both_arms_and_holdout():
+    poses = np.zeros((5, 12))
+    poses[1, 0:2] = [0.03, -0.04]
+    poses[2, 6:8] = [-0.04, 0.03]
+    poses[3, [0, 2, 6, 8]] = [0.05, 0.04, -0.05, 0.04]
+    poses[4, [1, 2, 7, 8]] = [-0.04, 0.05, 0.04, -0.05]
+    accepted = _qpos_diversity(
+        poses.tolist(),
+        minimum_joint_range_rad=0.02,
+        minimum_moving_joints_per_arm=2,
+        minimum_holdout_distance_rad=0.03,
+    )
+    assert accepted["accepted"]
+    poses[:, 6:] = 0.0
+    rejected = _qpos_diversity(
+        poses.tolist(),
+        minimum_joint_range_rad=0.02,
+        minimum_moving_joints_per_arm=2,
+        minimum_holdout_distance_rad=0.03,
+    )
+    assert not rejected["accepted"]
 
 
 def test_semantic_volume_fit_rejects_free_space_and_recovers_box_pose():

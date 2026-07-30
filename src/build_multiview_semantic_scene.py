@@ -31,6 +31,7 @@ from rollout.semantic_scene_pipeline import (
 
 SCHEMA = "piper_robot.multiview_completed_scene/v1"
 CALIBRATION_SCHEMA = "piper_robot.camera_robot_calibration/v1"
+SCENE_REGISTRATION_SCHEMA = "piper_robot.robot_scene_registration/v1"
 
 
 def transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
@@ -665,6 +666,43 @@ def _validated_calibration(path: str | None) -> dict | None:
     return payload
 
 
+def _validated_scene_registration(
+    path: str | None,
+    *,
+    multiview_report_path: Path,
+) -> dict | None:
+    if not path:
+        return None
+    payload = json.loads(Path(path).read_text())
+    if payload.get("schema") != SCENE_REGISTRATION_SCHEMA:
+        raise ValueError("unsupported robot-scene registration schema")
+    if payload.get("accepted") is not True:
+        return None
+    source = payload.get("sources", {}).get("multiview_report", {})
+    if source.get("sha256") != sha256_file(multiview_report_path):
+        raise ValueError(
+            "robot-scene registration belongs to a different multiview report"
+        )
+    transform = np.asarray(payload.get("T_robot_level"), dtype=float)
+    if transform.shape != (4, 4) or not np.all(np.isfinite(transform)):
+        raise ValueError("accepted registration lacks finite T_robot_level")
+    if not np.allclose(transform[3], [0.0, 0.0, 0.0, 1.0], atol=1e-7):
+        raise ValueError("T_robot_level has an invalid homogeneous row")
+    rotation = transform[:3, :3]
+    if (
+        not np.allclose(rotation.T @ rotation, np.eye(3), atol=2e-3)
+        or np.linalg.det(rotation) < 0.999
+    ):
+        raise ValueError("T_robot_level rotation is invalid")
+    qpos = np.asarray(
+        payload.get("robot_state", {}).get("representative_qpos_rad"),
+        dtype=float,
+    )
+    if qpos.shape != (12,) or not np.all(np.isfinite(qpos)):
+        raise ValueError("robot-scene registration lacks synchronized 12-joint qpos")
+    return payload
+
+
 def _qpos_from_report(report: dict) -> tuple[list[float] | None, str | None]:
     per_view = report.get("robot_state", {}).get("per_view", {})
     qposes = []
@@ -769,10 +807,46 @@ def build(args) -> dict:
     calibration = _validated_calibration(
         getattr(args, "calibration_report", None)
     )
+    scene_registration = _validated_scene_registration(
+        getattr(args, "scene_registration_report", None),
+        multiview_report_path=report_path,
+    )
+    if calibration is not None and scene_registration is not None:
+        raise ValueError(
+            "use either camera calibration or robot-scene registration, not both"
+        )
+    calibration_source = (
+        str(Path(args.scene_registration_report).resolve())
+        if scene_registration is not None
+        else (
+            str(Path(args.calibration_report).resolve())
+            if calibration is not None
+            else None
+        )
+    )
+    if scene_registration is not None:
+        # Downstream gates need a single accepted spatial-authority sentinel.
+        # The direct robot<-level transform is authoritative here; no camera
+        # composition is repeated in this builder.
+        calibration = {
+            "calibration_id": scene_registration["registration_id"],
+            "authority": "validated_fixed_head_to_multiview_registration",
+        }
     frame = "gravity_levelled_first_record3d_camera"
     transform_report = None
     robot_from_level = None
-    if calibration is not None:
+    if scene_registration is not None:
+        robot_from_level = np.asarray(
+            scene_registration["T_robot_level"], dtype=float
+        )
+        vertices = transform_points(vertices, robot_from_level)
+        frame = "bimanual_piper_robot_base"
+        transform_report = {
+            "T_robot_level": robot_from_level.tolist(),
+            "scene_registration": calibration_source,
+            "method": "fixed_head_metric_features_plus_static_scene_refinement",
+        }
+    elif calibration is not None:
         level_from_camera = np.asarray(
             report.get("coordinate_frame", {}).get("T_level_first_camera"),
             dtype=float,
@@ -789,7 +863,7 @@ def build(args) -> dict:
         frame = "bimanual_piper_robot_base"
         transform_report = {
             "T_robot_level": robot_from_level.tolist(),
-            "calibration": str(Path(args.calibration_report).resolve()),
+            "calibration": calibration_source,
         }
 
     label_ids = {
@@ -966,8 +1040,12 @@ def build(args) -> dict:
         robot_placement = {
             "required": True,
             "accepted": True,
-            "method": "accepted_camera_to_robot_extrinsic",
-            "calibration": str(Path(args.calibration_report).resolve()),
+            "method": (
+                "accepted_robot_scene_registration"
+                if scene_registration is not None
+                else "accepted_camera_to_robot_extrinsic"
+            ),
+            "calibration": calibration_source,
         }
     pinned = _pin_nyu_grippers(
         source_robot,
@@ -1052,6 +1130,17 @@ def build(args) -> dict:
     runtime_profile["observed_surface_objects"] = list(observed_surface_objects)
 
     qpos, qpos_view = _qpos_from_report(report)
+    if qpos is None and scene_registration is not None:
+        qpos = [
+            float(item)
+            for item in scene_registration["robot_state"][
+                "representative_qpos_rad"
+            ]
+        ]
+        qpos_view = (
+            "fixed_head:"
+            + str(scene_registration["robot_state"].get("source_view", "unknown"))
+        )
     expected_calibration_id = str(
         calibration.get("calibration_id")
         if calibration
@@ -1253,6 +1342,16 @@ code{{overflow-wrap:anywhere}}</style><h1>元の保守的ESDF</h1>
             },
             "mesh": {"path": str(mesh_path), "sha256": sha256_file(mesh_path)},
             "profile": str(Path(args.profile).resolve()),
+            "calibration_report": (
+                str(Path(args.calibration_report).resolve())
+                if getattr(args, "calibration_report", None)
+                else None
+            ),
+            "scene_registration_report": (
+                str(Path(args.scene_registration_report).resolve())
+                if getattr(args, "scene_registration_report", None)
+                else None
+            ),
         },
         "frame": frame,
         "frame_transform": transform_report,

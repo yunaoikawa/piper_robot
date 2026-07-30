@@ -14,6 +14,7 @@ import argparse
 import json
 from pathlib import Path
 import tempfile
+import time
 
 import cv2
 import numpy as np
@@ -55,6 +56,54 @@ def _qpos(view: dict) -> list[float]:
             f"{view.get('name')}: stable synchronized 12-joint qpos is missing"
         )
     return [float(item) for item in qpos]
+
+
+def _qpos_diversity(
+    qposes: list[list[float]],
+    *,
+    minimum_joint_range_rad: float,
+    minimum_moving_joints_per_arm: int,
+    minimum_holdout_distance_rad: float,
+) -> dict:
+    values = np.asarray(qposes, dtype=float)
+    if values.ndim != 2 or values.shape[1] != 12 or len(values) < 3:
+        raise ValueError("qpos diversity requires three or more 12-joint poses")
+    train = values[:-1]
+    holdout = values[-1]
+    per_arm = {}
+    accepted = True
+    for arm, joint_slice in (
+        ("left", slice(0, 6)),
+        ("right", slice(6, 12)),
+    ):
+        ranges = np.ptp(train[:, joint_slice], axis=0)
+        moving = int(np.count_nonzero(ranges >= minimum_joint_range_rad))
+        holdout_distance = float(
+            np.min(
+                np.linalg.norm(
+                    train[:, joint_slice] - holdout[joint_slice],
+                    axis=1,
+                )
+            )
+        )
+        arm_accepted = bool(
+            moving >= minimum_moving_joints_per_arm
+            and holdout_distance >= minimum_holdout_distance_rad
+        )
+        accepted &= arm_accepted
+        per_arm[arm] = {
+            "accepted": arm_accepted,
+            "train_joint_range_rad": ranges.tolist(),
+            "moving_joint_count": moving,
+            "holdout_nearest_train_distance_rad": holdout_distance,
+        }
+    return {
+        "accepted": bool(accepted),
+        "minimum_joint_range_rad": float(minimum_joint_range_rad),
+        "minimum_moving_joints_per_arm": int(minimum_moving_joints_per_arm),
+        "minimum_holdout_distance_rad": float(minimum_holdout_distance_rad),
+        "per_arm": per_arm,
+    }
 
 
 def _cad_geometry(model_path: Path, qpos: list[float]) -> tuple[np.ndarray, dict]:
@@ -307,8 +356,10 @@ def build(args) -> dict:
     if manifest.get("commands_sent") is not False:
         raise ValueError("capture command provenance is unsafe")
     views = list(manifest.get("views", ()))
-    if len(views) < 4:
-        raise ValueError("four or more stopped robot poses are required")
+    if len(views) < args.minimum_views:
+        raise ValueError(
+            f"{args.minimum_views} or more stopped robot poses are required"
+        )
     profile, catalog = load_profile(args.profile)
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -327,6 +378,17 @@ def build(args) -> dict:
         for view in views
     ]
     qposes = [_qpos(view) for view in views]
+    qpos_diversity = _qpos_diversity(
+        qposes,
+        minimum_joint_range_rad=args.minimum_joint_range_rad,
+        minimum_moving_joints_per_arm=args.minimum_moving_joints_per_arm,
+        minimum_holdout_distance_rad=args.minimum_holdout_distance_rad,
+    )
+    if not qpos_diversity["accepted"]:
+        raise ValueError(
+            "robot poses lack per-arm fit/holdout diversity: "
+            + json.dumps(qpos_diversity, sort_keys=True)
+        )
     masks = []
     mask_sources = []
     for item in temporal:
@@ -482,12 +544,15 @@ def build(args) -> dict:
             and repeatability_rotation
             <= thresholds["repeatability_rotation_max_deg"]
         ),
+        "qpos_diversity": qpos_diversity["accepted"],
     }
     accepted = all(decisions.values())
     report = {
         "schema": SCHEMA,
         "calibration_id": f"head-piper-cad-{manifest['session_id']}",
         "accepted": accepted,
+        "accepted_at_s": time.time() if accepted else None,
+        "record3d_udid": manifest.get("device", {}).get("udid"),
         "T_robot_camera": fitted.tolist(),
         "transform_convention": "p_robot = T_robot_camera @ p_camera",
         "method": (
@@ -502,6 +567,7 @@ def build(args) -> dict:
             },
             "repeatability_translation_m": repeatability_translation,
             "repeatability_rotation_deg": repeatability_rotation,
+            "qpos_diversity": qpos_diversity,
         },
         "thresholds": thresholds,
         "decisions": decisions,
@@ -555,8 +621,23 @@ def main(argv=None) -> None:
     parser.add_argument("--minimum-confidence", type=int, default=1)
     parser.add_argument("--min-depth", type=float, default=0.12)
     parser.add_argument("--max-depth", type=float, default=3.0)
+    parser.add_argument("--minimum-views", type=int, default=5)
+    parser.add_argument("--minimum-joint-range-rad", type=float, default=0.02)
+    parser.add_argument("--minimum-moving-joints-per-arm", type=int, default=2)
+    parser.add_argument("--minimum-holdout-distance-rad", type=float, default=0.03)
     args = parser.parse_args(argv)
-    print(json.dumps(build(args), indent=2, ensure_ascii=False))
+    if (
+        args.minimum_views < 4
+        or args.minimum_joint_range_rad <= 0.0
+        or args.minimum_moving_joints_per_arm < 1
+        or args.minimum_moving_joints_per_arm > 6
+        or args.minimum_holdout_distance_rad <= 0.0
+    ):
+        parser.error("invalid pose-diversity thresholds")
+    report = build(args)
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    if not report["accepted"]:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

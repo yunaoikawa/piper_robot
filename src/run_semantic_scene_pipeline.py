@@ -205,11 +205,18 @@ def _commands(args, multiview_report: Path, scene_dir: Path) -> list[tuple[str, 
             else (scene_dir / "daily_scene.json").resolve()
         ),
     ]
-    if args.calibration_report:
+    if getattr(args, "calibration_report", None):
         complete.extend(
             [
                 "--calibration-report",
                 str(Path(args.calibration_report).resolve()),
+            ]
+        )
+    if getattr(args, "scene_registration_report", None):
+        complete.extend(
+            [
+                "--scene-registration-report",
+                str(Path(args.scene_registration_report).resolve()),
             ]
         )
     if args.resume_confirmed:
@@ -317,6 +324,11 @@ def run(args) -> dict:
                 if args.calibration_report
                 else None
             ),
+            "scene_registration_report": (
+                str(Path(args.scene_registration_report).resolve())
+                if getattr(args, "scene_registration_report", None)
+                else None
+            ),
         },
         "stages": stages,
         "validation": validation,
@@ -362,6 +374,7 @@ def main(argv=None) -> None:
     )
     parser.add_argument("--attempt", type=int, choices=(1, 2), default=1)
     parser.add_argument("--calibration-report")
+    parser.add_argument("--scene-registration-report")
     parser.add_argument("--daily-scene")
     parser.add_argument("--resume-confirmed", action="store_true")
     parser.add_argument("--require-collision-ready", action="store_true")
@@ -370,6 +383,10 @@ def main(argv=None) -> None:
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8784)
     args = parser.parse_args(argv)
+    if args.calibration_report and args.scene_registration_report:
+        parser.error(
+            "--calibration-report and --scene-registration-report are mutually exclusive"
+        )
     report = run(args)
     print(json.dumps(report, indent=2, ensure_ascii=False), flush=True)
     if args.serve and not args.dry_run:

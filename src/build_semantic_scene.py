@@ -2661,7 +2661,15 @@ def main(argv=None):
         help="accepted LABEL=PATH mask; supplying any masks disables live SAM",
     )
     parser.add_argument("--daily-scene")
-    parser.add_argument("--calibration-report")
+    registration = parser.add_mutually_exclusive_group()
+    registration.add_argument("--calibration-report")
+    registration.add_argument(
+        "--scene-registration-report",
+        help=(
+            "accepted fixed-head-to-multiview robot-scene registration; "
+            "mutually exclusive with --calibration-report"
+        ),
+    )
     parser.add_argument(
         "--resume-confirmed",
         action="store_true",
