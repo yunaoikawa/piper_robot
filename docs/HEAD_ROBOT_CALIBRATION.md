@@ -61,7 +61,9 @@ PYTHONPATH=. python src/run_recovery_teleop_no_camera.py
 
 This preserves the recovery controls and 30 Hz target loop, but does not
 record, home, return, or claim any camera.  The MacBook controller relay must
-be online.  Disengage the arm before capturing each stopped pose.
+not be online: by default Pasteur subscribes directly to the lab Quest at
+`192.168.1.48:5555`.  Pass `--use-relay` only when intentionally routing
+through the MacBook.  Disengage the arm before capturing each stopped pose.
 
 The jog UI never initializes or homes.  A direction key stages one 5 mm
 robot-frame Cartesian move; it sends nothing until Enter confirms it.  ConeE
