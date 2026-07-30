@@ -210,11 +210,49 @@ def load_mask(path: str | Path, shape_hw: tuple[int, int]) -> np.ndarray:
 def exclusive_masks(
     observations: Iterable[MaskObservation],
     shape_hw: tuple[int, int],
+    *,
+    transparent_semantics: Iterable[str] = (),
+    nested_containment_threshold: float = 0.90,
+    nested_score_margin: float = 0.05,
 ) -> list[tuple[MaskObservation, np.ndarray]]:
-    """Resolve overlaps deterministically by confidence then semantic name."""
+    """Resolve overlaps deterministically by confidence then semantic name.
+
+    SAM can return the same opaque object under two prompts.  Merely assigning
+    the overlap to the higher-confidence mask leaves a thin, misleading
+    fragment of the lower-confidence class.  Suppress that whole candidate
+    when it is almost contained by a stronger, differently-labelled opaque
+    mask.  Transparent semantics are exempt because physically distinct
+    objects such as a Petri dish and its lid legitimately overlap in image
+    space.
+    """
 
     loaded = [
         (item, load_mask(item.mask_path, shape_hw)) for item in observations
+    ]
+    transparent = set(transparent_semantics)
+    suppressed: set[int] = set()
+    for candidate_index, (candidate, candidate_mask) in enumerate(loaded):
+        candidate_area = int(np.count_nonzero(candidate_mask))
+        if candidate_area == 0:
+            continue
+        for owner_index, (owner, owner_mask) in enumerate(loaded):
+            if (
+                candidate_index == owner_index
+                or candidate.semantic_name == owner.semantic_name
+                or candidate.semantic_name in transparent
+                or owner.semantic_name in transparent
+                or owner.sam_score
+                < candidate.sam_score + nested_score_margin
+            ):
+                continue
+            containment = (
+                np.count_nonzero(candidate_mask & owner_mask) / candidate_area
+            )
+            if containment >= nested_containment_threshold:
+                suppressed.add(candidate_index)
+                break
+    loaded = [
+        pair for index, pair in enumerate(loaded) if index not in suppressed
     ]
     # Confidence is authoritative. For equal-confidence accepted masks, a
     # smaller mask is the more-specific semantic region (for example a bottle

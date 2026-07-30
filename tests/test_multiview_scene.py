@@ -36,6 +36,13 @@ def test_record3d_poses_are_normalized_to_first_camera():
     assert np.allclose(poses[1][:3, 3], [0.1, 0.0, 0.0])
 
 
+def test_record3d_pose_converts_opencv_depth_axes_to_arkit_axes():
+    pose = record3d_pose_matrix(_pose())
+    assert np.allclose(pose[:3, :3] @ [1.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+    assert np.allclose(pose[:3, :3] @ [0.0, 1.0, 0.0], [0.0, -1.0, 0.0])
+    assert np.allclose(pose[:3, :3] @ [0.0, 0.0, 1.0], [0.0, 0.0, -1.0])
+
+
 def test_stopped_view_pose_stability_gate():
     accepted = camera_pose_stability(
         [_pose(), _pose((0.001, 0.0, 0.0)), _pose((0.002, 0.0, 0.0))]
@@ -162,6 +169,7 @@ def test_world_grid_rejects_unbounded_capture():
 
 if __name__ == "__main__":
     test_record3d_poses_are_normalized_to_first_camera()
+    test_record3d_pose_converts_opencv_depth_axes_to_arkit_axes()
     test_stopped_view_pose_stability_gate()
     test_gravity_level_transform_is_upright_and_not_mirrored()
     test_point_to_plane_refinement_recovers_small_translation()

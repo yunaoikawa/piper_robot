@@ -170,7 +170,15 @@ def _semantic_labels(
     )
     if unknown_names:
         raise ValueError(f"{item['name']}: unknown mask labels {unknown_names}")
-    owned = exclusive_masks(observations, rgb.shape[:2])
+    owned = exclusive_masks(
+        observations,
+        rgb.shape[:2],
+        transparent_semantics=(
+            name
+            for name, definition in catalog.items()
+            if definition.transparent
+        ),
+    )
     labels = np.full(rgb.shape[:2], LABEL_BACKGROUND, dtype=np.uint8)
     overlay = rgb.copy()
     records = []
@@ -222,6 +230,70 @@ def _rotation_angle_deg(transform: np.ndarray) -> float:
         1.0,
     )
     return float(np.degrees(np.arccos(cosine)))
+
+
+def _tracked_pose_choice(
+    seed: PoseRefinement,
+    refined: PoseRefinement,
+    *,
+    minimum_overlap: float,
+    maximum_translation_m: float,
+    maximum_rotation_deg: float,
+) -> tuple[PoseRefinement, dict]:
+    """Keep Record3D tracking authoritative unless bounded ICP clearly helps."""
+
+    seed_transform = seed.reference_from_camera
+    refined_transform = refined.reference_from_camera
+    delta = np.linalg.inv(seed_transform) @ refined_transform
+    translation = float(np.linalg.norm(delta[:3, 3]))
+    rotation = _rotation_angle_deg(delta)
+    overlap_floor = max(minimum_overlap, seed.overlap_fraction * 0.85)
+    residual_improved = (
+        np.isfinite(refined.median_residual_m)
+        and np.isfinite(seed.median_residual_m)
+        and refined.median_residual_m <= seed.median_residual_m * 0.90
+    )
+    refinement_accepted = bool(
+        residual_improved
+        and refined.overlap_fraction >= overlap_floor
+        and translation <= maximum_translation_m
+        and rotation <= maximum_rotation_deg
+    )
+    chosen = refined if refinement_accepted else seed
+    pose_accepted = bool(seed.overlap_fraction >= minimum_overlap)
+    result = PoseRefinement(
+        reference_from_camera=chosen.reference_from_camera,
+        median_residual_m=chosen.median_residual_m,
+        p90_residual_m=chosen.p90_residual_m,
+        overlap_fraction=chosen.overlap_fraction,
+        iterations=chosen.iterations,
+        accepted=pose_accepted,
+        reasons=(
+            ()
+            if pose_accepted
+            else (
+                f"tracked-pose neighbour overlap {seed.overlap_fraction:.3f} "
+                f"< {minimum_overlap:.3f}",
+            )
+        ),
+    )
+    audit = {
+        "pose_authority": (
+            "bounded_icp_refinement"
+            if refinement_accepted
+            else "record3d_continuous_tracking"
+        ),
+        "seed_overlap_fraction": seed.overlap_fraction,
+        "seed_median_residual_m": seed.median_residual_m,
+        "seed_p90_residual_m": seed.p90_residual_m,
+        "refined_overlap_fraction": refined.overlap_fraction,
+        "refined_median_residual_m": refined.median_residual_m,
+        "refined_p90_residual_m": refined.p90_residual_m,
+        "refinement_delta_translation_m": translation,
+        "refinement_delta_rotation_deg": rotation,
+        "refinement_accepted": refinement_accepted,
+    }
+    return result, audit
 
 
 def _match_support_modes(view_modes: list[list[dict]]) -> list[dict]:
@@ -391,7 +463,12 @@ def _make_mobile_viewer(
             yaxis=dict(title="forward [m]", backgroundcolor="#0b1020"),
             zaxis=dict(title="up [m]", backgroundcolor="#0b1020"),
             aspectmode="data",
-            camera=dict(eye=dict(x=1.35, y=-1.55, z=0.95)),
+            # Open from the arm side looking toward the wall.  In this view
+            # microscope is on screen-left and incubator on screen-right.
+            camera=dict(
+                eye=dict(x=0.0, y=-1.80, z=0.72),
+                up=dict(x=0.0, y=0.0, z=1.0),
+            ),
         ),
     )
     figure.write_html(
@@ -544,10 +621,16 @@ def build(args) -> dict:
         or record["rotation_deg"] >= args.minimum_baseline_deg
         for record in baseline[1:]
     )
+    continuous_tracked_session = bool(
+        manifest.get("capture_mode") == "imported_record3d_exr_jpg_video"
+        and manifest.get("pose_frame") == "single_record3d_session_local"
+    )
 
     accepted_items = []
     target_points = []
     target_normals = []
+    previous_points = None
+    previous_normals = None
     registration_reports = []
     support_modes = []
     for index, (item, seed_pose) in enumerate(zip(items, seed_poses)):
@@ -562,6 +645,10 @@ def build(args) -> dict:
             min_depth_m=args.min_depth,
             max_depth_m=args.max_depth,
         )
+        registration_audit = {
+            "pose_authority": "rejected_before_registration",
+            "refinement_accepted": False,
+        }
         if not item["pose_stability"]["accepted"]:
             result = PoseRefinement(
                 seed_pose,
@@ -584,23 +671,76 @@ def build(args) -> dict:
             )
         elif not target_points:
             result = PoseRefinement(seed_pose, 0.0, 0.0, 1.0, 0, True, ())
+            registration_audit = {
+                "pose_authority": "record3d_continuous_tracking",
+                "refinement_accepted": False,
+            }
         else:
-            result = refine_pose_point_to_plane(
-                points_camera,
-                seed_pose,
-                np.vstack(target_points),
-                np.vstack(target_normals),
-                maximum_correspondence_m=args.maximum_correspondence_m,
-                acceptance_median_m=args.acceptance_median_m,
-                acceptance_p90_m=args.acceptance_p90_m,
-                acceptance_overlap=args.acceptance_overlap,
-            )
+            if continuous_tracked_session:
+                seed_evaluation = refine_pose_point_to_plane(
+                    points_camera,
+                    seed_pose,
+                    previous_points,
+                    previous_normals,
+                    maximum_correspondence_m=args.maximum_correspondence_m,
+                    maximum_iterations=0,
+                    acceptance_median_m=args.acceptance_median_m,
+                    acceptance_p90_m=args.acceptance_p90_m,
+                    acceptance_overlap=args.acceptance_overlap,
+                )
+                refined = refine_pose_point_to_plane(
+                    points_camera,
+                    seed_pose,
+                    previous_points,
+                    previous_normals,
+                    maximum_correspondence_m=args.maximum_correspondence_m,
+                    acceptance_median_m=args.acceptance_median_m,
+                    acceptance_p90_m=args.acceptance_p90_m,
+                    acceptance_overlap=args.acceptance_overlap,
+                )
+                result, registration_audit = _tracked_pose_choice(
+                    seed_evaluation,
+                    refined,
+                    minimum_overlap=float(
+                        getattr(args, "tracked_pose_minimum_overlap", 0.15)
+                    ),
+                    maximum_translation_m=float(
+                        getattr(
+                            args,
+                            "maximum_refinement_translation_m",
+                            0.03,
+                        )
+                    ),
+                    maximum_rotation_deg=float(
+                        getattr(
+                            args,
+                            "maximum_refinement_rotation_deg",
+                            3.0,
+                        )
+                    ),
+                )
+            else:
+                result = refine_pose_point_to_plane(
+                    points_camera,
+                    seed_pose,
+                    np.vstack(target_points),
+                    np.vstack(target_normals),
+                    maximum_correspondence_m=args.maximum_correspondence_m,
+                    acceptance_median_m=args.acceptance_median_m,
+                    acceptance_p90_m=args.acceptance_p90_m,
+                    acceptance_overlap=args.acceptance_overlap,
+                )
+                registration_audit = {
+                    "pose_authority": "static_scene_icp",
+                    "refinement_accepted": result.accepted,
+                }
         registration_reports.append(
             {
                 "name": item["name"],
                 **asdict(result),
                 "reference_from_camera": result.reference_from_camera.tolist(),
                 "reasons": list(result.reasons),
+                **registration_audit,
             }
         )
         if not result.accepted:
@@ -613,6 +753,8 @@ def build(args) -> dict:
         )
         target_points.append(transformed_points)
         target_normals.append(transformed_normals)
+        previous_points = transformed_points
+        previous_normals = transformed_normals
         support_modes.append(
             support_height_modes(transformed_points, transformed_normals)
         )
@@ -798,7 +940,12 @@ def build(args) -> dict:
             "next_stage": next_stage,
         },
         "registration": {
-            "method": "record3d_relative_pose_plus_static_sam_point_to_plane",
+            "method": (
+                "continuous_record3d_pose_with_bounded_adjacent_view_icp"
+                if continuous_tracked_session
+                else "record3d_relative_pose_plus_static_sam_point_to_plane"
+            ),
+            "continuous_tracked_session": continuous_tracked_session,
             "baseline": baseline,
             "baseline_sufficient": baseline_sufficient,
             "views": registration_reports,
@@ -886,6 +1033,13 @@ def main(argv=None) -> None:
     parser.add_argument("--acceptance-median-m", type=float, default=0.010)
     parser.add_argument("--acceptance-p90-m", type=float, default=0.025)
     parser.add_argument("--acceptance-overlap", type=float, default=0.30)
+    parser.add_argument("--tracked-pose-minimum-overlap", type=float, default=0.15)
+    parser.add_argument(
+        "--maximum-refinement-translation-m", type=float, default=0.030
+    )
+    parser.add_argument(
+        "--maximum-refinement-rotation-deg", type=float, default=3.0
+    )
     parser.add_argument(
         "--acceptance-support-spread-m", type=float, default=0.008
     )
@@ -901,6 +1055,9 @@ def main(argv=None) -> None:
         or args.registration_stride < 1
         or args.mesh_stride < 1
         or args.minimum_confidence not in (0, 1, 2)
+        or not 0.0 <= args.tracked_pose_minimum_overlap <= 1.0
+        or args.maximum_refinement_translation_m <= 0.0
+        or args.maximum_refinement_rotation_deg <= 0.0
     ):
         parser.error("invalid fusion, stride, or confidence configuration")
     build(args)

@@ -154,6 +154,54 @@ def test_mask_overlap_uses_confidence_not_argument_order(tmp_path):
     assert owned["high"][6, 6]
 
 
+def test_nested_opaque_false_positive_is_suppressed_but_transparent_pair_is_not(
+    tmp_path,
+):
+    candidate = np.zeros((20, 20), np.uint8)
+    owner = np.zeros((20, 20), np.uint8)
+    candidate[4:15, 4:15] = 255
+    candidate[3, 4:15] = 255
+    owner[4:15, 4:15] = 255
+    candidate_path = tmp_path / "candidate.png"
+    owner_path = tmp_path / "owner.png"
+    assert cv2.imwrite(str(candidate_path), candidate)
+    assert cv2.imwrite(str(owner_path), owner)
+    observations = [
+        MaskObservation(
+            "arm-fragment",
+            "robot",
+            "robot",
+            str(candidate_path),
+            0.65,
+            "sam",
+            1,
+        ),
+        MaskObservation(
+            "microscope",
+            "microscope",
+            "microscope",
+            str(owner_path),
+            0.90,
+            "sam",
+            1,
+        ),
+    ]
+    opaque = {
+        item.instance_id: mask
+        for item, mask in exclusive_masks(observations, candidate.shape)
+    }
+    assert "arm-fragment" not in opaque
+    transparent = {
+        item.instance_id: mask
+        for item, mask in exclusive_masks(
+            observations,
+            candidate.shape,
+            transparent_semantics={"robot", "microscope"},
+        )
+    }
+    assert np.count_nonzero(transparent["arm-fragment"]) == 11
+
+
 def test_aabb_intersection_gate():
     geometry = {
         "kind": "box",

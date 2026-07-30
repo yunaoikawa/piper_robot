@@ -66,15 +66,26 @@ def quaternion_xyzw_to_rotation(quaternion) -> np.ndarray:
 
 
 def record3d_pose_matrix(pose: dict) -> np.ndarray:
-    """Decode Record3D's camera pose as session-from-camera."""
+    """Decode Record3D pose as session-from-OpenCV-camera.
+
+    Record3D exposes the ARKit camera pose: x right, y up, and the camera looks
+    along -z.  RGB-D back-projection in this repository uses OpenCV camera
+    coordinates: x right, y down, and +z forward.  The fixed x-axis half-turn
+    is therefore part of every metric camera pose.  Omitting it conjugates
+    relative rotations in the wrong basis and produces duplicated geometry
+    when a moving Record3D capture is fused.
+    """
 
     translation = np.asarray(pose["translation_xyz_m"], dtype=float)
     if translation.shape != (3,) or not np.all(np.isfinite(translation)):
         raise ValueError("camera translation must contain three finite values")
-    result = np.eye(4)
-    result[:3, :3] = quaternion_xyzw_to_rotation(pose["quaternion_xyzw"])
-    result[:3, 3] = translation
-    return result
+    session_from_arkit_camera = np.eye(4)
+    session_from_arkit_camera[:3, :3] = quaternion_xyzw_to_rotation(
+        pose["quaternion_xyzw"]
+    )
+    session_from_arkit_camera[:3, 3] = translation
+    arkit_camera_from_opencv_camera = np.diag([1.0, -1.0, -1.0, 1.0])
+    return session_from_arkit_camera @ arkit_camera_from_opencv_camera
 
 
 def normalize_record3d_poses(poses: list[dict]) -> list[np.ndarray]:

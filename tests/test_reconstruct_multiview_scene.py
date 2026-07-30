@@ -11,7 +11,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.reconstruct_multiview_scene import build
+from rollout.multiview_scene import PoseRefinement
+from src.reconstruct_multiview_scene import _tracked_pose_choice, build
 
 
 def _write_synthetic_capture(root: Path) -> tuple[Path, list[str]]:
@@ -153,6 +154,29 @@ def test_saved_multiview_pipeline_produces_gated_phone_artifacts():
             assert (output / name).is_file()
 
 
+def test_continuous_pose_rejects_icp_that_loses_overlap():
+    seed_transform = np.eye(4)
+    refined_transform = np.eye(4)
+    refined_transform[0, 3] = 0.01
+    seed = PoseRefinement(
+        seed_transform, 0.040, 0.070, 0.30, 0, False, ()
+    )
+    refined = PoseRefinement(
+        refined_transform, 0.015, 0.055, 0.12, 8, False, ()
+    )
+    chosen, audit = _tracked_pose_choice(
+        seed,
+        refined,
+        minimum_overlap=0.15,
+        maximum_translation_m=0.03,
+        maximum_rotation_deg=3.0,
+    )
+    assert chosen.accepted
+    assert np.allclose(chosen.reference_from_camera, seed_transform)
+    assert audit["pose_authority"] == "record3d_continuous_tracking"
+
+
 if __name__ == "__main__":
     test_saved_multiview_pipeline_produces_gated_phone_artifacts()
+    test_continuous_pose_rejects_icp_that_loses_overlap()
     print("multiview reconstruction checks passed")

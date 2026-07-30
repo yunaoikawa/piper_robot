@@ -2192,7 +2192,15 @@ def build(args) -> dict:
         mesh=mesh,
         shape_hw=shape_hw,
     )
-    owned = exclusive_masks(observations, shape_hw)
+    owned = exclusive_masks(
+        observations,
+        shape_hw,
+        transparent_semantics=(
+            name
+            for name, definition in catalog.items()
+            if definition.transparent
+        ),
+    )
     profile, robot_placement = _position_articulated_model(
         profile=profile,
         calibration_report=getattr(args, "calibration_report", None),

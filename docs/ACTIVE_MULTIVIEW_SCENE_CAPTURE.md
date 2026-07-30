@@ -104,6 +104,25 @@ The command does not send robot commands.  At each prompt, move the phone,
 wait until it is completely stationary, and press Enter.  A burst is rejected
 when its Record3D pose changes by more than 3 mm or 1 degree.
 
+An already exported Record3D LiDAR video (`metadata.json`, JPG RGB, and EXR
+depth) can be converted into the same capture schema without touching the
+robot:
+
+```bash
+python src/import_record3d_exr_video.py \
+  --input RECORD3D_EXR_RGBD_DIR \
+  --output-root data/captures/pasteur/record3d_multiview_import \
+  --view-count 5 --frames-per-view 3
+```
+
+The importer spaces candidate views by travelled camera-path distance and
+chooses sharp, pose-stable bursts.  Record3D poses use ARKit camera axes
+(`x` right, `y` up, view direction `-z`), while depth back-projection uses
+OpenCV axes (`x` right, `y` down, view direction `+z`).  The reconstruction
+must apply the fixed x-axis half-turn before normalizing relative poses.
+Failing to do so creates repeated/ghosted objects even when ARKit tracking is
+valid.
+
 Run SAM and fuse the accepted views:
 
 ```bash
@@ -118,7 +137,12 @@ The reconstruction:
 
 - levels the local frame with Record3D gravity without reflecting either axis;
 - masks robot and movable-object returns with SAM before static registration;
+- suppresses a lower-confidence opaque SAM candidate when it is almost
+  completely contained by a stronger, differently labelled opaque object
+  (transparent dish/lid overlap is exempt);
 - refines only whole-camera poses with robust point-to-plane residuals;
+- keeps a continuous Record3D trajectory authoritative unless bounded
+  adjacent-view ICP improves residuals without losing overlap;
 - requires at least 30 percent overlap, 10 mm median residual, 25 mm p90
   residual, and 8 mm cross-view support-height consistency;
 - fuses confidence- and view-angle-weighted TSDF observations while leaving
