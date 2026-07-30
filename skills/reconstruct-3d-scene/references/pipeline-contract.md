@@ -24,6 +24,9 @@ mesh vertices.
   policies.
 - `src/daily_scene_ui.py`: low-confidence phone confirmation.
 - `docs/AUTOMATIC_3D_SCENE_WORKFLOW.md`: complete operator and extension guide.
+- `src/run_pasteur_offline_replay.py`: hash-cached, observation-only alignment,
+  dynamic wrist target, measured-keyframe replay, render, and mobile export.
+- `docs/OFFLINE_SCENE_REPLAY.md`: exact-vs-reconstructed trajectory contract.
 
 ## Input
 
@@ -66,7 +69,9 @@ confidence, and status.
   transform.
 
 Observed and inferred layers must remain separately toggleable. Mobile mesh
-traces must stay below practical WebGL index limits.
+traces must stay below practical WebGL index limits. Phone decimation is
+display-only and must never replace source MuJoCo, collision meshes, ESDF, or
+the engineering reconstruction.
 
 ## Extension rule
 

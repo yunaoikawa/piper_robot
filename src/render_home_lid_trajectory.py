@@ -71,14 +71,14 @@ def _joint_ids(model, prefix):
 
 def _arm_mapping(model):
     if mujoco.mj_name2id(
-        model, mujoco.mjtObj.mjOBJ_JOINT, "right/joint1"
+        model, mujoco.mjtObj.mjOBJ_JOINT, "left/joint1"
     ) >= 0:
         right_ids = [
-            int(model.joint(f"right/joint{index}").qposadr[0])
+            int(model.joint(f"left/joint{index}").qposadr[0])
             for index in range(1, 7)
         ]
         left_ids = [
-            int(model.joint(f"left/joint{index}").qposadr[0])
+            int(model.joint(f"right/joint{index}").qposadr[0])
             for index in range(1, 7)
         ]
         return {
@@ -86,9 +86,9 @@ def _arm_mapping(model):
             "key": "home",
             "right_ids": right_ids,
             "left_ids": left_ids,
-            "ee": "right/ee",
-            "right_body_prefix": "right/",
-            "left_body_prefix": "left/",
+            "ee": "left/ee",
+            "right_body_prefix": "left/",
+            "left_body_prefix": "right/",
         }
     return {
         "variant": "legacy_cone_e",
@@ -158,8 +158,10 @@ def render(args):
     left_ids = mapping["left_ids"]
     right_physical_home = physical_home_q("right")
     left_physical_home = physical_home_q("left")
-    right_model_home = data.qpos[right_ids].copy()
-    left_model_home = data.qpos[left_ids].copy()
+    right_model_home = right_physical_home.copy()
+    left_model_home = left_physical_home.copy()
+    data.qpos[right_ids] = right_model_home
+    data.qpos[left_ids] = left_model_home
     mujoco.mj_forward(model, data)
 
     renderer = mujoco.Renderer(model, height=args.height, width=args.width)
@@ -244,9 +246,7 @@ def render(args):
         )
         if "grasp_right_q_rad" in lid:
             grasp_q = np.asarray(lid["grasp_right_q_rad"], dtype=float)
-            data.qpos[right_ids] = (
-                right_model_home + grasp_q - right_physical_home
-            )
+            data.qpos[right_ids] = grasp_q
             data.qpos[left_ids] = left_model_home
             mujoco.mj_forward(model, data)
             model.body_pos[lid_body_id] = np.asarray(
@@ -273,9 +273,7 @@ def render(args):
         for _ in range(home_frames):
             emit("HOME")
         for q, waypoint in zip(q_waypoints, waypoints):
-            data.qpos[right_ids] = (
-                right_model_home + q - right_physical_home
-            )
+            data.qpos[right_ids] = q
             data.qpos[left_ids] = left_model_home
             mujoco.mj_forward(model, data)
             if lid_body_id is not None and float(waypoint["t_s"]) >= close_t:

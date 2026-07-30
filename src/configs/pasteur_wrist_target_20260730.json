@@ -1,0 +1,85 @@
+{
+  "schema": "piper_robot.wrist_rgbd_target_profile/v1",
+  "target_class": "thin_transparent_lid",
+  "camera": "right_wrist_truedepth",
+  "marker_profile": {
+    "semantic_marker": "blue_cross",
+    "reference_region": "largest_blue_tool_component",
+    "hsv_low": [90, 55, 40],
+    "hsv_high": [135, 255, 255],
+    "morphology_fraction": 0.005,
+    "minimum_tool_area_fraction": 0.02,
+    "minimum_marker_area_fraction": 0.00008,
+    "maximum_marker_area_fraction": 0.015,
+    "minimum_aspect": 0.3,
+    "maximum_aspect": 1.8,
+    "minimum_fill": 0.2,
+    "maximum_fill": 0.9,
+    "minimum_cross_score": 0.72,
+    "minimum_depth_sample_fraction": 0.00006,
+    "maximum_normalized_tool_distance": 0.2
+  },
+  "captures": [
+    {
+      "path": "data/captures/pasteur/2026-07-30/20260730T084521.302896Z_right_preclose_deep_insertion_support_candidate_51c4f1cc",
+      "episode": "successful_grasp_before_lift",
+      "split": "fit"
+    },
+    {
+      "path": "data/captures/pasteur/2026-07-30/20260730T084719.059549Z_right_verified_true_preclose_deep_insertion_support_ready_5425d3ba",
+      "episode": "successful_grasp_before_lift",
+      "split": "fit"
+    },
+    {
+      "path": "data/captures/pasteur/2026-07-30/20260730T084808.308665Z_right_verified_closed_grasp_before_lift_ba5ed5b8",
+      "episode": "successful_grasp_before_lift",
+      "split": "fit"
+    },
+    {
+      "path": "data/captures/pasteur/2026-07-30/20260730T085952.363917Z_right_verified_shallow_fingertip_overlap_support_near_window_false_eb656160",
+      "episode": "latest_target_after_drop",
+      "split": "fit"
+    },
+    {
+      "path": "data/captures/pasteur/2026-07-30/20260730T090032.116412Z_right_verified_shallow_fingertip_insertion_support_near_window_false_1d0cefad",
+      "episode": "latest_target_after_drop",
+      "split": "fit"
+    },
+    {
+      "path": "data/captures/pasteur/2026-07-30/20260730T090045.039504Z_right_verified_shallow_fingertip_insertion_retry_5461f63c",
+      "episode": "latest_target_after_drop",
+      "split": "holdout"
+    }
+  ],
+  "fit": {
+    "residual_scale_m": 0.005,
+    "maximum_mount_translation_m": 0.35,
+    "optimization_seed": 7,
+    "optimization_starts": 32,
+    "maximum_function_evaluations": 5000,
+    "maximum_train_rms_m": 0.008,
+    "maximum_train_point_error_m": 0.018,
+    "maximum_holdout_point_error_m": 0.008
+  },
+  "kinematic_bridge": {
+    "model": "robot/pasteur-calibrated-scene/scene.mjcf",
+    "physical_arm": "right",
+    "model_branch": "left",
+    "translation_scale_m": 0.005,
+    "rotation_scale_deg": 1.0,
+    "maximum_function_evaluations": 5000,
+    "maximum_translation_error_m": 0.003,
+    "maximum_rotation_error_deg": 0.5
+  },
+  "target_geometry_gate": {
+    "required_episodes": ["successful_grasp_before_lift"],
+    "minimum_nearest_distance_object_radii": 0.25,
+    "maximum_nearest_distance_object_radii": 3.0
+  },
+  "object_scene": {
+    "current_episode": "latest_target_after_drop",
+    "support_plane_z_m": -0.5660460087444851,
+    "radius_m": 0.047,
+    "height_m": 0.006
+  }
+}

@@ -28,6 +28,28 @@ coordinates before inspecting the SAM overlay and reconstruction report.
    [../../docs/ACTIVE_MULTIVIEW_SCENE_CAPTURE.md](../../docs/ACTIVE_MULTIVIEW_SCENE_CAPTURE.md)
    and keep capture authority separate from reconstruction readiness.
 
+## Existing-data offline replay
+
+When the request is to rebuild the current Pasteur scene and reproduce a
+recorded grasp while no new images or hardware motion are allowed, use the
+script-only route in
+[../../docs/OFFLINE_SCENE_REPLAY.md](../../docs/OFFLINE_SCENE_REPLAY.md):
+
+```bash
+MUJOCO_GL=egl \
+/home/admin/miniforge3/envs/robot-test/bin/python \
+  src/run_pasteur_offline_replay.py \
+  --config src/configs/pasteur_offline_replay_20260730.json \
+  --output-dir OUTPUT
+```
+
+Do not manually transfer target pixels or joint values. The pipeline must pin
+physical-right to model-left, fit the latest wrist RGB-D target, distinguish
+the successful target episode from the latest post-drop episode, pass the
+object-radius geometry gate, preserve exact stopped keyframes, and reconstruct
+only the unrecorded intervals. A clear moving-arm path does not imply global
+scene or hardware motion authority.
+
 ## Tagless multiview and robot calibration
 
 For a completed `piper_robot.multiview_semantic_scene/v1` report, run semantic

@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 import cv2
 import numpy as np
 
+from robot.arm.home import physical_home_q
 from rollout.scene_registration import (
     apply_independent_base_translations_to_mjcf,
     apply_shared_planar_transform_to_mjcf,
@@ -153,6 +154,25 @@ def _derived_scene(
                 str((source_scene.parent / meshdir).resolve()),
             )
     tree.write(output_scene, encoding="unicode")
+
+
+def _pin_canonical_physical_home(positioned_model: Path) -> None:
+    """Pin semantic model-left/right to physical right/left home q."""
+
+    tree = ET.parse(positioned_model)
+    root = tree.getroot()
+    keyframe = root.find("./keyframe/key[@name='home']")
+    if keyframe is None:
+        raise ValueError("positioned Piper model lacks keyframe home")
+    values = np.r_[
+        physical_home_q("right"),
+        physical_home_q("left"),
+    ]
+    serialized = " ".join(f"{value:.10g}" for value in values)
+    keyframe.set("qpos", serialized)
+    if keyframe.get("ctrl") is not None:
+        keyframe.set("ctrl", serialized)
+    tree.write(positioned_model, encoding="unicode")
 
 
 def _write_depth_mask_montage(
@@ -509,6 +529,7 @@ def build(args) -> dict:
             translation_xy_m=(0.0, 0.0),
             yaw_delta_rad=0.0,
         )
+    _pin_canonical_physical_home(candidate_positioned)
     candidate_scene = output / "scene.mjcf"
     _derived_scene(
         Path(args.scene_model).resolve(),
@@ -516,116 +537,108 @@ def build(args) -> dict:
         candidate_scene,
     )
 
-    final_view = manifest["views"][-1]
-    final_frame_dir, _ = _last_frame(current_capture, final_view)
-    final_meta = json.loads((final_frame_dir / "meta.json").read_text())
-    level_from_camera = scene_from_camera_by_view[final_view["name"]]
-    lid_level = intersect_pixel_with_horizontal_plane(
-        tuple(args.lid_center_px),
-        _matrix(final_meta),
-        level_from_camera,
-        plane_z_m=args.support_plane_z_m,
-    )
-    lid_scene = lid_level * axis_sign
-    lid_scene[2] = args.support_plane_z_m + args.lid_height_m / 2.0
-    object_scene = {
-        "schema": "piper_robot.dynamic_dish_lid_scene/v2",
-        "source": {
-            "kind": "fixed_tag_bridge_plus_operator_confirmed_rgb_roi",
-            "capture_manifest": str(
-                (current_capture / "manifest.json").resolve()
-            ),
-            "reference_report": str(
-                Path(args.reference_report).resolve()
-            ),
-            "tag_id": args.tag_id,
-        },
-        "camera_to_scene_accepted": camera_registration_accepted,
-        "operator_confirmed": True,
-        "objects": [
-            {
-                "instance_id": "petri-lid-target",
-                "semantic_name": "petri dish lid",
-                "role": "target_lid",
-                "status": "confirmed",
-                "pose_scene": [
-                    [1.0, 0.0, 0.0, float(lid_scene[0])],
-                    [0.0, 1.0, 0.0, float(lid_scene[1])],
-                    [0.0, 0.0, 1.0, float(lid_scene[2])],
-                    [0.0, 0.0, 0.0, 1.0],
-                ],
-                "geometry": {
-                    "type": "cylinder",
-                    "radius_m": args.lid_radius_m,
-                    "height_m": args.lid_height_m,
-                    "pose_anchor": "center",
-                },
-                "perception": {
-                    "center_px": list(args.lid_center_px),
-                    "support_plane_z_m": args.support_plane_z_m,
-                    "selection": (
-                        "operator-confirmed RGB ROI containing blue cross; "
-                        "prior SAM masks used only as a shape prior"
-                    ),
-                    "current_frame_sam_accepted": False,
-                    "current_frame_sam_reason": "sam_service_unavailable",
-                },
-            }
-        ],
-    }
-    object_scene_path = output / "latest_lid_scene.json"
-    object_scene_path.write_text(
-        json.dumps(object_scene, indent=2, ensure_ascii=False) + "\n"
-    )
-    final_image = cv2.imread(str(final_frame_dir / "rgb.png"))
-    angles = np.linspace(0.0, 2.0 * np.pi, 181)
-    circle_scene = np.c_[
-        lid_scene[0] + args.lid_radius_m * np.cos(angles),
-        lid_scene[1] + args.lid_radius_m * np.sin(angles),
-        np.full_like(angles, args.support_plane_z_m),
-    ]
-    circle_level = circle_scene / axis_sign
-    circle_camera = transform_points(
-        circle_level,
-        np.linalg.inv(level_from_camera),
-    )
-    camera_matrix = _matrix(final_meta)
-    projected = (
-        circle_camera @ camera_matrix.T
-    )
-    projected = np.rint(
-        projected[:, :2] / projected[:, 2:3]
-    ).astype(np.int32)
-    cv2.polylines(
-        final_image,
-        [projected],
-        True,
-        (0, 255, 255),
-        5,
-        cv2.LINE_AA,
-    )
-    center = tuple(np.rint(args.lid_center_px).astype(int))
-    cv2.drawMarker(
-        final_image,
-        center,
-        (0, 0, 255),
-        cv2.MARKER_CROSS,
-        40,
-        5,
-    )
-    cv2.rectangle(final_image, (16, 16), (1380, 92), (0, 0, 0), -1)
-    cv2.putText(
-        final_image,
-        "CONFIRMED LID | TAG-BRIDGED SUPPORT-PLANE POSE | DISPLAY ONLY",
-        (32, 62),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.85,
-        (255, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
-    overlay_path = output / "latest_lid_alignment.png"
-    cv2.imwrite(str(overlay_path), final_image)
+    lid_scene = None
+    object_scene_path = None
+    overlay_path = None
+    if args.lid_center_px is not None:
+        # Legacy/manual compatibility only.  The unattended pipeline omits
+        # this argument and runs the tool-relative wrist RGB-D target stage.
+        final_view = manifest["views"][-1]
+        final_frame_dir, _ = _last_frame(current_capture, final_view)
+        final_meta = json.loads((final_frame_dir / "meta.json").read_text())
+        level_from_camera = scene_from_camera_by_view[final_view["name"]]
+        lid_level = intersect_pixel_with_horizontal_plane(
+            tuple(args.lid_center_px),
+            _matrix(final_meta),
+            level_from_camera,
+            plane_z_m=args.support_plane_z_m,
+        )
+        lid_scene = lid_level * axis_sign
+        lid_scene[2] = (
+            args.support_plane_z_m + args.lid_height_m / 2.0
+        )
+        object_scene = {
+            "schema": "piper_robot.dynamic_dish_lid_scene/v2",
+            "source": {
+                "kind": "fixed_tag_bridge_plus_operator_confirmed_rgb_roi",
+                "capture_manifest": str(
+                    (current_capture / "manifest.json").resolve()
+                ),
+                "reference_report": str(
+                    Path(args.reference_report).resolve()
+                ),
+                "tag_id": args.tag_id,
+            },
+            "camera_to_scene_accepted": camera_registration_accepted,
+            "operator_confirmed": True,
+            "objects": [
+                {
+                    "instance_id": "petri-lid-target",
+                    "semantic_name": "petri dish lid",
+                    "role": "target_lid",
+                    "status": "confirmed",
+                    "pose_scene": [
+                        [1.0, 0.0, 0.0, float(lid_scene[0])],
+                        [0.0, 1.0, 0.0, float(lid_scene[1])],
+                        [0.0, 0.0, 1.0, float(lid_scene[2])],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ],
+                    "geometry": {
+                        "type": "cylinder",
+                        "radius_m": args.lid_radius_m,
+                        "height_m": args.lid_height_m,
+                        "pose_anchor": "center",
+                    },
+                    "perception": {
+                        "center_px": list(args.lid_center_px),
+                        "support_plane_z_m": args.support_plane_z_m,
+                        "selection": (
+                            "operator-confirmed RGB ROI containing blue cross"
+                        ),
+                        "current_frame_sam_accepted": False,
+                    },
+                }
+            ],
+        }
+        object_scene_path = output / "latest_lid_scene.json"
+        object_scene_path.write_text(
+            json.dumps(object_scene, indent=2, ensure_ascii=False) + "\n"
+        )
+        final_image = cv2.imread(str(final_frame_dir / "rgb.png"))
+        angles = np.linspace(0.0, 2.0 * np.pi, 181)
+        circle_scene = np.c_[
+            lid_scene[0] + args.lid_radius_m * np.cos(angles),
+            lid_scene[1] + args.lid_radius_m * np.sin(angles),
+            np.full_like(angles, args.support_plane_z_m),
+        ]
+        circle_level = circle_scene / axis_sign
+        circle_camera = transform_points(
+            circle_level,
+            np.linalg.inv(level_from_camera),
+        )
+        projected = circle_camera @ _matrix(final_meta).T
+        projected = np.rint(
+            projected[:, :2] / projected[:, 2:3]
+        ).astype(np.int32)
+        cv2.polylines(
+            final_image,
+            [projected],
+            True,
+            (0, 255, 255),
+            5,
+            cv2.LINE_AA,
+        )
+        center = tuple(np.rint(args.lid_center_px).astype(int))
+        cv2.drawMarker(
+            final_image,
+            center,
+            (0, 0, 255),
+            cv2.MARKER_CROSS,
+            40,
+            5,
+        )
+        overlay_path = output / "latest_lid_alignment.png"
+        cv2.imwrite(str(overlay_path), final_image)
 
     current_contacts = _contact_records(
         Path(args.scene_model).resolve()
@@ -650,11 +663,17 @@ def build(args) -> dict:
         "home_pose_provenance": {
             "accepted": home_pose_provenance_accepted,
             "source": (
-                "operator_asserted_baseline_is_home"
+                "repository_physical_home_q_with_physical_right_to_model_left"
                 if args.baseline_is_home
                 else None
             ),
             "baseline_view": manifest["views"][0]["name"],
+            "physical_right_q_rad": physical_home_q("right").tolist(),
+            "physical_left_q_rad": physical_home_q("left").tolist(),
+            "model_qpos_order": [
+                "physical_right_on_model_left",
+                "physical_left_on_model_right",
+            ],
         },
         "fixed_tag_reference": {
             "tag_id": args.tag_id,
@@ -695,7 +714,9 @@ def build(args) -> dict:
             "yaw_modified": False,
         },
         "per_view": per_view,
-        "lid_pose_scene_xyz_m": lid_scene.tolist(),
+        "lid_pose_scene_xyz_m": (
+            None if lid_scene is None else lid_scene.tolist()
+        ),
         "trajectory_gate": {
             "authorized": trajectory_authorized,
             "reasons": gate_reasons,
@@ -739,8 +760,12 @@ def build(args) -> dict:
         "artifacts": {
             "scene_model": str(candidate_scene),
             "positioned_robot": str(candidate_positioned),
-            "object_scene": str(object_scene_path),
-            "lid_alignment_overlay": str(overlay_path),
+            "object_scene": (
+                None if object_scene_path is None else str(object_scene_path)
+            ),
+            "lid_alignment_overlay": (
+                None if overlay_path is None else str(overlay_path)
+            ),
             "depth_layer_robot_masks": str(depth_mask_output),
             "depth_layer_robot_montage": str(depth_montage_path),
         },
@@ -773,7 +798,10 @@ def main(argv=None):
         "--lid-center-px",
         type=float,
         nargs=2,
-        required=True,
+        help=(
+            "legacy manual target center; omit for unattended wrist RGB-D "
+            "target localization"
+        ),
     )
     parser.add_argument("--support-plane-z-m", type=float, required=True)
     parser.add_argument("--lid-radius-m", type=float, default=0.047)

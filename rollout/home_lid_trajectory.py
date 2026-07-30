@@ -98,32 +98,23 @@ class HomeSceneValidator:
 
         inspected = mujoco.MjModel.from_xml_path(str(model_path))
         semantic_joint = mujoco.mj_name2id(
-            inspected, mujoco.mjtObj.mjOBJ_JOINT, "right/joint1"
+            inspected, mujoco.mjtObj.mjOBJ_JOINT, "left/joint1"
         )
         if semantic_joint >= 0:
-            right_names = [f"right/joint{index}" for index in range(1, 7)]
-            left_names = [f"left/joint{index}" for index in range(1, 7)]
-            key = inspected.key("home")
-            right_ids = [
-                inspected.joint(name).qposadr[0] for name in right_names
-            ]
-            left_ids = [
-                inspected.joint(name).qposadr[0] for name in left_names
-            ]
-            right_offset = (
-                np.asarray(key.qpos[right_ids]) - physical_home_q("right")
-            )
-            left_offset = (
-                np.asarray(key.qpos[left_ids]) - physical_home_q("left")
-            )
+            # Production semantic convention is intentionally crossed:
+            # physical right -> model-left, physical left -> model-right.
+            # Piper joint coordinates themselves are direct and have no
+            # representation-specific offset.
+            right_names = [f"left/joint{index}" for index in range(1, 7)]
+            left_names = [f"right/joint{index}" for index in range(1, 7)]
             link_capsules = [
-                ("right/base_link", "right/link1", 0.058),
-                ("right/link1", "right/link2", 0.052),
-                ("right/link2", "right/link3", 0.055),
-                ("right/link3", "right/link4", 0.050),
-                ("right/link4", "right/link5", 0.044),
-                ("right/link5", "right/link6", 0.042),
-                ("right/link6", "right/gripper_base", 0.035),
+                ("left/base_link", "left/link1", 0.058),
+                ("left/link1", "left/link2", 0.052),
+                ("left/link2", "left/link3", 0.055),
+                ("left/link3", "left/link4", 0.050),
+                ("left/link4", "left/link5", 0.044),
+                ("left/link5", "left/link6", 0.042),
+                ("left/link6", "left/gripper_base", 0.035),
             ]
             self.mujoco = MuJoCoIKValidator(
                 model_path,
@@ -132,12 +123,12 @@ class HomeSceneValidator:
                 maximum_joint_step_rad=0.20,
                 joint_names=right_names,
                 left_joint_names=left_names,
-                ee_frame="right/ee",
-                right_q_offset=right_offset,
-                left_q_offset=left_offset,
-                contact_body_prefix="right/",
+                ee_frame="left/ee",
+                right_q_offset=np.zeros(6),
+                left_q_offset=np.zeros(6),
+                contact_body_prefix="left/",
                 link_capsules=link_capsules,
-                attached_spheres=[("right/gripper_base", 0.055)],
+                attached_spheres=[("left/gripper_base", 0.055)],
             )
             self.model_variant = "sam_reconstruction_upright_nyu"
         else:

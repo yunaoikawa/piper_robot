@@ -1,0 +1,648 @@
+#!/usr/bin/env python3
+"""One-command, observation-only reconstruction and measured replay pipeline."""
+
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import html
+import json
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+import numpy as np
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCHEMA = "piper_robot.offline_scene_replay_run/v1"
+
+
+def _resolve(path: str | Path) -> Path:
+    path = Path(path)
+    return path.resolve() if path.is_absolute() else (ROOT / path).resolve()
+
+
+def _hash_path(hasher, path: Path) -> None:
+    path = path.resolve()
+    hasher.update(str(path).encode())
+    if path.is_file():
+        hasher.update(path.read_bytes())
+        return
+    if not path.is_dir():
+        hasher.update(b"MISSING")
+        return
+    for child in sorted(item for item in path.rglob("*") if item.is_file()):
+        hasher.update(str(child.relative_to(path)).encode())
+        with child.open("rb") as stream:
+            while block := stream.read(1024 * 1024):
+                hasher.update(block)
+
+
+def _fingerprint(command: list[str], inputs: list[Path]) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(
+        json.dumps(command, ensure_ascii=False, separators=(",", ":")).encode()
+    )
+    for path in inputs:
+        _hash_path(hasher, path)
+    return hasher.hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        while block := stream.read(1024 * 1024):
+            hasher.update(block)
+    return hasher.hexdigest()
+
+
+def _run_stage(
+    *,
+    name: str,
+    command: list[str],
+    inputs: list[Path],
+    outputs: list[Path],
+    output_root: Path,
+    force: bool,
+    environment: dict[str, str] | None = None,
+) -> dict:
+    cache_dir = output_root / "cache"
+    log_dir = output_root / "logs"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    fingerprint = _fingerprint(command, inputs)
+    cache_path = cache_dir / f"{name}.json"
+    if (
+        not force
+        and cache_path.exists()
+        and all(path.exists() for path in outputs)
+    ):
+        cache = json.loads(cache_path.read_text())
+        expected_hashes = cache.get("output_sha256", {})
+        outputs_match = bool(expected_hashes) and all(
+            expected_hashes.get(str(path)) == _file_sha256(path)
+            for path in outputs
+        )
+        if cache.get("fingerprint") == fingerprint and outputs_match:
+            return {
+                **cache,
+                "status": "cached",
+                "cache_hit": True,
+                "duration_s": 0.0,
+            }
+    started = time.monotonic()
+    stdout_path = log_dir / f"{name}.stdout.log"
+    stderr_path = log_dir / f"{name}.stderr.log"
+    merged_environment = dict(__import__("os").environ)
+    merged_environment.update(environment or {})
+    existing_pythonpath = merged_environment.get("PYTHONPATH", "")
+    merged_environment["PYTHONPATH"] = (
+        str(ROOT)
+        if not existing_pythonpath
+        else str(ROOT) + __import__("os").pathsep + existing_pythonpath
+    )
+    with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open(
+        "w",
+        encoding="utf-8",
+    ) as stderr:
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            stdout=stdout,
+            stderr=stderr,
+            env=merged_environment,
+            check=False,
+        )
+    duration = time.monotonic() - started
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"stage {name} failed ({completed.returncode}); "
+            f"see {stderr_path}"
+        )
+    missing = [str(path) for path in outputs if not path.exists()]
+    if missing:
+        raise RuntimeError(f"stage {name} omitted outputs: {missing}")
+    cache = {
+        "name": name,
+        "status": "completed",
+        "cache_hit": False,
+        "fingerprint": fingerprint,
+        "command": command,
+        "inputs": [str(path) for path in inputs],
+        "outputs": [str(path) for path in outputs],
+        "output_sha256": {
+            str(path): _file_sha256(path) for path in outputs
+        },
+        "duration_s": duration,
+        "stdout": str(stdout_path),
+        "stderr": str(stderr_path),
+    }
+    cache_path.write_text(
+        json.dumps(cache, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return cache
+
+
+def _write_mobile_index(output: Path, pipeline: dict) -> Path:
+    target = pipeline["summary"]["latest_target_center_scene_m"]
+    shift = pipeline["summary"]["recorded_to_latest_shift_m"]
+    shift_mm = 1000.0 * sum(value * value for value in shift) ** 0.5
+    moving_clear = pipeline["summary"]["moving_arm_path_clear"]
+    global_clear = pipeline["summary"]["global_scene_home_clear"]
+    page = f"""<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pasteur offline replay</title>
+<style>
+:root{{color-scheme:dark}}body{{margin:0;background:#08111f;color:#f8fafc;
+font:16px/1.5 system-ui,sans-serif}}main{{max-width:760px;margin:auto;padding:20px}}
+.card,a{{display:block;background:#172033;border-radius:14px;padding:14px;
+margin:12px 0;color:#7dd3fc;text-decoration:none}}.ok{{color:#86efac}}
+.warn{{color:#fbbf24}}video,img{{width:100%;border-radius:12px;background:#000}}
+small{{color:#a8b4c5}}code{{overflow-wrap:anywhere}}
+</style></head><body><main>
+<h1>Pasteur オフライン再構成・軌道</h1>
+<div class="card"><b class="ok">実機コマンド送信なし</b><br>
+右腕の計画軌道: <b class="{'ok' if moving_clear else 'warn'}">
+{'衝突なし' if moving_clear else '未承認'}</b><br>
+シーン全体: <b class="{'ok' if global_clear else 'warn'}">
+{'衝突なし' if global_clear else '静止左腕側に未解消接触あり'}</b></div>
+<video controls playsinline preload="metadata"
+ poster="render/recorded_replay_start.png">
+<source src="render/recorded_replay.mp4" type="video/mp4"></video>
+<small>黄=成功時対象、青=最新推定、シアン=計画EE軌道。記録点は実測、
+点間はMuJoCoで再計画。</small>
+<a href="mobile/mujoco_home.html"><b>MuJoCo home（軽量3D）</b></a>
+<a href="mobile/semantic_3d.html"><b>SAM意味付き3D（軽量）</b></a>
+<a href="mobile/source_esdf_scene.html"><b>ESDF（軽量）</b></a>
+<a href="render/recorded_replay_final.png"><b>最終姿勢画像</b></a>
+<a href="target/overlays/05_latest_target_after_drop.png">
+<b>最新対象のRGB-D検出</b></a>
+<a href="pipeline_report.json"><b>機械可読パイプライン報告</b></a>
+<div class="card"><small>最新中心 [m]</small><br><code>
+{html.escape(json.dumps(target))}</code><br>
+成功時から最新位置までのXY差: {shift_mm:.1f} mm</div>
+</main></body></html>"""
+    path = output / "index.html"
+    path.write_text(page, encoding="utf-8")
+    return path
+
+
+def run(config_path: Path, output: Path, *, force: bool) -> dict:
+    started = time.monotonic()
+    config_path = config_path.resolve()
+    config = json.loads(config_path.read_text())
+    output.mkdir(parents=True, exist_ok=True)
+    python = sys.executable
+    stages = []
+
+    base_config = config["base_scene"]
+    multiview_report = _resolve(base_config["multiview_report"])
+    semantic_profile = _resolve(base_config["profile"])
+    semantic_profile_data = json.loads(semantic_profile.read_text())
+    catalog = (
+        semantic_profile.parent / semantic_profile_data["catalog"]
+    ).resolve()
+    base_dir = output / "base_scene"
+    base_scene_json = base_dir / "scene.json"
+    base_scene_model = base_dir / "scene.xml"
+    base_positioned_robot = base_dir / "positioned_robot.xml"
+    base_semantic_view = base_dir / "semantic_3d.html"
+    base_esdf_view = base_dir / "source_esdf_scene.html"
+    base_command = [
+        python,
+        str(ROOT / "src/build_semantic_scene.py"),
+        "--multiview-report",
+        str(multiview_report),
+        "--profile",
+        str(semantic_profile),
+        "--output-dir",
+        str(base_dir),
+        "--daily-scene",
+        str(base_dir / "daily_scene.json"),
+    ]
+    stages.append(
+        _run_stage(
+            name="base_semantic_scene",
+            command=base_command,
+            inputs=[
+                multiview_report.parent,
+                semantic_profile,
+                catalog,
+                ROOT / "src/build_semantic_scene.py",
+                ROOT / "rollout/semantic_scene_pipeline.py",
+            ],
+            outputs=[
+                base_scene_json,
+                base_scene_model,
+                base_positioned_robot,
+                base_semantic_view,
+                base_esdf_view,
+            ],
+            output_root=output,
+            force=force,
+        )
+    )
+    base_scene = json.loads(base_scene_json.read_text())
+    if not (
+        base_scene["readiness"]["display_ready"]
+        and base_scene["mujoco_compile"]["ok"]
+    ):
+        raise ValueError("base semantic scene display/compile gates failed")
+
+    alignment_config = config["alignment"]
+    alignment_dir = output / "alignment"
+    alignment_report = alignment_dir / "alignment_report.json"
+    alignment_scene = alignment_dir / "scene.mjcf"
+    alignment_command = [
+        python,
+        str(ROOT / "src/refine_scene_robot_alignment.py"),
+        "--reference-report",
+        str(_resolve(alignment_config["reference_report"])),
+        "--reference-capture",
+        str(_resolve(alignment_config["reference_capture"])),
+        "--current-capture",
+        str(_resolve(alignment_config["current_capture"])),
+        "--robot-mask-dir",
+        str(_resolve(alignment_config["robot_mask_dir"])),
+        "--scene-json",
+        str(base_scene_json),
+        "--scene-model",
+        str(base_scene_model),
+        "--positioned-robot",
+        str(base_positioned_robot),
+        "--output-dir",
+        str(alignment_dir),
+        "--tag-id",
+        str(alignment_config.get("tag_id", 3)),
+        "--tag-size-m",
+        str(alignment_config.get("tag_size_m", 0.06)),
+        "--support-plane-z-m",
+        str(alignment_config["support_plane_z_m"]),
+    ]
+    if alignment_config.get("baseline_is_home", True):
+        alignment_command.append("--baseline-is-home")
+    # Expanded explicitly for clear provenance and deterministic directory hash.
+    alignment_inputs = [
+        ROOT / "src/refine_scene_robot_alignment.py",
+        _resolve(alignment_config["reference_report"]),
+        _resolve(alignment_config["reference_capture"]),
+        _resolve(alignment_config["current_capture"]),
+        _resolve(alignment_config["robot_mask_dir"]),
+        base_scene_json,
+        base_scene_model,
+        base_positioned_robot,
+    ]
+    stages.append(
+        _run_stage(
+            name="alignment",
+            command=alignment_command,
+            inputs=alignment_inputs,
+            outputs=[alignment_report, alignment_scene],
+            output_root=output,
+            force=force,
+        )
+    )
+    alignment = json.loads(alignment_report.read_text())
+    if not (
+        alignment.get("accepted")
+        and alignment["persistent_depth_robot_fit"]["accepted"]
+        and alignment["home_pose_provenance"]["accepted"]
+        and alignment.get("commands_sent") is False
+    ):
+        raise ValueError("depth-aware alignment gates failed")
+
+    carving = config["collision_carving"]
+    collision_dir = output / "collision_scene"
+    collision_model = collision_dir / "scene.mjcf"
+    carve_report = collision_dir / "carve_report.json"
+    replay_config = _resolve(config["recorded_replay_config"])
+    carve_command = [
+        python,
+        str(ROOT / "src/carve_robot_semantic_collision.py"),
+        "--model",
+        str(alignment_scene),
+        "--alignment-report",
+        str(alignment_report),
+        "--output-model",
+        str(collision_model),
+        "--report",
+        str(carve_report),
+        "--verified-keyframes-config",
+        str(replay_config),
+        "--physical-right-model-branch",
+        carving.get("physical_right_model_branch", "left"),
+        "--robot-clearance-margin-m",
+        str(carving.get("robot_clearance_margin_m", 0.03)),
+        "--maximum-removed-fraction",
+        str(carving.get("maximum_removed_fraction", 0.5)),
+    ]
+    for prefix in carving["allowed_body_prefixes"]:
+        carve_command.extend(["--allowed-body-prefix", prefix])
+    for prefix in carving.get("robot_body_prefixes", ["left/"]):
+        carve_command.extend(["--robot-body-prefix", prefix])
+    stages.append(
+        _run_stage(
+            name="semantic_collision_carving",
+            command=carve_command,
+            inputs=[
+                alignment_scene,
+                alignment_report,
+                replay_config,
+                ROOT / "rollout/semantic_collision_carving.py",
+                ROOT / "src/carve_robot_semantic_collision.py",
+            ],
+            outputs=[collision_model, carve_report],
+            output_root=output,
+            force=force,
+        )
+    )
+    carve = json.loads(carve_report.read_text())
+    if not carve.get("accepted"):
+        raise ValueError("semantic collision carving gate failed")
+
+    target_config = _resolve(config["wrist_target_config"])
+    target_dir = output / "target"
+    target_report = target_dir / "wrist_target_report.json"
+    object_scene = target_dir / "latest_target_scene.json"
+    target_command = [
+        python,
+        str(ROOT / "src/calibrate_wrist_rgbd_target.py"),
+        "--config",
+        str(target_config),
+        "--scene-model",
+        str(collision_model),
+        "--output-dir",
+        str(target_dir),
+    ]
+    target_profile = json.loads(target_config.read_text())
+    target_inputs = [
+        target_config,
+        collision_model,
+        ROOT / "rollout/wrist_rgbd_target.py",
+        ROOT / "src/calibrate_wrist_rgbd_target.py",
+        *[_resolve(item["path"]) for item in target_profile["captures"]],
+    ]
+    stages.append(
+        _run_stage(
+            name="wrist_rgbd_target",
+            command=target_command,
+            inputs=target_inputs,
+            outputs=[target_report, object_scene],
+            output_root=output,
+            force=force,
+        )
+    )
+    target = json.loads(target_report.read_text())
+    if not (
+        target.get("accepted")
+        and target["target_geometry_gate"]["accepted"]
+        and target.get("commands_sent") is False
+    ):
+        raise ValueError("wrist RGB-D target gates failed")
+
+    trajectory_dir = output / "trajectory"
+    trajectory_path = trajectory_dir / "trajectory.json"
+    trajectory_command = [
+        python,
+        str(ROOT / "src/build_recorded_trajectory_replay.py"),
+        "--config",
+        str(replay_config),
+        "--model",
+        str(collision_model),
+        "--object-scene",
+        str(object_scene),
+        "--output",
+        str(trajectory_path),
+    ]
+    stages.append(
+        _run_stage(
+            name="recorded_trajectory",
+            command=trajectory_command,
+            inputs=[
+                replay_config,
+                collision_model,
+                object_scene,
+                ROOT / "rollout/recorded_trajectory_replay.py",
+                ROOT / "src/build_recorded_trajectory_replay.py",
+            ],
+            outputs=[trajectory_path],
+            output_root=output,
+            force=force,
+        )
+    )
+    trajectory = json.loads(trajectory_path.read_text())
+    if not (
+        trajectory["validation"]["all_keyframes_exact"]
+        and trajectory["validation"]["moving_arm_path_clear"]
+        and trajectory.get("commands_sent") is False
+    ):
+        raise ValueError("recorded trajectory gates failed")
+
+    render_config = config["render"]
+    render_dir = output / "render"
+    render_report = render_dir / "render_report.json"
+    render_command = [
+        python,
+        str(ROOT / "src/render_recorded_trajectory_replay.py"),
+        "--model",
+        str(collision_model),
+        "--trajectory",
+        str(trajectory_path),
+        "--output-dir",
+        str(render_dir),
+        "--width",
+        str(render_config.get("width", 640)),
+        "--height",
+        str(render_config.get("height", 480)),
+        "--fps",
+        str(render_config.get("fps", 15)),
+        "--camera-azimuth-deg",
+        str(render_config.get("camera_azimuth_deg", 90.0)),
+        "--camera-elevation-deg",
+        str(render_config.get("camera_elevation_deg", -28.0)),
+        "--camera-distance-m",
+        str(render_config.get("camera_distance_m", 1.65)),
+    ]
+    stages.append(
+        _run_stage(
+            name="render_replay",
+            command=render_command,
+            inputs=[
+                collision_model,
+                trajectory_path,
+                ROOT / "src/render_recorded_trajectory_replay.py",
+            ],
+            outputs=[
+                render_report,
+                render_dir / "recorded_replay.mp4",
+                render_dir / "recorded_replay_start.png",
+                render_dir / "recorded_replay_final.png",
+            ],
+            output_root=output,
+            force=force,
+            environment={"MUJOCO_GL": "egl"},
+        )
+    )
+
+    views_dir = output / "views"
+    full_home = views_dir / "mujoco_home_full.html"
+    home_command = [
+        python,
+        str(ROOT / "src/render_mujoco_mobile.py"),
+        "--model",
+        str(collision_model),
+        "--output",
+        str(full_home),
+        "--keyframe",
+        "home",
+        "--camera-eye",
+        "-1.4",
+        "1.6",
+        "1.0",
+    ]
+    stages.append(
+        _run_stage(
+            name="render_home_3d",
+            command=home_command,
+            inputs=[collision_model, ROOT / "src/render_mujoco_mobile.py"],
+            outputs=[full_home],
+            output_root=output,
+            force=force,
+        )
+    )
+
+    mobile_config = config["mobile"]
+    mobile_dir = output / "mobile"
+    mobile_sources = {
+        "mujoco_home": full_home,
+        "semantic_3d": base_semantic_view,
+        "source_esdf_scene": base_esdf_view,
+    }
+    for name, source in mobile_sources.items():
+        mobile_output = mobile_dir / f"{name}.html"
+        mobile_report = mobile_dir / f"{name}.report.json"
+        command = [
+            python,
+            str(ROOT / "src/optimize_plotly_mobile.py"),
+            "--source",
+            str(source),
+            "--output",
+            str(mobile_output),
+            "--maximum-faces",
+            str(mobile_config.get("maximum_faces", 1200)),
+            "--maximum-points",
+            str(mobile_config.get("maximum_points", 2500)),
+            "--report",
+            str(mobile_report),
+        ]
+        stages.append(
+            _run_stage(
+                name=f"mobile_{name}",
+                command=command,
+                inputs=[source, ROOT / "src/optimize_plotly_mobile.py"],
+                outputs=[mobile_output, mobile_report, mobile_dir / "plotly.min.js"],
+                output_root=output,
+                force=force,
+            )
+        )
+
+    object_data = json.loads(object_scene.read_text())
+    object_record = object_data["objects"][0]
+    latest_center = np.asarray(
+        object_record["pose_scene"],
+        dtype=float,
+    )[:3, 3]
+    successful = np.asarray(
+        object_data["source"]["episode_targets_scene_xyz_m"][
+            "successful_grasp_before_lift"
+        ],
+        dtype=float,
+    )
+    successful[2] = latest_center[2]
+    summary = {
+        "latest_target_center_scene_m": latest_center.tolist(),
+        "recorded_success_target_center_scene_m": successful.tolist(),
+        "recorded_to_latest_shift_m": (latest_center - successful).tolist(),
+        "target_train_rms_m": target["fit"]["train_rms_m"],
+        "target_holdout_max_error_m": target["fit"][
+            "maximum_holdout_point_error_m"
+        ],
+        "all_measured_keyframes_exact": trajectory["validation"][
+            "all_keyframes_exact"
+        ],
+        "moving_arm_path_clear": trajectory["validation"][
+            "moving_arm_path_clear"
+        ],
+        "global_scene_home_clear": trajectory["validation"][
+            "global_scene_home_clear"
+        ],
+        "trajectory_duration_s": trajectory["duration_s"],
+        "trajectory_joint_path_length_rad": sum(
+            item["joint_path_length_rad"] for item in trajectory["planners"]
+        ),
+        "continuous_joint_log_available": False,
+        "commands_sent": False,
+    }
+    report = {
+        "schema": SCHEMA,
+        "status": "offline_replay_ready",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "commands_sent": False,
+        "hardware_motion_authorized": False,
+        "config": str(config_path),
+        "output": str(output),
+        "stages": stages,
+        "summary": summary,
+        "limitations": [
+            (
+                "The exact stopped keyframes are measured; motion between "
+                "them is reconstructed because no continuous joint log exists."
+            ),
+            *(
+                []
+                if summary["global_scene_home_clear"]
+                else [
+                    (
+                        "Static physical-left/model-right contacts remain; "
+                        "only the moving physical-right/model-left path passed."
+                    )
+                ]
+            ),
+        ],
+        "duration_s": time.monotonic() - started,
+    }
+    report_path = output / "pipeline_report.json"
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    _write_mobile_index(output, report)
+    return report
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=ROOT / "src/configs/pasteur_offline_replay_20260730.json",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=ROOT / "data/runs/pasteur/offline_replay_20260730_v1",
+    )
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args(argv)
+    report = run(args.config, args.output_dir.resolve(), force=args.force)
+    print(json.dumps(report["summary"], indent=2, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

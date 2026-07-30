@@ -10,6 +10,11 @@
 RPCをimportせず、実機命令を送りません。見た目が正しくても
 `display_ready`、`collision_ready`、`motion_ready` は別々に判定されます。
 
+既存データからhead位置合わせ、最新wrist RGB-D対象、実測grasp keyframe、
+MuJoCo軌道、スマホ動画まで再現する入口は
+`src/run_pasteur_offline_replay.py`です。詳細は
+[OFFLINE_SCENE_REPLAY.md](OFFLINE_SCENE_REPLAY.md)を参照してください。
+
 ## 最短の再実行
 
 すでに `multiview_report.json` がある場合:
