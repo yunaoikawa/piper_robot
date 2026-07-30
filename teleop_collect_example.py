@@ -439,6 +439,16 @@ class MinimalTeleopCollector:
                 self.latest_right_ee_pose = right
             time.sleep(0.01)
 
+    def _reset_recovery_torque_guard(self, arm):
+        """Reset an engagement baseline without racing the state reader.
+
+        ``RecoveryTorqueGuard`` and ``_robot_state_thread`` intentionally share
+        the robot RPC client.  Its pyzmq REQ socket permits only one in-flight
+        request, so every access must use the same lock.
+        """
+        with self.robot_rpc_lock:
+            self.recovery_torque_guard.reset(arm)
+
     def _recording_worker(self):
         while not self.stop_event.is_set():
             try:
@@ -685,7 +695,7 @@ class MinimalTeleopCollector:
                 self.start_teleop_left = True
                 if self.mode == "recovery":
                     self.recovery_safety.reset("left")
-                    self.recovery_torque_guard.reset("left")
+                    self._reset_recovery_torque_guard("left")
             if cs.left_y:
                 self.start_teleop_left = False
 
@@ -695,7 +705,7 @@ class MinimalTeleopCollector:
                 self.start_teleop_right = True
                 if self.mode == "recovery":
                     self.recovery_safety.reset("right")
-                    self.recovery_torque_guard.reset("right")
+                    self._reset_recovery_torque_guard("right")
             if cs.right_b:
                 self.start_teleop_right = False
 
@@ -746,6 +756,18 @@ class MinimalTeleopCollector:
                                 ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
                                 gripper_target=gr, preview_time=0.05,
                             )
+                        elif self.mode == "recovery":
+                            # A discontinuous Quest target is rejected for this
+                            # frame.  Drop engagement so the next held X frame
+                            # re-anchors controller and robot poses instead of
+                            # comparing forever against the stale target.
+                            self.start_teleop_left = False
+                            self.X_Cinit_left = self.X_ee_init_left = None
+                            print(
+                                "[RECOVERY] LEFT target rejected; "
+                                "re-anchoring without motion.",
+                                flush=True,
+                            )
                 if self.start_teleop_right and self.X_Cinit_right is not None and self.X_ee_init_right is not None:
                     torque_ok = (
                         self.mode != "recovery"
@@ -769,6 +791,14 @@ class MinimalTeleopCollector:
                             self.robot.set_right_ee_target(
                                 ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
                                 gripper_target=gr, preview_time=0.05,
+                            )
+                        elif self.mode == "recovery":
+                            self.start_teleop_right = False
+                            self.X_Cinit_right = self.X_ee_init_right = None
+                            print(
+                                "[RECOVERY] RIGHT target rejected; "
+                                "re-anchoring without motion.",
+                                flush=True,
                             )
 
             if self.is_recording:

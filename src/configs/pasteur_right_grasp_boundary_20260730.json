@@ -1,0 +1,83 @@
+{
+  "schema": "piper_robot.grasp_boundary_capture_labels/v1",
+  "camera": "right",
+  "target_class": "thin_transparent_lid",
+  "label_policy": {
+    "human_confirmation_overrides_image_only_inference": true,
+    "unknown_is_not_negative": true,
+    "wrist_depth_is_metric_authority": false
+  },
+  "samples": [
+    {
+      "id": "post_drop_target_absent",
+      "capture": "data/captures/pasteur/2026-07-30/20260730T084444.336453Z_right_post_drop_shallow_grasp_failure_b9cd0efb",
+      "labels": {
+        "window_ready": false,
+        "support_ready": null,
+        "closure_nonempty": null,
+        "target_follows_lift": false,
+        "overall_ready": false
+      },
+      "provenance": "user reported a grasp followed by a drop; image shows no target between the fingers"
+    },
+    {
+      "id": "preclose_boundary_unknown",
+      "capture": "data/captures/pasteur/2026-07-30/20260730T084521.302896Z_right_preclose_deep_insertion_support_candidate_51c4f1cc",
+      "labels": {
+        "window_ready": null,
+        "support_ready": null,
+        "closure_nonempty": null,
+        "target_follows_lift": null,
+        "overall_ready": null
+      },
+      "provenance": "image-only candidate; user elected to reposition rather than verify it"
+    },
+    {
+      "id": "verified_true_preclose",
+      "capture": "data/captures/pasteur/2026-07-30/20260730T084719.059549Z_right_verified_true_preclose_deep_insertion_support_ready_5425d3ba",
+      "labels": {
+        "window_ready": true,
+        "support_ready": true,
+        "closure_nonempty": null,
+        "target_follows_lift": null,
+        "overall_ready": true
+      },
+      "provenance": "explicit human verification: 'これは本当'"
+    },
+    {
+      "id": "verified_closed_before_lift",
+      "capture": "data/captures/pasteur/2026-07-30/20260730T084808.308665Z_right_verified_closed_grasp_before_lift_ba5ed5b8",
+      "labels": {
+        "window_ready": true,
+        "support_ready": true,
+        "closure_nonempty": true,
+        "target_follows_lift": null,
+        "overall_ready": true
+      },
+      "measurements": {
+        "right_gripper_open_ratio": 0.5888571428571429
+      },
+      "provenance": "closed gripper remains visibly and mechanically nonempty before lift"
+    },
+    {
+      "id": "verified_target_follows_lift",
+      "capture": "data/captures/pasteur/2026-07-30/20260730T085019.211586Z_right_verified_lift_test_closed_grasp_a71273bb",
+      "labels": {
+        "window_ready": true,
+        "support_ready": false,
+        "closure_nonempty": true,
+        "target_follows_lift": true,
+        "overall_ready": true
+      },
+      "measurements": {
+        "right_gripper_open_ratio": 0.5734285714285714,
+        "ee_delta_xyz_m_from_pre_lift": [
+          -0.01118229128294036,
+          0.018310340074355465,
+          0.012311442527130606
+        ]
+      },
+      "provenance": "target stays registered between the fingers after a measured 12.3 mm upward EE displacement"
+    }
+  ]
+}
