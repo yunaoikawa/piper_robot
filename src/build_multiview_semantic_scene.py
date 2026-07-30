@@ -681,19 +681,52 @@ def _qpos_from_report(report: dict) -> tuple[list[float] | None, str | None]:
 def _write_index(path: Path, scene: dict) -> None:
     readiness = scene["readiness"]
     reasons = "".join(f"<li>{item}</li>" for item in readiness["reasons"])
+    optimization_rows = []
+    for item in scene.get("objects", ()):
+        report = item.get("semantic_volume_fit", {})
+        if not report.get("attempted"):
+            continue
+        before = report.get("initial", {})
+        after = report.get("optimized", {})
+        optimization_rows.append(
+            "<tr>"
+            f"<td>{item['semantic_name']}</td>"
+            f"<td>{report.get('accepted')}</td>"
+            f"<td>{before.get('objective', float('nan')):.4f}</td>"
+            f"<td>{after.get('objective', float('nan')):.4f}</td>"
+            f"<td>{100 * report.get('improvement_fraction', 0.0):.1f}%</td>"
+            f"<td>{100 * before.get('known_free_intrusion_fraction', 0.0):.2f}%</td>"
+            f"<td>{100 * after.get('known_free_intrusion_fraction', 0.0):.2f}%</td>"
+            f"<td>{np.degrees(before.get('yaw_rad', 0.0)):.1f}°</td>"
+            f"<td>{np.degrees(after.get('yaw_rad', 0.0)):.1f}°</td>"
+            "</tr>"
+        )
+    optimization = (
+        "<h2>体積最適化</h2><div class=\"scroll\"><table><thead><tr>"
+        "<th>物体</th><th>採用</th><th>前loss</th><th>後loss</th>"
+        "<th>改善</th><th>free侵入 前</th><th>free侵入 後</th>"
+        "<th>yaw前</th><th>yaw後</th></tr></thead><tbody>"
+        + "".join(optimization_rows)
+        + "</tbody></table></div>"
+        if optimization_rows
+        else ""
+    )
     path.write_text(
         """<!doctype html><meta name="viewport" content="width=device-width">
 <meta charset="utf-8"><title>Pasteur semantic scene</title>
 <style>body{font:16px system-ui;margin:22px;max-width:760px;background:#111827;
 color:#f9fafb}a{display:block;margin:12px 0;padding:14px;border-radius:12px;
 background:#1f2937;color:#7dd3fc;text-decoration:none}.ok{color:#86efac}
-.no{color:#fca5a5}code{overflow-wrap:anywhere}</style>
+.no{color:#fca5a5}code{overflow-wrap:anywhere}.scroll{overflow-x:auto}
+table{border-collapse:collapse;min-width:720px}th,td{padding:8px;border:1px solid #475569;
+text-align:right}th:first-child,td:first-child{text-align:left}</style>
 <h1>SAM-first 3D / MuJoCo</h1>
 <p>表示: <b class="ok">%s</b>　衝突: <b class="%s">%s</b>　動作: <b class="%s">%s</b></p>
 <a href="semantic_3d.html">意味付き3D（観測面／推論形状）</a>
 <a href="mujoco_home.html">MuJoCo（NYU gripper・home）</a>
 <a href="source_esdf_scene.html">元の保守的ESDF（インタラクティブ）</a>
 <a href="scene.json">scene.json</a>
+%s
 <h2>未承認理由</h2><ul>%s</ul>
 <p>このページの表示可否と実機動作許可は別です。現在のモデルは実機へ命令しません。</p>
 """
@@ -703,6 +736,7 @@ background:#1f2937;color:#7dd3fc;text-decoration:none}.ok{color:#86efac}
             readiness["collision_ready"],
             "ok" if readiness["motion_ready"] else "no",
             readiness["motion_ready"],
+            optimization,
             reasons,
         ),
         encoding="utf-8",

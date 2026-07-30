@@ -11,6 +11,8 @@ coordinates before inspecting the SAM overlay and reconstruction report.
 ## Workflow
 
 1. Read [references/pipeline-contract.md](references/pipeline-contract.md).
+   For end-to-end unattended replay, also follow
+   [../../docs/SEMANTIC_SCENE_AUTOMATION.md](../../docs/SEMANTIC_SCENE_AUTOMATION.md).
 2. Identify a synchronized RGB image and organized, levelled RGB-D mesh.
 3. Select a scene profile and inspect its object catalog.
 4. Run `src/build_semantic_scene.py`. Prefer live SAM3; use `--mask` only for
@@ -40,6 +42,16 @@ MUJOCO_GL=egl python src/build_semantic_scene.py \
   --profile src/configs/pasteur_semantic_scene.json \
   --output-dir COMPLETED_OUTPUT \
   --daily-scene COMPLETED_OUTPUT/daily_scene.json
+```
+
+For a capture-to-MuJoCo run with logs, hashes, validation, and optimization
+metrics, prefer the Codex-free production entrypoint:
+
+```bash
+MUJOCO_GL=egl python src/run_semantic_scene_pipeline.py \
+  --capture CAPTURE_DIR \
+  --profile src/configs/pasteur_semantic_scene.json \
+  --output-dir OUTPUT_DIR
 ```
 
 Without an accepted camera-to-robot transform this is display-only.  Do not
