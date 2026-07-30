@@ -2136,6 +2136,14 @@ def _resume_confirmed(args) -> dict:
 
 
 def build(args) -> dict:
+    if getattr(args, "multiview_report", None):
+        if getattr(args, "rgb", None) or getattr(args, "mesh", None):
+            raise ValueError(
+                "--multiview-report is mutually exclusive with --rgb/--mesh"
+            )
+        from src.build_multiview_semantic_scene import build as build_multiview
+
+        return build_multiview(args)
     if args.resume_confirmed:
         return _resume_confirmed(args)
     if not args.rgb or not args.mesh:
@@ -2637,6 +2645,10 @@ def build(args) -> dict:
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--capture")
+    parser.add_argument(
+        "--multiview-report",
+        help="completed multiview_report.json to semantically complete",
+    )
     parser.add_argument("--rgb")
     parser.add_argument("--mesh")
     parser.add_argument("--profile", required=True)

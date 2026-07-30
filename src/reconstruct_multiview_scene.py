@@ -927,6 +927,18 @@ def build(args) -> dict:
             "z_up": True,
             "right_handed": True,
             "camera_to_robot_extrinsic_used": False,
+            "T_level_first_camera": level_from_reference.tolist(),
+            "transform_convention": "p_level = T_level_first_camera @ p_camera",
+        },
+        "robot_state": {
+            "capture_mode": manifest.get("capture_mode"),
+            "operator_action": manifest.get("operator_action"),
+            "commands_sent": False,
+            "per_view": {
+                view["name"]: view.get("robot_state")
+                for view in manifest.get("views", ())
+                if view.get("robot_state") is not None
+            },
         },
         "readiness": {
             "display_ready": display_ready,

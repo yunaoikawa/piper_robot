@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Capture manually repositioned, stopped Record3D RGB-D views.
+"""Capture stopped Record3D RGB-D views with optional synchronized robot state.
 
 The phone stays connected for the complete capture so every saved pose shares
 one Record3D session frame.  The script never sends a robot command.  It asks
-the operator to move the head RGB-D camera and press Enter before each burst.
+the operator to move either the head camera or robot and press Enter before
+each burst.  In robot-pose mode, read-only qpos snapshots bracket every burst.
 """
 
 from __future__ import annotations
@@ -54,6 +55,47 @@ def _quality(rgb: np.ndarray, depth: np.ndarray, confidence: np.ndarray) -> dict
         "depth_valid_fraction": float(np.mean(valid)),
         "depth_median_m": float(np.median(depth[valid])) if np.any(valid) else None,
         "confidence_high_fraction": float(np.mean(confidence == 2)),
+    }
+
+
+def _robot_qpos(snapshot: dict | None) -> np.ndarray | None:
+    if not snapshot:
+        return None
+    left = snapshot.get("left_joint_positions_rad")
+    right = snapshot.get("right_joint_positions_rad")
+    if left is None or right is None:
+        return None
+    result = np.asarray([*left, *right], dtype=float)
+    return result if result.shape == (12,) and np.all(np.isfinite(result)) else None
+
+
+def _robot_state_stability(
+    before: dict | None,
+    after: dict | None,
+    *,
+    maximum_joint_delta_rad: float,
+) -> dict:
+    before_qpos = _robot_qpos(before)
+    after_qpos = _robot_qpos(after)
+    if before_qpos is None or after_qpos is None:
+        return {
+            "accepted": False,
+            "reason": "complete_joint_state_missing",
+            "maximum_joint_delta_rad": None,
+            "threshold_rad": float(maximum_joint_delta_rad),
+        }
+    delta = np.abs(after_qpos - before_qpos)
+    return {
+        "accepted": bool(np.max(delta) <= maximum_joint_delta_rad),
+        "reason": (
+            None
+            if np.max(delta) <= maximum_joint_delta_rad
+            else "robot_moved_during_rgbd_burst"
+        ),
+        "maximum_joint_delta_rad": float(np.max(delta)),
+        "per_joint_delta_rad": delta.tolist(),
+        "threshold_rad": float(maximum_joint_delta_rad),
+        "representative_qpos_rad": ((before_qpos + after_qpos) / 2).tolist(),
     }
 
 
@@ -148,7 +190,19 @@ def main() -> int:
     parser.add_argument(
         "--robot-state",
         action="store_true",
-        help="save read-only robot state before and after capture",
+        help="save read-only robot state around every stopped-view burst",
+    )
+    parser.add_argument(
+        "--operator-action",
+        choices=("move-camera", "move-robot"),
+        default="move-camera",
+        help="what the operator changes between stopped-view bursts",
+    )
+    parser.add_argument(
+        "--maximum-joint-delta-rad",
+        type=float,
+        default=0.005,
+        help="maximum accepted qpos change during one RGB-D burst",
     )
     parser.add_argument("--robot-host", default="localhost")
     parser.add_argument("--robot-port", type=int, default=8081)
@@ -161,6 +215,8 @@ def main() -> int:
         or any(not item.strip() or "/" in item for item in views)
     ):
         parser.error("views must be unique safe names and frames-per-view >= 3")
+    if args.operator_action == "move-robot" and not args.robot_state:
+        parser.error("--operator-action move-robot requires --robot-state")
 
     created_ns = time.time_ns()
     session_id = (
@@ -191,7 +247,12 @@ def main() -> int:
         "view_order": views,
         "frames_per_view": args.frames_per_view,
         "pose_frame": "single_record3d_session_local",
-        "capture_mode": "manual_camera_reposition_only",
+        "capture_mode": (
+            "manual_robot_reposition_read_only_capture"
+            if args.operator_action == "move-robot"
+            else "manual_camera_reposition_only"
+        ),
+        "operator_action": args.operator_action,
         "commands_sent": False,
         "repository": git_provenance(),
         "completed_view_names": [],
@@ -280,12 +341,18 @@ def main() -> int:
 
     saved_views = []
     for index, name in enumerate(views, 1):
+        subject = "robot" if args.operator_action == "move-robot" else "head camera"
         print(
-            f"\n[{index}/{len(views)}] head cameraを{name!r}位置へ動かし、"
+            f"\n[{index}/{len(views)}] {subject}を{name!r}位置へ動かし、"
             "完全に静止させてから Enter を押してください。",
             flush=True,
         )
         input()
+        view_robot_before = (
+            robot_state_snapshot(args.robot_host, args.robot_port)
+            if args.robot_state
+            else None
+        )
         with lock:
             active_frames.clear()
             active_view = name
@@ -298,7 +365,23 @@ def main() -> int:
             captured = list(active_frames)
         if errors:
             raise RuntimeError(errors[-1])
+        view_robot_after = (
+            robot_state_snapshot(args.robot_host, args.robot_port)
+            if args.robot_state
+            else None
+        )
         view_record = _write_view(session_dir, name, captured)
+        if args.robot_state:
+            view_record["robot_state"] = {
+                "before": view_robot_before,
+                "after": view_robot_after,
+                "stability": _robot_state_stability(
+                    view_robot_before,
+                    view_robot_after,
+                    maximum_joint_delta_rad=args.maximum_joint_delta_rad,
+                ),
+                "commands_sent": False,
+            }
         saved_views.append(view_record)
         # Checkpoint every completed burst.  A phone/USB disconnect during a
         # later view must not make already written RGB-D data undiscoverable.
@@ -324,6 +407,14 @@ def main() -> int:
         if not stability["accepted"]:
             raise RuntimeError(
                 f"{name}: camera moved during burst; repeat the capture"
+            )
+        if (
+            args.operator_action == "move-robot"
+            and not view_record["robot_state"]["stability"]["accepted"]
+        ):
+            raise RuntimeError(
+                f"{name}: robot state was unavailable or changed during burst; "
+                "repeat the capture"
             )
 
     robot_after = (

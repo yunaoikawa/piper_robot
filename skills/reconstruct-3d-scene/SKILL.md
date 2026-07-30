@@ -26,6 +26,60 @@ coordinates before inspecting the SAM overlay and reconstruction report.
    [../../docs/ACTIVE_MULTIVIEW_SCENE_CAPTURE.md](../../docs/ACTIVE_MULTIVIEW_SCENE_CAPTURE.md)
    and keep capture authority separate from reconstruction readiness.
 
+## Tagless multiview and robot calibration
+
+For a completed `piper_robot.multiview_semantic_scene/v1` report, run semantic
+completion directly.  This route discovers the bench and raised platforms from
+horizontal measured polygons, retains their occupied-cell silhouettes, fits
+catalog primitives to SAM-labelled object points, and includes exact Piper CAD
+with the configured NYU grippers:
+
+```bash
+MUJOCO_GL=egl python src/build_semantic_scene.py \
+  --multiview-report OUTPUT/multiview_report.json \
+  --profile src/configs/pasteur_semantic_scene.json \
+  --output-dir COMPLETED_OUTPUT \
+  --daily-scene COMPLETED_OUTPUT/daily_scene.json
+```
+
+Without an accepted camera-to-robot transform this is display-only.  Do not
+promote the visually fitted robot bases to collision authority.
+
+To obtain the transform without AprilTags, keep the head camera fixed and let
+the operator teleoperate at least four distinct, fully stopped arm poses.  The
+capture process reads qpos before and after each RGB-D burst but sends no robot
+commands:
+
+```bash
+python src/capture_record3d_multiview.py \
+  --operator-action move-robot --robot-state \
+  --view pose_1 --view pose_2 --view pose_3 --view pose_holdout
+```
+
+Then fit exact pose-specific CAD to the SAM robot masks:
+
+```bash
+python src/calibrate_head_robot_from_cad.py \
+  --capture CAPTURE_DIR \
+  --profile src/configs/pasteur_semantic_scene.json \
+  --output CALIBRATION_JSON
+```
+
+The first poses are fit data and the last pose is a holdout.  The calibrator
+also removes the eroded mask intersection that remains fixed across all poses;
+this suppresses static clutter such as a microscope strut mistakenly labelled
+as arm.  Accept only reports whose `accepted` field is true.  The fixed gates
+cover depth residuals, union and per-arm silhouette overlap, holdout accuracy,
+and independent-pose transform repeatability.
+
+Rebuild the multiview report after synchronized capture so it contains
+`T_level_first_camera` and per-view qpos provenance, then pass the accepted
+report to semantic completion with `--calibration-report`.  Collision
+readiness additionally requires operator-confirmed objects, successful MuJoCo
+compilation, pinned NYU grippers, and no robot/environment penetration above
+the configured tolerance.  Motion readiness remains a separate downstream
+planning decision.
+
 ## Required behavior
 
 - Run SAM before semantic object completion.
