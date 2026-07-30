@@ -140,9 +140,6 @@ class CalibrationJogController:
         joint_command_preview_s: float = 0.05,
         joint_minimum_progress: float = 0.25,
         joint_maximum_progress: float = 1.50,
-        workspace_min: np.ndarray | None = None,
-        workspace_max: np.ndarray | None = None,
-        workspace_bounds: dict[str, tuple[np.ndarray, np.ndarray]] | None = None,
         motion_preparers: dict[str, Any] | None = None,
         audit_path: str | Path | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -173,31 +170,6 @@ class CalibrationJogController:
         self.joint_command_preview_s = float(joint_command_preview_s)
         self.joint_minimum_progress = float(joint_minimum_progress)
         self.joint_maximum_progress = float(joint_maximum_progress)
-        if workspace_bounds is not None and (
-            workspace_min is not None or workspace_max is not None
-        ):
-            raise ValueError("use shared or per-arm workspace bounds, not both")
-        if (workspace_min is None) != (workspace_max is None):
-            raise ValueError("workspace minimum and maximum must be supplied together")
-        if workspace_bounds is None:
-            workspace_bounds = (
-                {}
-                if workspace_min is None
-                else {
-                    arm: (workspace_min, workspace_max)
-                    for arm in ("left", "right")
-                }
-            )
-        self.workspace_bounds = {}
-        for arm in ("left", "right"):
-            if arm not in workspace_bounds:
-                continue
-            minimum, maximum = workspace_bounds[arm]
-            minimum = _finite_vector(minimum, 3, f"{arm} workspace minimum")
-            maximum = _finite_vector(maximum, 3, f"{arm} workspace maximum")
-            if np.any(minimum >= maximum):
-                raise ValueError(f"{arm} workspace bounds are invalid")
-            self.workspace_bounds[arm] = (minimum, maximum)
         self.motion_preparers = dict(motion_preparers or {})
         if not set(self.motion_preparers).issubset({"left", "right"}):
             raise ValueError("motion preparers contain an unknown arm")
@@ -261,23 +233,8 @@ class CalibrationJogController:
                 "joint_positions_rad": qpos.tolist(),
                 "joint_torque": torque.tolist(),
                 "torque_limit": self.thresholds[arm].tolist(),
-                "cartesian_jog_available": bool(
-                    arm not in self.workspace_bounds
-                    or (
-                        np.all(
-                            _finite_vector(
-                                pose.translation(), 3, f"{arm} EE translation"
-                            )
-                            >= self.workspace_bounds[arm][0]
-                        )
-                        and np.all(
-                            _finite_vector(
-                                pose.translation(), 3, f"{arm} EE translation"
-                            )
-                            <= self.workspace_bounds[arm][1]
-                        )
-                    )
-                ),
+                "cartesian_jog_available": True,
+                "cartesian_limit_source": "ik_configuration_limits",
             }
         return result
 
@@ -464,15 +421,6 @@ class CalibrationJogController:
                 before_pose.parameters(), 7, f"{arm} EE pose"
             ).copy()
             target_xyz = start_parameters[4:7] + delta
-            bounds = self.workspace_bounds.get(arm)
-            if bounds is not None and (
-                np.any(target_xyz < bounds[0])
-                or np.any(target_xyz > bounds[1])
-            ):
-                raise CalibrationJogStop(
-                    f"{arm} Cartesian target would trigger server workspace clamp; "
-                    "use a slow joint jog"
-                )
             steps = max(
                 2, int(np.ceil(self.cartesian_move_time_s * self.monitor_hz))
             )

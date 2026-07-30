@@ -1,13 +1,11 @@
-"""Preventive safety checks applied to every EE target before it reaches the arm.
+"""Preventive geometric checks applied to streamed EE targets.
 
-The arms expose no force, torque or current feedback (see robot/arm/arm.py), so
-there is no way to notice that something was hit. Everything here is therefore
-*preventive* and geometric: we reject commands that would enter a forbidden
-volume or that jump further than any demonstration ever did.
-
-This is the second layer. The first is `clamp_ee_target()` in robot/cone_e.py,
-which bounds the reachable box; that one silently corrects, this one refuses.
-They are deliberately independent so a mistake in one does not disable the other.
+The demo-derived Cartesian workspace box was removed because absence from a
+demonstration does not identify an unsafe location.  This layer now rejects
+only explicitly measured keep-out volumes and discontinuous Quest targets.
+Measured joint torque is monitored independently by the active motion
+controller (for recovery teleoperation, by
+``rollout.recovery_teleop_safety``).
 
 Limits are grounded in measurement, not taste:
   per-step EE displacement over all 360,863 demo transitions at 30 Hz

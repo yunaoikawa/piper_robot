@@ -66,9 +66,9 @@ not be online: by default Pasteur subscribes directly to the lab Quest at
 through the MacBook.  Disengage the arm before capturing each stopped pose.
 
 The jog UI never initializes or homes.  A direction key stages one 5 mm
-robot-frame Cartesian move; it sends nothing until Enter confirms it.  ConeE
-uses separate mirrored Y workspace bounds for the left and right arms; the UI
-refuses any command that would be clamped.  Cartesian jogs stream a one-second
+robot-frame Cartesian move; it sends nothing until Enter confirms it.  The
+former demo-derived Cartesian workspace box has been removed: absence from a
+demo is not a physical safety boundary.  Cartesian jogs stream a one-second
 trajectory of short-horizon IK targets, matching the command pattern used by
 teleoperation, and require the measured EE to finish within 3 mm.  Select a
 joint with `[` / `]`, then use `-` / `+` for a slow 0.005 rad joint move when

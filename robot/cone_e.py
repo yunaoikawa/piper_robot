@@ -1,6 +1,5 @@
 import argparse
 import functools
-import time
 import numpy as np
 import mink
 import atexit
@@ -8,73 +7,6 @@ from pathlib import Path
 
 from robot.arm.arm import ArmNode
 from robot.rpc import RPCServer
-
-
-# =============================================================================
-# Workspace boundaries (metres)
-# =============================================================================
-# Derived from every demo we have (23 absolute-action datasets across all 10
-# tasks, action + state, both arms) plus a 5 cm margin. Regenerate with:
-#     srun ... python src/calibrate_workspace.py
-#
-# The previous hand-set values were unusable and that is why the clamp below was
-# commented out: their z floor of 0.617 sat *above* the 0.599 that petri2bench
-# actually reaches, so 4-5% of that task's commanded frames would have been
-# clipped -- right at the grasp, where the operational `z-bias -0.025` lives.
-# The bias would have been silently swallowed and the task would have regressed
-# with no error. The margin is deliberately wider (5 cm) than the largest bias
-# in use (3 cm, see outputs/lab/act/horizon/EVAL_RESULTS.md) so a bias can never
-# be eaten by the clamp without the arm first leaving the demonstrated envelope.
-#
-# Note these are not uniformly looser: y_min tightens from -0.498 to -0.176,
-# since nothing ever demonstrated reaching that far.
-RIGHT_WORKSPACE_MIN = np.array([-0.054, -0.176, 0.549])
-RIGHT_WORKSPACE_MAX = np.array([0.589, 0.437, 1.102])
-LEFT_WORKSPACE_MIN = np.array(
-    [RIGHT_WORKSPACE_MIN[0], -RIGHT_WORKSPACE_MAX[1], RIGHT_WORKSPACE_MIN[2]]
-)
-LEFT_WORKSPACE_MAX = np.array(
-    [RIGHT_WORKSPACE_MAX[0], -RIGHT_WORKSPACE_MIN[1], RIGHT_WORKSPACE_MAX[2]]
-)
-# Backwards-compatible aliases for right-side-only callers.
-WORKSPACE_MIN = RIGHT_WORKSPACE_MIN
-WORKSPACE_MAX = RIGHT_WORKSPACE_MAX
-
-
-_clamp_log = {"last": 0.0, "suppressed": 0}
-
-
-def clamp_ee_target(
-    ee_target: mink.SE3,
-    *,
-    workspace_min: np.ndarray = WORKSPACE_MIN,
-    workspace_max: np.ndarray = WORKSPACE_MAX,
-    arm: str = "right",
-) -> mink.SE3:
-    """Return a new SE3 with translation clamped to workspace boundaries.
-
-    A clamp that fires silently is the dangerous case -- it turns a bias or a
-    policy command into a no-op with no symptom other than the task quietly
-    failing. So the first hit always prints; after that we throttle to once a
-    second (this runs at 30 Hz) and report how many were folded in.
-    """
-    p = ee_target.translation()
-    p_clamped = np.clip(p, workspace_min, workspace_max)
-
-    if not np.allclose(p, p_clamped):
-        now = time.time()
-        if now - _clamp_log["last"] >= 1.0:
-            extra = (f"  (+{_clamp_log['suppressed']} more in the last second)"
-                     if _clamp_log["suppressed"] else "")
-            print(f"[Workspace:{arm}] Position clamped: {np.round(p, 3)} → "
-                  f"{np.round(p_clamped, 3)}{extra}", flush=True)
-            _clamp_log["last"] = now
-            _clamp_log["suppressed"] = 0
-        else:
-            _clamp_log["suppressed"] += 1
-
-    wxyz = ee_target.rotation().wxyz
-    return mink.SE3(np.concatenate([wxyz, p_clamped]))
 
 
 def require_initialization(func):
@@ -152,12 +84,6 @@ class ConeE:
 
     @require_initialization
     def set_left_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
-        ee_target = clamp_ee_target(
-            ee_target,
-            workspace_min=LEFT_WORKSPACE_MIN,
-            workspace_max=LEFT_WORKSPACE_MAX,
-            arm="left",
-        )
         return self.left_arm.set_ee_target(
             ee_target, gripper_target, preview_time
         )
@@ -207,6 +133,14 @@ class ConeE:
         return self.left_arm.get_joint_torque()
 
     @require_initialization
+    def get_left_gain(self) -> dict[str, np.ndarray]:
+        gain = self.left_arm.piper.get_gain()
+        return {
+            "kp": np.asarray(gain.kp, dtype=float).copy(),
+            "kd": np.asarray(gain.kd, dtype=float).copy(),
+        }
+
+    @require_initialization
     def get_left_gripper_exact(self) -> float:
         """Get left gripper position as open ratio (0.0=closed, 1.0=open)."""
         if self.left_arm.gripper is not None:
@@ -224,12 +158,6 @@ class ConeE:
 
     @require_initialization
     def set_right_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
-        ee_target = clamp_ee_target(
-            ee_target,
-            workspace_min=RIGHT_WORKSPACE_MIN,
-            workspace_max=RIGHT_WORKSPACE_MAX,
-            arm="right",
-        )
         return self.right_arm.set_ee_target(
             ee_target, gripper_target, preview_time
         )
@@ -253,6 +181,14 @@ class ConeE:
     @require_initialization
     def get_right_joint_torque(self) -> np.ndarray:
         return self.right_arm.get_joint_torque()
+
+    @require_initialization
+    def get_right_gain(self) -> dict[str, np.ndarray]:
+        gain = self.right_arm.piper.get_gain()
+        return {
+            "kp": np.asarray(gain.kp, dtype=float).copy(),
+            "kd": np.asarray(gain.kd, dtype=float).copy(),
+        }
 
     @require_initialization
     def get_right_gripper_exact(self) -> float:

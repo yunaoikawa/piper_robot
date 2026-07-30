@@ -47,6 +47,10 @@ from record3d import Record3DStream
 from robot.rpc import RPCClient
 from robot.teleop.oculus_msgs import parse_controller_state
 from robot.camera_id import load_camera_map
+from rollout.calibration_keyboard_jog import load_torque_thresholds
+from rollout.head_stream import HeadCameraStreamServer
+from rollout.recovery_teleop_safety import RecoveryTorqueGuard
+from rollout.safety import SafetyLayer
 
 VR_TCP_HOST = "192.168.1.48"
 VR_TCP_PORT = 5555
@@ -179,7 +183,8 @@ class MinimalTeleopCollector:
         self.args = args
         self.mode = args.mode
         self.save_dir = DATA_DIR
-        self.save_dir.mkdir(parents=True, exist_ok=True)
+        if self.mode != "recovery":
+            self.save_dir.mkdir(parents=True, exist_ok=True)
 
         if self.mode == "parity":
             for sub in ("type_even", "type_odd"):
@@ -202,8 +207,33 @@ class MinimalTeleopCollector:
         self.robot_rpc_lock = threading.Lock()
         with self.robot_rpc_lock:
             self.robot.init()
-            self.robot.home_left_arm()
-            self.robot.home_right_arm()
+            if self.mode != "recovery":
+                self.robot.home_left_arm()
+                self.robot.home_right_arm()
+            else:
+                print("[RECOVERY] Preserving the current arm poses (no automatic home).")
+
+        self.recovery_safety = SafetyLayer.from_config(args.safety_config)
+        self.recovery_torque_guard = None
+        if self.mode == "recovery":
+            thresholds, torque_provenance = load_torque_thresholds(
+                args.torque_config,
+                allow_symmetric_left_fallback=(
+                    args.allow_symmetric_left_torque_fallback
+                ),
+            )
+            self.recovery_torque_guard = RecoveryTorqueGuard(
+                self.robot,
+                thresholds,
+                consecutive_samples=torque_provenance["consecutive_samples"],
+                audit_path=args.recovery_audit_log,
+                provenance=torque_provenance,
+            )
+            print(
+                "[RECOVERY] Torque watchdog active; "
+                f"audit={Path(args.recovery_audit_log).resolve()}",
+                flush=True,
+            )
 
         self.latest_controller_state = None
         self.controller_state_lock = threading.Lock()
@@ -215,6 +245,18 @@ class MinimalTeleopCollector:
         self.cameras = {}
         self.camera_threads = []
         self._init_cameras()
+
+        self.head_stream = None
+        if not args.no_head_stream:
+            self.head_stream = HeadCameraStreamServer(
+                self._head_frame,
+                host=args.head_stream_host,
+                port=args.head_stream_port,
+                token=args.head_stream_token,
+                fps=args.head_stream_fps,
+                status_provider=self._head_stream_status,
+            )
+            self.head_stream.start()
 
         self.is_recording = False
         self._recording_start_time = 0
@@ -228,13 +270,46 @@ class MinimalTeleopCollector:
         self.oculus_thread = threading.Thread(target=self._oculus_thread, daemon=True)
         self.robot_state_thread = threading.Thread(target=self._robot_state_thread, daemon=True)
         self.recording_thread = threading.Thread(target=self._recording_worker, daemon=True)
-        self.display_thread = threading.Thread(target=self._display_loop, daemon=True)
+        self.display_thread = None
+        if not args.no_display:
+            self.display_thread = threading.Thread(target=self._display_loop, daemon=True)
         self.enter_thread = threading.Thread(target=self._enter_listener, daemon=True)
         self.oculus_thread.start()
         self.robot_state_thread.start()
         self.recording_thread.start()
-        self.display_thread.start()
+        if self.display_thread:
+            self.display_thread.start()
         self.enter_thread.start()
+
+    def _head_frame(self):
+        camera = self.cameras.get("head")
+        if camera is None:
+            return None
+        rgb, _, _ = camera.get_latest()
+        return rgb
+
+    def _head_stream_status(self):
+        if self.mode == "recovery":
+            if (
+                self.recovery_torque_guard is not None
+                and self.recovery_torque_guard.latched
+            ):
+                stopped = "+".join(
+                    arm.upper()
+                    for arm in sorted(self.recovery_torque_guard.latched)
+                )
+                return f"RECOVERY TORQUE STOP {stopped}"
+            arms = []
+            if self.start_teleop_left:
+                arms.append("LEFT")
+            if self.start_teleop_right:
+                arms.append("RIGHT")
+            return "RECOVERY " + ("+".join(arms) if arms else "ARMED / HOLDING")
+        if getattr(self, "is_recording", False):
+            current_step = getattr(self, "_current_step", None)
+            episode_count = getattr(self, "episode_count", 0)
+            return f"REC {current_step or ('EPISODE ' + str(episode_count))}"
+        return "LIVE / NOT RECORDING"
 
     def _step_subdir(self, step_index):
         d = self.save_dir / self.steps[step_index]
@@ -529,7 +604,11 @@ class MinimalTeleopCollector:
         prev_any_teleop = False
         prev_all_stopped = True
 
-        if self.mode == "parity":
+        if self.mode == "recovery":
+            print("[LOOP] Mode: remote recovery (no recording, no automatic home)")
+            print("[LOOP] X/A engages an arm; Y/B disengages it and holds position.")
+            print(f"[LOOP] Quest messages older than {self.args.vr_timeout:.2f}s disengage both arms.")
+        elif self.mode == "parity":
             print("[LOOP] Mode: parity (even -> type_even, odd -> type_odd)")
             print(f"[LOOP] Starting at episode {self.episode_count}")
             print("[LOOP] Trigger a controller (X/Y or A/B) to record. Enter to quit.")
@@ -548,6 +627,18 @@ class MinimalTeleopCollector:
                 rate.sleep()
                 continue
 
+            if (self.mode == "recovery" and
+                    (time.time() - cs.created_timestamp) > self.args.vr_timeout):
+                if self.start_teleop_left or self.start_teleop_right:
+                    print("[VR] Controller connection stale; disengaging both arms and holding.")
+                    self.start_teleop_left = False
+                    self.start_teleop_right = False
+                    self.recovery_safety.reset()
+                prev_any_teleop = False
+                prev_all_stopped = True
+                rate.sleep()
+                continue
+
             with self.robot_state_lock:
                 eeL = self.latest_left_ee_pose
                 eeR = self.latest_right_ee_pose
@@ -555,17 +646,23 @@ class MinimalTeleopCollector:
                 rate.sleep()
                 continue
 
-            if cs.left_x:
+            if cs.left_x and not self.start_teleop_left:
                 self.X_Cinit_left = cs.left_SE3
                 self.X_ee_init_left = eeL
                 self.start_teleop_left = True
+                if self.mode == "recovery":
+                    self.recovery_safety.reset("left")
+                    self.recovery_torque_guard.reset("left")
             if cs.left_y:
                 self.start_teleop_left = False
 
-            if cs.right_a:
+            if cs.right_a and not self.start_teleop_right:
                 self.X_Cinit_right = cs.right_SE3
                 self.X_ee_init_right = eeR
                 self.start_teleop_right = True
+                if self.mode == "recovery":
+                    self.recovery_safety.reset("right")
+                    self.recovery_torque_guard.reset("right")
             if cs.right_b:
                 self.start_teleop_right = False
 
@@ -573,38 +670,73 @@ class MinimalTeleopCollector:
             all_stopped = (not self.start_teleop_left) and (not self.start_teleop_right)
 
             # Do not begin a new step episode once a quit has been requested.
-            if any_teleop and not prev_any_teleop and not self._quit_requested:
-                self._start_episode()
-            if all_stopped and not prev_all_stopped:
-                with self.robot_rpc_lock:
-                    self.robot.home_left_arm()
-                    self.robot.home_right_arm()
-                self._end_episode_and_save()
+            if self.mode == "recovery":
+                if any_teleop and not prev_any_teleop:
+                    print("[RECOVERY] Control engaged.")
+                if all_stopped and not prev_all_stopped:
+                    print("[RECOVERY] Control disengaged; holding current poses.")
+                    self.recovery_safety.reset()
+            else:
+                if any_teleop and not prev_any_teleop and not self._quit_requested:
+                    self._start_episode()
+                if all_stopped and not prev_all_stopped:
+                    with self.robot_rpc_lock:
+                        self.robot.home_left_arm()
+                        self.robot.home_right_arm()
+                    self._end_episode_and_save()
 
             prev_any_teleop = any_teleop
             prev_all_stopped = all_stopped
 
             with self.robot_rpc_lock:
                 if self.start_teleop_left and self.X_Cinit_left is not None and self.X_ee_init_left is not None:
-                    Xd = self.X_Cinit_left.inverse().multiply(cs.left_SE3)
-                    Rd = self.H.inverse() @ Xd @ self.H
-                    p = self.X_ee_init_left.translation() + Rd.translation()
-                    R = Rd.rotation() @ self.X_ee_init_left.rotation()
-                    gr = 1.0 if cs.left_index_trigger < 0.5 else 0.0
-                    self.robot.set_left_ee_target(
-                        ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
-                        gripper_target=gr, preview_time=0.05,
+                    torque_ok = (
+                        self.mode != "recovery"
+                        or self.recovery_torque_guard.check("left")
                     )
+                    if not torque_ok:
+                        self.start_teleop_left = False
+                        print(
+                            "[RECOVERY] LEFT torque stop latched; "
+                            "measured joint hold sent.",
+                            flush=True,
+                        )
+                    else:
+                        Xd = self.X_Cinit_left.inverse().multiply(cs.left_SE3)
+                        Rd = self.H.inverse() @ Xd @ self.H
+                        p = self.X_ee_init_left.translation() + Rd.translation()
+                        R = Rd.rotation() @ self.X_ee_init_left.rotation()
+                        gr = 1.0 if cs.left_index_trigger < 0.5 else 0.0
+                        p = self.recovery_safety.check("left", p) if self.mode == "recovery" else p
+                        if p is not None:
+                            self.robot.set_left_ee_target(
+                                ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
+                                gripper_target=gr, preview_time=0.05,
+                            )
                 if self.start_teleop_right and self.X_Cinit_right is not None and self.X_ee_init_right is not None:
-                    Xd = self.X_Cinit_right.inverse().multiply(cs.right_SE3)
-                    Rd = self.H.inverse() @ Xd @ self.H
-                    p = self.X_ee_init_right.translation() + Rd.translation()
-                    R = Rd.rotation() @ self.X_ee_init_right.rotation()
-                    gr = 1.0 if cs.right_index_trigger < 0.5 else 0.0
-                    self.robot.set_right_ee_target(
-                        ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
-                        gripper_target=gr, preview_time=0.05,
+                    torque_ok = (
+                        self.mode != "recovery"
+                        or self.recovery_torque_guard.check("right")
                     )
+                    if not torque_ok:
+                        self.start_teleop_right = False
+                        print(
+                            "[RECOVERY] RIGHT torque stop latched; "
+                            "measured joint hold sent.",
+                            flush=True,
+                        )
+                    else:
+                        Xd = self.X_Cinit_right.inverse().multiply(cs.right_SE3)
+                        Rd = self.H.inverse() @ Xd @ self.H
+                        p = self.X_ee_init_right.translation() + Rd.translation()
+                        R = Rd.rotation() @ self.X_ee_init_right.rotation()
+                        gr = 1.0 if cs.right_index_trigger < 0.5 else 0.0
+                        p = self.recovery_safety.check("right", p) if self.mode == "recovery" else p
+                        if p is not None:
+                            self.robot.set_right_ee_target(
+                                ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
+                                gripper_target=gr, preview_time=0.05,
+                            )
 
             if self.is_recording:
                 now = time.time()
@@ -644,8 +776,12 @@ class MinimalTeleopCollector:
         if self.is_recording:
             self._end_episode_and_save()
         self.stop_event.set()
+        if self.head_stream:
+            self.head_stream.stop()
         for t in [self.oculus_thread, self.robot_state_thread, self.recording_thread,
                   self.display_thread] + self.camera_threads:
+            if t is None:
+                continue
             try:
                 t.join(timeout=1.0)
             except Exception:
@@ -658,15 +794,46 @@ def main():
     ap.add_argument("--relay-host", default="100.125.255.41")
     ap.add_argument("--relay-port", type=int, default=6006)
     ap.add_argument("--relay-topic", default="oculus_controller")
-    ap.add_argument("--mode", choices=("steps", "parity"), default="steps",
+    ap.add_argument("--mode", choices=("steps", "parity", "recovery"), default="steps",
                     help="steps: save into DATA_DIR/<step_name>/ following STEPS in order. "
-                         "parity: save into DATA_DIR/type_even|type_odd by episode parity.")
+                         "parity: save by episode parity. recovery: teleoperate without "
+                         "recording or automatic homing.")
     ap.add_argument("--start-step", default=None,
                     help=f"Name or 0-based index of the step to start from. Steps: {STEPS}")
+    ap.add_argument("--vr-timeout", type=float, default=0.75,
+                    help="Disengage teleop when Quest messages are this old (default: 0.75s).")
+    ap.add_argument("--safety-config", default=None,
+                    help="Optional keep-out-zone JSON for recovery mode (see rollout/safety.py).")
+    ap.add_argument("--torque-config", default="src/configs/pasteur_lid_torque.json",
+                    help="Joint-torque thresholds for recovery mode.")
+    ap.add_argument("--allow-symmetric-left-torque-fallback", action="store_true",
+                    help="Explicitly reuse right-arm torque thresholds for the identical left Piper.")
+    ap.add_argument(
+        "--recovery-audit-log",
+        default=(
+            "/var/tmp/piper-recovery-teleop/"
+            + datetime.now().strftime("torque-%Y%m%dT%H%M%S.jsonl")
+        ),
+        help="Append-only recovery torque audit log.",
+    )
+    ap.add_argument("--no-display", action="store_true",
+                    help="Disable local OpenCV windows (useful on a headless robot PC).")
+    ap.add_argument("--no-head-stream", action="store_true",
+                    help="Disable the phone/Quest head-camera web stream.")
+    ap.add_argument("--head-stream-host", default="0.0.0.0",
+                    help="Head stream listen address (default: all interfaces).")
+    ap.add_argument("--head-stream-port", type=int, default=8080,
+                    help="Head stream HTTP port (default: 8080).")
+    ap.add_argument("--head-stream-token", default=None,
+                    help="Optional token required as ?token=... in the stream URL.")
+    ap.add_argument("--head-stream-fps", type=float, default=15.0,
+                    help="Maximum remote head stream rate (default: 15 FPS).")
     args = ap.parse_args()
     if args.use_relay and not args.relay_host:
         raise SystemExit("ERROR: --relay-host is required when --use-relay is set.")
-    if args.mode == "parity":
+    if args.vr_timeout <= 0:
+        raise SystemExit("ERROR: --vr-timeout must be positive.")
+    if args.mode in ("parity", "recovery"):
         if args.start_step is not None:
             raise SystemExit("ERROR: --start-step only applies to --mode steps.")
         args.start_index = 0

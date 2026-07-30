@@ -40,6 +40,14 @@ def main(argv=None) -> int:
     parser.add_argument("--relay-topic", default="oculus_controller")
     parser.add_argument("--vr-timeout", type=float, default=0.75)
     parser.add_argument("--safety-config")
+    parser.add_argument(
+        "--torque-config",
+        default="src/configs/pasteur_lid_torque.json",
+    )
+    parser.add_argument(
+        "--recovery-audit-log",
+        default="/var/tmp/piper-recovery-teleop/torque-latest.jsonl",
+    )
     args = parser.parse_args(argv)
     if (
         (args.use_relay and not args.relay_host)
@@ -62,11 +70,17 @@ def main(argv=None) -> int:
     args.head_stream_port = 0
     args.head_stream_token = None
     args.head_stream_fps = 1.0
+    # The two Pasteur arms are mechanically identical.  The dedicated left
+    # envelope is collected after this calibration session; until then the
+    # user explicitly chose the audited right-to-left fallback.
+    args.allow_symmetric_left_torque_fallback = True
 
     collector = NoCameraRecoveryTeleop(args)
     atexit.register(collector.stop)
     try:
         collector.control_loop()
+    except KeyboardInterrupt:
+        print("\n[RECOVERY] Stopped; current poses held, no home.", flush=True)
     finally:
         collector.stop()
     return 0

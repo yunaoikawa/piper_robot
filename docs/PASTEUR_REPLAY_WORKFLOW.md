@@ -89,12 +89,15 @@ From `outputs/lab/act/horizon/EVAL_RESULTS.md`:
                        • per-step motion cap 40 mm (demo max was 30 mm)
                        • reject → arm holds
                               │
-                    cone_e.set_*_ee_target()  ->  clamp_ee_target()  (robot/cone_e.py)
-                       • workspace box, calibrated for commanded active-arm frames
+                    cone_e.set_*_ee_target()
+                       • IK configuration/joint limits
+                       • discontinuous joint-branch rejection
 ```
 
-Both trajectory sources go through the *same* bias + safety + clamp path, so
-anything you tune on replay carries over to the policy and vice-versa.
+Both trajectory sources go through the same bias, explicit keep-out, jump,
+IK-limit, MuJoCo/ESDF, and torque gates.  The former demo-min/max Cartesian box
+was removed because it prevented generalization without representing a
+physical obstacle.
 
 ## Files (all should now be on pasteur)
 
@@ -114,7 +117,7 @@ layer. The checker fails loudly if you have a half-version.
 |---|---|---|
 | `rollout/controller.py` | **merged**: camera fixes + bias + safety + set_bias | merged |
 | `rollout/safety.py` | keep-out + per-step cap; rejects → hold | new |
-| `robot/cone_e.py` | workspace clamp re-enabled, bounds recalibrated | new |
+| `robot/cone_e.py` | arm RPC; no demo-derived Cartesian workspace box | pasteur |
 | `src/set_bias.py` | change the live bias, no restart | new |
 | `src/configs/safety.json` | keep-out zones (ships EMPTY) + step cap | new |
 | `replay_demo.py` | replay one HDF5 demo through the pipeline | new |
@@ -145,11 +148,11 @@ python replay_demo.py path/to/episode.hdf5 --rate 15 \
 
 Replay defaults to `--arms auto`: an arm with no meaningful pose or gripper
 change is omitted from every action and holds its current pose. This matters for
-right-arm-only demos, whose recorded left-arm home pose may sit outside the
-active-task workspace. Use `--arms left|right|both` only to override detection
-deliberately. Before connecting to the robot, `--dry-run` validates quaternions,
-workspace bounds, and consecutive steps. A live run also aborts if the first
-target is more than 40 mm or 15 degrees from the post-home pose.
+right-arm-only demos, whose recorded left-arm home pose must not be replayed.
+Use `--arms left|right|both` only to override detection deliberately. Before
+connecting to the robot, `--dry-run` validates quaternions, MuJoCo IK/joint
+limits, ESDF clearance, and consecutive steps. A live run also aborts if the
+first target is more than 40 mm or 15 degrees from the post-home pose.
 
 For supervised contact alignment, pause just before the grasp and adjust in
 small increments while the arm holds its pose:

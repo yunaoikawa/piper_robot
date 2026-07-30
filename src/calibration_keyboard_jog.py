@@ -119,12 +119,6 @@ def main(argv=None) -> int:
         allow_symmetric_left_fallback=args.allow_symmetric_left_torque_fallback,
     )
     rpc = RPCClient(args.robot_host, args.robot_port, timeout_ms=4000)
-    from robot.cone_e import (
-        LEFT_WORKSPACE_MAX,
-        LEFT_WORKSPACE_MIN,
-        RIGHT_WORKSPACE_MAX,
-        RIGHT_WORKSPACE_MIN,
-    )
 
     motion_preparers = {
         arm: PiperRealtimeMotionPreparation(rpc, arm)
@@ -144,10 +138,6 @@ def main(argv=None) -> int:
         joint_step_rad=args.joint_step_rad,
         joint_move_time_s=args.joint_move_time_s,
         joint_command_preview_s=args.joint_command_preview_s,
-        workspace_bounds={
-            "left": (LEFT_WORKSPACE_MIN, LEFT_WORKSPACE_MAX),
-            "right": (RIGHT_WORKSPACE_MIN, RIGHT_WORKSPACE_MAX),
-        },
         motion_preparers=motion_preparers,
         audit_path=args.audit_log,
     )

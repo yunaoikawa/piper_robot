@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Capture stopped Record3D RGB-D views with optional synchronized robot state.
 
-The phone stays connected for the complete capture so every saved pose shares
-one Record3D session frame.  The script never sends a robot command.  It asks
-the operator to move either the head camera or robot and press Enter before
-each burst.  In robot-pose mode, read-only qpos snapshots bracket every burst.
+Normally the phone stays connected for the complete capture.  An interrupted
+fixed-camera robot calibration may be resumed after validating every saved
+file hash; the new Record3D connection is then recorded as a separate segment.
+The script never sends a robot command.  It asks the operator to move either
+the head camera or robot and press Enter before each burst.  In robot-pose
+mode, read-only qpos snapshots bracket every burst.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -168,6 +171,99 @@ def _write_view(
     }
 
 
+def _validate_file_record(session_dir: Path, record: dict, label: str) -> None:
+    relative = record.get("path")
+    if not isinstance(relative, str) or not relative:
+        raise ValueError(f"{label}: file path is missing")
+    path = (session_dir / relative).resolve()
+    try:
+        path.relative_to(session_dir.resolve())
+    except ValueError as exc:
+        raise ValueError(f"{label}: file escapes capture directory") from exc
+    if not path.is_file():
+        raise ValueError(f"{label}: file is missing: {path}")
+    expected_bytes = record.get("bytes")
+    if expected_bytes is not None and path.stat().st_size != int(expected_bytes):
+        raise ValueError(f"{label}: byte count changed: {path}")
+    expected_hash = record.get("sha256")
+    if expected_hash:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_hash:
+            raise ValueError(f"{label}: sha256 changed: {path}")
+
+
+def _load_resume_manifest(
+    session_dir: Path,
+    *,
+    requested_views: list[str] | None,
+    frames_per_view: int | None,
+    condition: str | None,
+    operator_action: str | None,
+) -> tuple[dict, list[str], list[dict]]:
+    """Validate an interrupted capture before appending any new view."""
+
+    session_dir = session_dir.resolve()
+    partial = session_dir / "manifest.partial.json"
+    final = session_dir / "manifest.json"
+    if final.exists():
+        raise ValueError(f"capture is already complete: {final}")
+    if not partial.is_file():
+        raise ValueError(f"resume manifest is missing: {partial}")
+    manifest = json.loads(partial.read_text(encoding="utf-8"))
+    if (
+        manifest.get("schema") != "piper_robot.rgbd_multiview_capture/v1"
+        or manifest.get("status") != "collecting"
+        or manifest.get("commands_sent") is not False
+    ):
+        raise ValueError("resume manifest has incompatible schema or authority")
+    views = list(manifest.get("view_order") or [])
+    if not views or len(set(views)) != len(views):
+        raise ValueError("resume manifest has invalid view_order")
+    if requested_views is not None and list(requested_views) != views:
+        raise ValueError("requested views do not match interrupted capture")
+    if (
+        frames_per_view is not None
+        and int(frames_per_view) != int(manifest.get("frames_per_view", -1))
+    ):
+        raise ValueError("frames-per-view does not match interrupted capture")
+    if condition is not None and condition != manifest.get("purpose"):
+        raise ValueError("condition does not match interrupted capture")
+    if operator_action is not None and operator_action != manifest.get(
+        "operator_action"
+    ):
+        raise ValueError("operator-action does not match interrupted capture")
+
+    saved_views = list(manifest.get("views") or [])
+    completed = list(manifest.get("completed_view_names") or [])
+    names = [item.get("name") for item in saved_views]
+    if completed != names or completed != views[: len(completed)]:
+        raise ValueError("completed views are not an ordered view prefix")
+    for view in saved_views:
+        name = view["name"]
+        if not view.get("pose_stability", {}).get("accepted", False):
+            raise ValueError(f"{name}: saved camera burst was not accepted")
+        if (
+            manifest.get("operator_action") == "move-robot"
+            and not view.get("robot_state", {})
+            .get("stability", {})
+            .get("accepted", False)
+        ):
+            raise ValueError(f"{name}: saved robot state was not accepted")
+        _validate_file_record(session_dir, view["frames_index"], f"{name}:index")
+        _validate_file_record(session_dir, view["preview"], f"{name}:preview")
+        for frame in view.get("frames", []):
+            for key, record in frame.get("files", {}).items():
+                _validate_file_record(
+                    session_dir,
+                    record,
+                    f"{name}:frame-{frame.get('sequence')}:{key}",
+                )
+    return manifest, views, saved_views
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -176,7 +272,7 @@ def main() -> int:
         dest="views",
         help="stopped-view name; defaults to center, left, right",
     )
-    parser.add_argument("--frames-per-view", type=int, default=7)
+    parser.add_argument("--frames-per-view", type=int)
     parser.add_argument("--warmup-frames", type=int, default=15)
     parser.add_argument("--view-timeout-s", type=float, default=20.0)
     parser.add_argument(
@@ -185,7 +281,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--condition",
-        default="manual_head_multiview",
+    )
+    parser.add_argument(
+        "--resume-session",
+        help="append only the remaining views to an interrupted session directory",
     )
     parser.add_argument(
         "--robot-state",
@@ -195,7 +294,6 @@ def main() -> int:
     parser.add_argument(
         "--operator-action",
         choices=("move-camera", "move-robot"),
-        default="move-camera",
         help="what the operator changes between stopped-view bursts",
     )
     parser.add_argument(
@@ -207,7 +305,30 @@ def main() -> int:
     parser.add_argument("--robot-host", default="localhost")
     parser.add_argument("--robot-port", type=int, default=8081)
     args = parser.parse_args()
-    views = args.views or ["center", "left", "right"]
+    if args.resume_session:
+        session_dir = Path(args.resume_session).resolve()
+        manifest, views, saved_views = _load_resume_manifest(
+            session_dir,
+            requested_views=args.views,
+            frames_per_view=args.frames_per_view,
+            condition=args.condition,
+            operator_action=args.operator_action,
+        )
+        args.frames_per_view = int(manifest["frames_per_view"])
+        args.condition = str(manifest["purpose"])
+        args.operator_action = str(manifest["operator_action"])
+        args.robot_state = bool(
+            args.robot_state or args.operator_action == "move-robot"
+        )
+        session_id = str(manifest["session_id"])
+        partial_manifest = session_dir / "manifest.partial.json"
+        calibration_dir = session_dir / "calibration"
+    else:
+        views = args.views or ["center", "left", "right"]
+        args.frames_per_view = args.frames_per_view or 7
+        args.condition = args.condition or "manual_head_multiview"
+        args.operator_action = args.operator_action or "move-camera"
+        saved_views = []
     if (
         args.frames_per_view < 3
         or args.warmup_frames < 0
@@ -217,47 +338,77 @@ def main() -> int:
         parser.error("views must be unique safe names and frames-per-view >= 3")
     if args.operator_action == "move-robot" and not args.robot_state:
         parser.error("--operator-action move-robot requires --robot-state")
-
-    created_ns = time.time_ns()
-    session_id = (
-        datetime.fromtimestamp(created_ns / 1e9, tz=timezone.utc).strftime(
-            "%Y%m%dT%H%M%S.%fZ"
+    if not args.resume_session:
+        created_ns = time.time_ns()
+        session_id = (
+            datetime.fromtimestamp(created_ns / 1e9, tz=timezone.utc).strftime(
+                "%Y%m%dT%H%M%S.%fZ"
+            )
+            + f"_head_{args.condition}_{uuid.uuid4().hex[:8]}"
         )
-        + f"_head_{args.condition}_{uuid.uuid4().hex[:8]}"
+        session_dir = (
+            Path(args.output_root)
+            / datetime.fromtimestamp(
+                created_ns / 1e9, tz=timezone.utc
+            ).date().isoformat()
+            / session_id
+        )
+        session_dir.mkdir(parents=True, exist_ok=False)
+        calibration_dir = session_dir / "calibration"
+        calibration_dir.mkdir()
+        if CAMERA_MAP_PATH.exists():
+            shutil.copy2(CAMERA_MAP_PATH, calibration_dir / CAMERA_MAP_PATH.name)
+        partial_manifest = session_dir / "manifest.partial.json"
+        manifest = {
+            "schema": "piper_robot.rgbd_multiview_capture/v1",
+            "schema_version": 1,
+            "session_id": session_id,
+            "status": "collecting",
+            "purpose": args.condition,
+            "created_at_utc": utc_iso(created_ns),
+            "camera_label": "head",
+            "view_order": views,
+            "frames_per_view": args.frames_per_view,
+            "pose_frame": "single_record3d_session_local",
+            "capture_mode": (
+                "manual_robot_reposition_read_only_capture"
+                if args.operator_action == "move-robot"
+                else "manual_camera_reposition_only"
+            ),
+            "operator_action": args.operator_action,
+            "commands_sent": False,
+            "repository": git_provenance(),
+            "completed_view_names": [],
+            "views": [],
+        }
+        write_json(partial_manifest, manifest)
+
+    connections = list(manifest.get("record3d_connections") or [])
+    if args.resume_session and not connections:
+        connections.append(
+            {
+                "id": "connection_000",
+                "inferred_from_interrupted_manifest": True,
+                "completed_view_names": [
+                    item["name"] for item in saved_views
+                ],
+            }
+        )
+    connection_id = f"connection_{len(connections):03d}"
+    connections.append(
+        {
+            "id": connection_id,
+            "started_at_utc": utc_iso(),
+            "resume": bool(args.resume_session),
+            "completed_view_names_before": [
+                item["name"] for item in saved_views
+            ],
+        }
     )
-    session_dir = (
-        Path(args.output_root)
-        / datetime.fromtimestamp(created_ns / 1e9, tz=timezone.utc).date().isoformat()
-        / session_id
-    )
-    session_dir.mkdir(parents=True, exist_ok=False)
-    calibration_dir = session_dir / "calibration"
-    calibration_dir.mkdir()
-    if CAMERA_MAP_PATH.exists():
-        shutil.copy2(CAMERA_MAP_PATH, calibration_dir / CAMERA_MAP_PATH.name)
-    partial_manifest = session_dir / "manifest.partial.json"
-    manifest = {
-        "schema": "piper_robot.rgbd_multiview_capture/v1",
-        "schema_version": 1,
-        "session_id": session_id,
-        "status": "collecting",
-        "purpose": args.condition,
-        "created_at_utc": utc_iso(created_ns),
-        "camera_label": "head",
-        "view_order": views,
-        "frames_per_view": args.frames_per_view,
-        "pose_frame": "single_record3d_session_local",
-        "capture_mode": (
-            "manual_robot_reposition_read_only_capture"
-            if args.operator_action == "move-robot"
-            else "manual_camera_reposition_only"
-        ),
-        "operator_action": args.operator_action,
-        "commands_sent": False,
-        "repository": git_provenance(),
-        "completed_view_names": [],
-        "views": [],
-    }
+    manifest["record3d_connections"] = connections
+    if args.resume_session:
+        manifest["pose_frame"] = "fixed_camera_optical_per_connection"
+        manifest["resumed_at_utc"] = utc_iso()
     write_json(partial_manifest, manifest)
 
     robot_before = (
@@ -302,6 +453,7 @@ def main() -> int:
                 active_frames.append(
                     {
                         "view_name": active_view,
+                        "record3d_connection_id": connection_id,
                         "host_callback_realtime_ns": start_realtime_ns,
                         "host_callback_monotonic_ns": start_monotonic_ns,
                         "rgb_shape": list(rgb.shape),
@@ -338,9 +490,28 @@ def main() -> int:
             "head camera is not reporting Record3D LiDAR depth "
             f"(device_type={device_type})"
         )
+    current_device = {
+        "index": camera_index,
+        "udid": getattr(device, "udid", None),
+        "product_id": getattr(device, "product_id", None),
+        "record3d_device_type": device_type,
+        "record3d_device_type_name": "LiDAR",
+    }
+    previous_udid = manifest.get("device", {}).get("udid")
+    if (
+        previous_udid
+        and current_device["udid"]
+        and previous_udid != current_device["udid"]
+    ):
+        raise RuntimeError(
+            "resume connected a different Record3D device: "
+            f"{previous_udid} != {current_device['udid']}"
+        )
+    manifest["device"] = current_device
+    write_json(partial_manifest, manifest)
 
-    saved_views = []
-    for index, name in enumerate(views, 1):
+    remaining_views = views[len(saved_views) :]
+    for index, name in enumerate(remaining_views, len(saved_views) + 1):
         subject = "robot" if args.operator_action == "move-robot" else "head camera"
         print(
             f"\n[{index}/{len(views)}] {subject}を{name!r}位置へ動かし、"
@@ -417,6 +588,11 @@ def main() -> int:
                 "repeat the capture"
             )
 
+    connections[-1]["completed_at_utc"] = utc_iso()
+    connections[-1]["completed_view_names_after"] = [
+        item["name"] for item in saved_views
+    ]
+
     robot_after = (
         robot_state_snapshot(args.robot_host, args.robot_port)
         if args.robot_state
@@ -426,13 +602,7 @@ def main() -> int:
         {
             "status": "complete",
             "completed_at_utc": utc_iso(),
-            "device": {
-                "index": camera_index,
-                "udid": getattr(device, "udid", None),
-                "product_id": getattr(device, "product_id", None),
-                "record3d_device_type": device_type,
-                "record3d_device_type_name": "LiDAR",
-            },
+            "device": current_device,
             "views": saved_views,
             "robot_state": {
                 "before": robot_before,

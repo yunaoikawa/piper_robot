@@ -15,13 +15,6 @@ from rollout.calibration_keyboard_jog import (
     load_torque_thresholds,
 )
 from rollout.piper_realtime_motion import PiperRealtimeMotionPreparation
-from robot.cone_e import (
-    LEFT_WORKSPACE_MAX,
-    LEFT_WORKSPACE_MIN,
-    RIGHT_WORKSPACE_MAX,
-    RIGHT_WORKSPACE_MIN,
-    clamp_ee_target,
-)
 
 
 class FakeRPC:
@@ -155,24 +148,6 @@ class CalibrationKeyboardJogTest(unittest.TestCase):
         self.assertTrue(np.allclose(rpc.gains[-1][1], np.full(6, 2.5)))
         self.assertEqual(rpc.targets[-1][0], "right_joint")
 
-    def test_cone_e_workspace_y_bounds_are_mirrored_per_arm(self):
-        self.assertAlmostEqual(
-            LEFT_WORKSPACE_MIN[1], -RIGHT_WORKSPACE_MAX[1]
-        )
-        self.assertAlmostEqual(
-            LEFT_WORKSPACE_MAX[1], -RIGHT_WORKSPACE_MIN[1]
-        )
-        left_pose = mink.SE3(
-            np.array([1.0, 0.0, 0.0, 0.0, 0.29, -0.34, 0.70])
-        )
-        clamped = clamp_ee_target(
-            left_pose,
-            workspace_min=LEFT_WORKSPACE_MIN,
-            workspace_max=LEFT_WORKSPACE_MAX,
-            arm="left",
-        )
-        self.assertTrue(np.allclose(clamped.translation(), left_pose.translation()))
-
     def test_staging_and_arm_selection_send_no_command_until_confirm(self):
         rpc = FakeRPC()
         controller = _controller(rpc)
@@ -262,21 +237,17 @@ class CalibrationKeyboardJogTest(unittest.TestCase):
             controller.confirm()
         self.assertEqual(rpc.targets[-1][0], "left_joint")
 
-    def test_cartesian_target_outside_server_workspace_is_rejected(self):
+    def test_cartesian_target_is_not_rejected_by_demo_workspace(self):
         rpc = FakeRPC()
         rpc.pose["left"] = mink.SE3(
-            np.array([1.0, 0.0, 0.0, 0.0, 0.20, -0.34, 0.70])
+            np.array([1.0, 0.0, 0.0, 0.0, 0.20, -0.76, 0.70])
         )
-        controller = _controller(
-            rpc,
-            workspace_min=np.array([-0.05, -0.176, 0.549]),
-            workspace_max=np.array([0.59, 0.437, 1.102]),
-        )
+        controller = _controller(rpc)
         controller.enable()
         controller.propose("d")
-        with self.assertRaises(CalibrationJogStop):
-            controller.confirm()
-        self.assertEqual(rpc.targets, [])
+        controller.confirm()
+        self.assertGreater(len(rpc.targets), 0)
+        self.assertTrue(np.isclose(rpc.pose["left"].translation()[1], -0.76))
 
     def test_cartesian_jog_stops_when_measured_target_does_not_follow(self):
         rpc = FakeRPC()

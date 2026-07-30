@@ -1,7 +1,6 @@
 {
   "_comment": [
-    "Keep-out zones for rollout/safety.py. Axis-aligned boxes in ROBOT FRAME metres,",
-    "the same frame as WORKSPACE_MIN/MAX in robot/cone_e.py.",
+    "Keep-out zones for rollout/safety.py. Axis-aligned boxes in ROBOT FRAME metres.",
     "",
     "Starts EMPTY on purpose: a wrong zone is worse than no zone, because it rejects",
     "legitimate motion and looks like the policy failing. Measure a real one before",
