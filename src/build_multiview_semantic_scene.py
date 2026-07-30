@@ -251,7 +251,47 @@ def discover_multilevel_supports(
     return supports
 
 
-def _support_for(points: np.ndarray, supports: list[dict]) -> dict | None:
+def _support_for(
+    points: np.ndarray,
+    supports: list[dict],
+    *,
+    semantic_name: str,
+    profile: dict,
+) -> dict | None:
+    assignment = profile.get("support_assignment", {})
+    semantic_role = assignment.get("semantic_roles", {}).get(semantic_name)
+    if semantic_role in {"front_elevated", "rear_elevated"}:
+        height_tolerance = float(
+            assignment.get("elevated_height_tolerance_m", 0.020)
+        )
+        highest = max(item["height_m"] for item in supports)
+        elevated = [
+            item
+            for item in supports
+            if abs(item["height_m"] - highest) <= height_tolerance
+        ]
+        if len(elevated) >= 2:
+            axis = int(assignment.get("depth_axis", 1))
+            if axis not in (0, 1):
+                raise ValueError("support_assignment.depth_axis must be 0 or 1")
+            sign = float(assignment.get("depth_sign", 1.0))
+            if sign not in (-1.0, 1.0):
+                raise ValueError("support_assignment.depth_sign must be -1 or 1")
+            ordered = sorted(
+                elevated,
+                key=lambda item: sign
+                * float(
+                    np.mean(
+                        np.asarray(item["bounds_xy_m"], dtype=float)[:, axis]
+                    )
+                ),
+            )
+            return (
+                ordered[0]
+                if semantic_role == "front_elevated"
+                else ordered[-1]
+            )
+
     center = np.median(points[:, :2], axis=0)
     below = []
     for support in supports:
@@ -552,7 +592,12 @@ def build(args) -> dict:
         if name == "robot":
             continue
         definition = catalog[name]
-        support = _support_for(selected, supports)
+        support = _support_for(
+            selected,
+            supports,
+            semantic_name=name,
+            profile=profile,
+        )
         geometry = robust_oriented_geometry(
             selected,
             catalog=definition,

@@ -9,6 +9,7 @@ from scipy.spatial.transform import Rotation
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.build_multiview_semantic_scene import (
+    _support_for,
     discover_multilevel_supports,
     transform_points,
     voxel_components,
@@ -97,6 +98,55 @@ def test_per_view_robot_state_gate_is_read_only_and_strict():
     assert not rejected["accepted"]
 
 
+def test_semantic_support_roles_select_front_and_rear_without_pixel_rules():
+    supports = [
+        {
+            "support_id": "bench",
+            "height_m": 0.0,
+            "bounds_xy_m": [[-1.0, -1.0], [1.0, 1.0]],
+        },
+        {
+            "support_id": "front",
+            "height_m": 0.16,
+            "bounds_xy_m": [[-0.5, 0.1], [0.5, 0.5]],
+        },
+        {
+            "support_id": "rear",
+            "height_m": 0.16,
+            "bounds_xy_m": [[-0.5, 0.6], [0.5, 1.0]],
+        },
+    ]
+    profile = {
+        "support_assignment": {
+            "depth_axis": 1,
+            "depth_sign": 1,
+            "semantic_roles": {
+                "incubator": "rear_elevated",
+                "petri_lid": "front_elevated",
+            },
+        }
+    }
+    points = np.array([[0.0, 0.55, 0.2], [0.1, 0.55, 0.3], [-0.1, 0.55, 0.4]])
+    assert (
+        _support_for(
+            points,
+            supports,
+            semantic_name="incubator",
+            profile=profile,
+        )["support_id"]
+        == "rear"
+    )
+    assert (
+        _support_for(
+            points,
+            supports,
+            semantic_name="petri_lid",
+            profile=profile,
+        )["support_id"]
+        == "front"
+    )
+
+
 def test_cad_fit_recovers_synthetic_camera_to_robot_transform():
     rng = np.random.default_rng(11)
     base = np.vstack(
@@ -135,5 +185,6 @@ if __name__ == "__main__":
     test_voxel_components_separate_two_arms()
     test_multilevel_supports_keep_two_raised_platforms_and_bench()
     test_per_view_robot_state_gate_is_read_only_and_strict()
+    test_semantic_support_roles_select_front_and_rear_without_pixel_rules()
     test_cad_fit_recovers_synthetic_camera_to_robot_transform()
     print("multiview semantic completion checks passed")

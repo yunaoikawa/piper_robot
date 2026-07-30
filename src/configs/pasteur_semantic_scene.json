@@ -65,6 +65,16 @@
   "support_visual_thickness_m": 0.001,
   "support_collision_tile_size_px": 8,
   "support_collision_tile_minimum_points": 4,
+  "support_assignment": {
+    "depth_axis": 1,
+    "depth_sign": 1,
+    "elevated_height_tolerance_m": 0.02,
+    "semantic_roles": {
+      "incubator": "rear_elevated",
+      "petri_dish": "front_elevated",
+      "petri_lid": "front_elevated"
+    }
+  },
   "esdf_voxel_size_m": 0.02,
   "esdf_maximum_voxels": 2000000,
   "unknown_minimum_area_fraction": 0.01,
