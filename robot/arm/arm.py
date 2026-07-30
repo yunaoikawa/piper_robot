@@ -19,6 +19,7 @@ from piperlib import (
     Gain,
 )
 from robot.arm.ik_continuity import joint_target_is_continuous
+from robot.arm.home import physical_home_q
 from robot.arm.ik_solver import SingleArmIK
 
 # =========================
@@ -205,11 +206,11 @@ class ArmNode:
         if is_left_arm:
             joint_names = [f"right_arm_joint{i}" for i in range(1, 7)]
             ee_frame = "right_arm_ee"
-            self.home_q = np.array([0.0, 1.58, -0.58, 0.0, -0.91, 1.40])
+            self.home_q = physical_home_q("left")
         else:
             joint_names = [f"left_arm_joint{i}" for i in range(1, 7)]
             ee_frame = "left_arm_ee"
-            self.home_q = np.array([0.0, 1.58, -0.58, 0.0, -0.91, 2.35])
+            self.home_q = physical_home_q("right")
 
         self.ik_solver = SingleArmIK(
             mjcf_path,

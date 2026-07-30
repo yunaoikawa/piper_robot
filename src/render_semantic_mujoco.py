@@ -546,7 +546,7 @@ def main():
     )
     parser.add_argument(
         "--fallback-robot-model",
-        default="robot/cone-e-description/lab-scene.mjcf",
+        default="robot/pasteur-calibrated-scene/positioned_robot.mjcf",
     )
     registration_group = parser.add_mutually_exclusive_group()
     registration_group.add_argument(

@@ -157,8 +157,18 @@ class ConeEMujoco:
 
 
 if __name__ == "__main__":
-    _HERE = Path(__file__).parent
-    cone_e_mujoco = ConeEMujoco(mjcf_path=(_HERE / "cone-e-description" / "lab-scene.mjcf").as_posix())
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--mjcf",
+        required=True,
+        help=(
+            "Explicit MuJoCo model. No legacy lab-scene fallback is allowed."
+        ),
+    )
+    args = parser.parse_args()
+    cone_e_mujoco = ConeEMujoco(mjcf_path=args.mjcf)
     rpc_server = RPCServer(cone_e_mujoco, "localhost", 8081, threaded=False)
     atexit.register(rpc_server.stop)
     rpc_server.start()

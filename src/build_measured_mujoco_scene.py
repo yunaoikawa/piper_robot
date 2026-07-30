@@ -410,7 +410,7 @@ def build(args):
         "capture": str(Path(args.capture).resolve()),
         "base_robot_model": str(model_path),
         "static_scene_prior": str(
-            Path("robot/cone-e-description/lab-scene.mjcf").resolve()
+            Path("robot/pasteur-calibrated-scene/scene.mjcf").resolve()
         ),
         "robot_layout": "two_fully_separate_upright_6dof_pipers",
         "registration": registration,

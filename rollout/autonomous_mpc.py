@@ -202,6 +202,14 @@ class MuJoCoIKValidator:
         *,
         left_q=None,
         maximum_joint_step_rad: float = 0.20,
+        joint_names: Sequence[str] | None = None,
+        left_joint_names: Sequence[str] | None = None,
+        ee_frame: str = "left_arm_ee",
+        right_q_offset=None,
+        left_q_offset=None,
+        contact_body_prefix: str = "left_arm_",
+        link_capsules=None,
+        attached_spheres=None,
     ):
         import mujoco
 
@@ -211,29 +219,40 @@ class MuJoCoIKValidator:
         # ConeE's physical right arm intentionally uses the model's
         # ``left_arm_*`` branch (see ArmNode); matching that production mapping
         # is essential or FK is displaced by roughly the inter-arm baseline.
-        self.joint_names = [f"left_arm_joint{index}" for index in range(1, 7)]
+        self.joint_names = list(joint_names or [
+            f"left_arm_joint{index}" for index in range(1, 7)
+        ])
+        self.right_q_offset = np.zeros(6) if right_q_offset is None else np.asarray(
+            right_q_offset, dtype=float
+        )
+        self.left_q_offset = np.zeros(6) if left_q_offset is None else np.asarray(
+            left_q_offset, dtype=float
+        )
+        if self.right_q_offset.shape != (6,) or self.left_q_offset.shape != (6,):
+            raise ValueError("joint-space model offsets must contain six values")
+        self.contact_body_prefix = str(contact_body_prefix)
         self.solver = SingleArmIK(
             str(model_path),
             joint_names=self.joint_names,
-            ee_frame="left_arm_ee",
+            ee_frame=ee_frame,
         )
         if left_q is not None:
             left_q = np.asarray(left_q, dtype=float)
             if left_q.shape != (6,) or not np.all(np.isfinite(left_q)):
                 raise ValueError("left_q must contain six finite values")
-            left_ids = np.array(
-                [
-                    self.solver.model.joint(f"right_arm_joint{index}").qposadr[0]
-                    for index in range(1, 7)
-                ]
-            )
+            names = list(left_joint_names or [
+                f"right_arm_joint{index}" for index in range(1, 7)
+            ])
+            left_ids = np.array([
+                self.solver.model.joint(name).qposadr[0] for name in names
+            ])
             configuration = self.solver.configuration.q.copy()
-            configuration[left_ids] = left_q
+            configuration[left_ids] = left_q + self.left_q_offset
             self.solver.configuration.update(configuration)
         right_q = np.asarray(right_q, dtype=float)
         if right_q.shape != (6,) or not np.all(np.isfinite(right_q)):
             raise ValueError("right_q must contain six finite values")
-        self.solver.init(right_q)
+        self.solver.init(right_q + self.right_q_offset)
         self.previous_q = right_q.copy()
         self.maximum_joint_step_rad = float(maximum_joint_step_rad)
         self.data = mujoco.MjData(self.solver.model)
@@ -242,7 +261,7 @@ class MuJoCoIKValidator:
         self.q_waypoints: list[list[float]] = []
         # Conservative link capsules in the physical-right/model-left branch.
         # Radii describe the actual Piper links, not a task or image layout.
-        self.link_capsules = (
+        self.link_capsules = tuple(link_capsules or (
             ("left_arm_link0", "left_arm_link1", 0.058),
             ("left_arm_link1", "left_arm_link2", 0.052),
             ("left_arm_link2", "left_arm_link3", 0.055),
@@ -250,11 +269,11 @@ class MuJoCoIKValidator:
             ("left_arm_link4", "left_arm_link5", 0.044),
             ("left_arm_link5", "left_arm_link6", 0.042),
             ("left_arm_link6", "left_arm_gripper_base", 0.035),
-        )
-        self.attached_spheres = (
+        ))
+        self.attached_spheres = tuple(attached_spheres or (
             ("left_arm_gripper_base", 0.055),
             ("left_arm_iphone_body", 0.070),
-        )
+        ))
 
     def set_right_q(self, right_q: Sequence[float]) -> None:
         """Pose the physical right arm directly for recorded-trajectory replay."""
@@ -262,9 +281,36 @@ class MuJoCoIKValidator:
         right_q = np.asarray(right_q, dtype=float)
         if right_q.shape != (6,) or not np.all(np.isfinite(right_q)):
             raise ValueError("right_q must contain six finite values")
-        self.solver.init(right_q)
+        self.solver.init(right_q + self.right_q_offset)
         self.previous_q = right_q.copy()
         self.last_q = right_q.copy()
+
+    def validate_q(self, right_q: Sequence[float]) -> np.ndarray:
+        """Validate and accept one physical-right joint-space waypoint."""
+
+        right_q = np.asarray(right_q, dtype=float)
+        if right_q.shape != (6,) or not np.all(np.isfinite(right_q)):
+            raise AutonomousStop("refusing a non-finite right-arm waypoint")
+        ranges = np.asarray(
+            [self.solver.model.joint(name).range for name in self.joint_names],
+            dtype=float,
+        )
+        model_q = right_q + self.right_q_offset
+        if np.any(model_q < ranges[:, 0]) or np.any(model_q > ranges[:, 1]):
+            raise AutonomousStop("right-arm waypoint exceeds MuJoCo joint limits")
+        if np.max(np.abs(right_q - self.previous_q)) > self.maximum_joint_step_rad:
+            raise AutonomousStop("right-arm joint waypoint changed discontinuously")
+        self.solver.init(right_q + self.right_q_offset)
+        current_contacts = self._contact_pairs()
+        new_contacts = current_contacts - self.baseline_contacts
+        if new_contacts:
+            raise AutonomousStop(
+                f"MuJoCo predicts new right-arm contacts: {sorted(new_contacts)}"
+            )
+        self.previous_q = right_q.copy()
+        self.last_q = right_q.copy()
+        self.q_waypoints.append(right_q.tolist())
+        return right_q
 
     def _contact_pairs(self):
         self.data.qpos[:] = self.solver.configuration.q
@@ -274,9 +320,12 @@ class MuJoCoIKValidator:
             contact = self.data.contact[index]
             first = self.solver.model.geom(int(contact.geom1))
             second = self.solver.model.geom(int(contact.geom2))
-            first_body = self.solver.model.body(first.bodyid).name
-            second_body = self.solver.model.body(second.bodyid).name
-            if "left_arm_" in first_body or "left_arm_" in second_body:
+            first_body = self.solver.model.body(int(first.bodyid[0])).name
+            second_body = self.solver.model.body(int(second.bodyid[0])).name
+            if (
+                self.contact_body_prefix in first_body
+                or self.contact_body_prefix in second_body
+            ):
                 pairs.add(tuple(sorted((first.name, second.name))))
         return pairs
 
@@ -284,7 +333,7 @@ class MuJoCoIKValidator:
         q, solved = self.solver.solve_ik(
             pose.as_se3(), max_iter=30, pos_eps=1e-3, rot_eps=1e-3
         )
-        q = np.asarray(q, dtype=float)
+        q = np.asarray(q, dtype=float) - self.right_q_offset
         if not solved or not np.all(np.isfinite(q)):
             raise AutonomousStop("MuJoCo IK did not solve a trajectory waypoint")
         if np.max(np.abs(q - self.previous_q)) > self.maximum_joint_step_rad:
