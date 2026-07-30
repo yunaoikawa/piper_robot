@@ -28,14 +28,29 @@ from robot.rpc import RPCServer
 #
 # Note these are not uniformly looser: y_min tightens from -0.498 to -0.176,
 # since nothing ever demonstrated reaching that far.
-WORKSPACE_MIN = np.array([-0.054, -0.176, 0.549])
-WORKSPACE_MAX = np.array([0.589, 0.437, 1.102])
+RIGHT_WORKSPACE_MIN = np.array([-0.054, -0.176, 0.549])
+RIGHT_WORKSPACE_MAX = np.array([0.589, 0.437, 1.102])
+LEFT_WORKSPACE_MIN = np.array(
+    [RIGHT_WORKSPACE_MIN[0], -RIGHT_WORKSPACE_MAX[1], RIGHT_WORKSPACE_MIN[2]]
+)
+LEFT_WORKSPACE_MAX = np.array(
+    [RIGHT_WORKSPACE_MAX[0], -RIGHT_WORKSPACE_MIN[1], RIGHT_WORKSPACE_MAX[2]]
+)
+# Backwards-compatible aliases for right-side-only callers.
+WORKSPACE_MIN = RIGHT_WORKSPACE_MIN
+WORKSPACE_MAX = RIGHT_WORKSPACE_MAX
 
 
 _clamp_log = {"last": 0.0, "suppressed": 0}
 
 
-def clamp_ee_target(ee_target: mink.SE3) -> mink.SE3:
+def clamp_ee_target(
+    ee_target: mink.SE3,
+    *,
+    workspace_min: np.ndarray = WORKSPACE_MIN,
+    workspace_max: np.ndarray = WORKSPACE_MAX,
+    arm: str = "right",
+) -> mink.SE3:
     """Return a new SE3 with translation clamped to workspace boundaries.
 
     A clamp that fires silently is the dangerous case -- it turns a bias or a
@@ -44,14 +59,14 @@ def clamp_ee_target(ee_target: mink.SE3) -> mink.SE3:
     second (this runs at 30 Hz) and report how many were folded in.
     """
     p = ee_target.translation()
-    p_clamped = np.clip(p, WORKSPACE_MIN, WORKSPACE_MAX)
+    p_clamped = np.clip(p, workspace_min, workspace_max)
 
     if not np.allclose(p, p_clamped):
         now = time.time()
         if now - _clamp_log["last"] >= 1.0:
             extra = (f"  (+{_clamp_log['suppressed']} more in the last second)"
                      if _clamp_log["suppressed"] else "")
-            print(f"[Workspace] Position clamped: {np.round(p, 3)} → "
+            print(f"[Workspace:{arm}] Position clamped: {np.round(p, 3)} → "
                   f"{np.round(p_clamped, 3)}{extra}", flush=True)
             _clamp_log["last"] = now
             _clamp_log["suppressed"] = 0
@@ -137,8 +152,15 @@ class ConeE:
 
     @require_initialization
     def set_left_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
-        ee_target = clamp_ee_target(ee_target)
-        self.left_arm.set_ee_target(ee_target, gripper_target, preview_time)
+        ee_target = clamp_ee_target(
+            ee_target,
+            workspace_min=LEFT_WORKSPACE_MIN,
+            workspace_max=LEFT_WORKSPACE_MAX,
+            arm="left",
+        )
+        return self.left_arm.set_ee_target(
+            ee_target, gripper_target, preview_time
+        )
 
     @require_initialization
     def set_left_gain(self, kp: np.ndarray, kd: np.ndarray):
@@ -202,7 +224,12 @@ class ConeE:
 
     @require_initialization
     def set_right_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
-        ee_target = clamp_ee_target(ee_target)
+        ee_target = clamp_ee_target(
+            ee_target,
+            workspace_min=RIGHT_WORKSPACE_MIN,
+            workspace_max=RIGHT_WORKSPACE_MAX,
+            arm="right",
+        )
         return self.right_arm.set_ee_target(
             ee_target, gripper_target, preview_time
         )
@@ -288,6 +315,13 @@ def main(argv: list[str] | None = None):
         no_arms=args.no_arms,
         reset_arms_on_init=not args.attach_current,
     )
+    if args.attach_current:
+        # An attach-current server must expose valid state before any motion
+        # client connects.  This latches measured joints and enables position
+        # gains without calling reset/home.  Historically teleop happened to
+        # call init() after connecting; read-only tools correctly do not, which
+        # otherwise leaves every guarded getter returning None.
+        cone.init()
     rpc_server = RPCServer(cone, args.host, args.port, threaded=False)
     stop_callback = rpc_server.stop
     atexit.register(stop_callback)

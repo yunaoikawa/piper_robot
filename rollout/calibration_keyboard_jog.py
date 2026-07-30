@@ -132,10 +132,18 @@ class CalibrationJogController:
         preview_time_s: float = 0.6,
         monitor_time_s: float = 0.9,
         monitor_hz: float = 30.0,
+        cartesian_move_time_s: float = 1.0,
+        cartesian_command_preview_s: float = 0.05,
+        cartesian_tracking_tolerance_m: float = 0.003,
         joint_step_rad: float = 0.005,
-        joint_preview_time_s: float = 5.0,
+        joint_move_time_s: float = 1.0,
+        joint_command_preview_s: float = 0.05,
+        joint_minimum_progress: float = 0.25,
+        joint_maximum_progress: float = 1.50,
         workspace_min: np.ndarray | None = None,
         workspace_max: np.ndarray | None = None,
+        workspace_bounds: dict[str, tuple[np.ndarray, np.ndarray]] | None = None,
+        motion_preparers: dict[str, Any] | None = None,
         audit_path: str | Path | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -155,24 +163,44 @@ class CalibrationJogController:
         self.preview_time_s = float(preview_time_s)
         self.monitor_time_s = float(monitor_time_s)
         self.monitor_hz = float(monitor_hz)
+        self.cartesian_move_time_s = float(cartesian_move_time_s)
+        self.cartesian_command_preview_s = float(cartesian_command_preview_s)
+        self.cartesian_tracking_tolerance_m = float(
+            cartesian_tracking_tolerance_m
+        )
         self.joint_step_rad = float(joint_step_rad)
-        self.joint_preview_time_s = float(joint_preview_time_s)
-        self.workspace_min = (
-            None
-            if workspace_min is None
-            else _finite_vector(workspace_min, 3, "workspace minimum")
-        )
-        self.workspace_max = (
-            None
-            if workspace_max is None
-            else _finite_vector(workspace_max, 3, "workspace maximum")
-        )
-        if (self.workspace_min is None) != (self.workspace_max is None):
-            raise ValueError("workspace minimum and maximum must be supplied together")
-        if self.workspace_min is not None and np.any(
-            self.workspace_min >= self.workspace_max
+        self.joint_move_time_s = float(joint_move_time_s)
+        self.joint_command_preview_s = float(joint_command_preview_s)
+        self.joint_minimum_progress = float(joint_minimum_progress)
+        self.joint_maximum_progress = float(joint_maximum_progress)
+        if workspace_bounds is not None and (
+            workspace_min is not None or workspace_max is not None
         ):
-            raise ValueError("workspace bounds are invalid")
+            raise ValueError("use shared or per-arm workspace bounds, not both")
+        if (workspace_min is None) != (workspace_max is None):
+            raise ValueError("workspace minimum and maximum must be supplied together")
+        if workspace_bounds is None:
+            workspace_bounds = (
+                {}
+                if workspace_min is None
+                else {
+                    arm: (workspace_min, workspace_max)
+                    for arm in ("left", "right")
+                }
+            )
+        self.workspace_bounds = {}
+        for arm in ("left", "right"):
+            if arm not in workspace_bounds:
+                continue
+            minimum, maximum = workspace_bounds[arm]
+            minimum = _finite_vector(minimum, 3, f"{arm} workspace minimum")
+            maximum = _finite_vector(maximum, 3, f"{arm} workspace maximum")
+            if np.any(minimum >= maximum):
+                raise ValueError(f"{arm} workspace bounds are invalid")
+            self.workspace_bounds[arm] = (minimum, maximum)
+        self.motion_preparers = dict(motion_preparers or {})
+        if not set(self.motion_preparers).issubset({"left", "right"}):
+            raise ValueError("motion preparers contain an unknown arm")
         if (
             self.step_m <= 0.0
             or self.step_m > self.maximum_step_m
@@ -183,9 +211,19 @@ class CalibrationJogController:
             self.preview_time_s <= 0.0
             or self.monitor_time_s < self.preview_time_s
             or self.monitor_hz <= 0.0
+            or self.cartesian_move_time_s < 0.5
+            or self.cartesian_command_preview_s <= 0.0
+            or self.cartesian_command_preview_s > 0.25
+            or self.cartesian_tracking_tolerance_m <= 0.0
+            or self.cartesian_tracking_tolerance_m >= self.step_m
             or self.joint_step_rad <= 0.0
             or self.joint_step_rad > 0.005
-            or self.joint_preview_time_s < self.joint_step_rad / 0.001
+            or self.joint_move_time_s < 0.5
+            or self.joint_command_preview_s <= 0.0
+            or self.joint_command_preview_s > 0.25
+            or self.joint_minimum_progress <= 0.0
+            or self.joint_minimum_progress > 1.0
+            or self.joint_maximum_progress < 1.0
             or self.torque_consecutive_samples < 1
         ):
             raise ValueError("invalid timing or torque watchdog configuration")
@@ -224,18 +262,20 @@ class CalibrationJogController:
                 "joint_torque": torque.tolist(),
                 "torque_limit": self.thresholds[arm].tolist(),
                 "cartesian_jog_available": bool(
-                    self.workspace_min is None
-                    or np.all(
-                        _finite_vector(
-                            pose.translation(), 3, f"{arm} EE translation"
+                    arm not in self.workspace_bounds
+                    or (
+                        np.all(
+                            _finite_vector(
+                                pose.translation(), 3, f"{arm} EE translation"
+                            )
+                            >= self.workspace_bounds[arm][0]
                         )
-                        >= self.workspace_min
-                    )
-                    and np.all(
-                        _finite_vector(
-                            pose.translation(), 3, f"{arm} EE translation"
+                        and np.all(
+                            _finite_vector(
+                                pose.translation(), 3, f"{arm} EE translation"
+                            )
+                            <= self.workspace_bounds[arm][1]
                         )
-                        <= self.workspace_max
                     )
                 ),
             }
@@ -298,6 +338,63 @@ class CalibrationJogController:
     def cancel_pending(self) -> None:
         self.pending = None
 
+    def prepare_pending_motion(self) -> str | None:
+        """Apply the proven gain/MIT preparation before a pending motion."""
+
+        if self.pending is None or self.pending.kind not in {
+            "cartesian",
+            "joint",
+        }:
+            return None
+        arm = self.pending.arm
+        preparer = self.motion_preparers.get(arm)
+        if preparer is None:
+            return None
+        watchdog = TorqueWatchdog(
+            {arm: self.thresholds[arm]},
+            consecutive_limit=self.torque_consecutive_samples,
+        )
+
+        def check_torque():
+            torque = _finite_vector(
+                getattr(self.rpc, f"get_{arm}_joint_torque")(),
+                6,
+                f"{arm} torque",
+            )
+            if watchdog.check(arm, torque):
+                return
+            self.latched_stop = dict(watchdog.tripped or {})
+            raise CalibrationJogStop(
+                f"{arm} sustained torque limit during motion preparation"
+            )
+
+        try:
+            preparer.prepare(check_torque)
+        except BaseException:
+            try:
+                preparer.finish()
+            except BaseException:
+                pass
+            self._audit(
+                {
+                    "event": "motion_preparation_failed",
+                    "arm": arm,
+                    "trip": self.latched_stop,
+                }
+            )
+            raise
+        self._audit({"event": "motion_prepared", "arm": arm})
+        return arm
+
+    def finish_motion(self, arm: str | None) -> None:
+        if arm is None:
+            return
+        preparer = self.motion_preparers.get(arm)
+        if preparer is None:
+            return
+        preparer.finish()
+        self._audit({"event": "motion_finished_in_joint_hold", "arm": arm})
+
     def confirm(self) -> dict[str, Any]:
         """Execute exactly one staged command and monitor joint torque."""
 
@@ -329,29 +426,76 @@ class CalibrationJogController:
                 self.thresholds[arm],
             )
 
+        watchdog = TorqueWatchdog(
+            {arm: self.thresholds[arm]},
+            consecutive_limit=self.torque_consecutive_samples,
+        )
+        samples = [before_torque]
+
+        def check_torque() -> None:
+            torque = _finite_vector(
+                getattr(self.rpc, f"get_{arm}_joint_torque")(),
+                6,
+                f"{arm} torque",
+            )
+            samples.append(torque)
+            if watchdog.check(arm, torque):
+                return
+            self._hold_arm(arm)
+            self.latched_stop = dict(watchdog.tripped or {})
+            record = {
+                "event": "torque_stop",
+                "command": command.__dict__,
+                "trip": self.latched_stop,
+                "torque_samples": np.asarray(samples).tolist(),
+            }
+            self._audit(record)
+            raise CalibrationJogStop(
+                f"{arm} sustained torque limit exceeded; joint hold sent"
+            )
+
+        target_qpos = None
+        target_xyz = None
         if command.kind == "cartesian":
             delta = _finite_vector(command.delta_xyz_m, 3, "jog delta")
             if np.linalg.norm(delta) > self.maximum_step_m + 1e-12:
                 raise CalibrationJogStop("pending jog exceeds maximum step")
-            parameters = _finite_vector(
+            start_parameters = _finite_vector(
                 before_pose.parameters(), 7, f"{arm} EE pose"
             ).copy()
-            parameters[4:7] += delta
-            if self.workspace_min is not None and (
-                np.any(parameters[4:7] < self.workspace_min)
-                or np.any(parameters[4:7] > self.workspace_max)
+            target_xyz = start_parameters[4:7] + delta
+            bounds = self.workspace_bounds.get(arm)
+            if bounds is not None and (
+                np.any(target_xyz < bounds[0])
+                or np.any(target_xyz > bounds[1])
             ):
                 raise CalibrationJogStop(
                     f"{arm} Cartesian target would trigger server workspace clamp; "
                     "use a slow joint jog"
                 )
-            accepted = getattr(self.rpc, f"set_{arm}_ee_target")(
-                mink.SE3(parameters),
-                preview_time=self.preview_time_s,
+            steps = max(
+                2, int(np.ceil(self.cartesian_move_time_s * self.monitor_hz))
             )
-            if accepted is False:
-                raise CalibrationJogStop(f"{arm} IK rejected the jog")
-            monitor_time = self.monitor_time_s
+            start = self.clock()
+            for index in range(1, steps + 1):
+                fraction = index / steps
+                waypoint = start_parameters.copy()
+                waypoint[4:7] += fraction * delta
+                accepted = getattr(self.rpc, f"set_{arm}_ee_target")(
+                    mink.SE3(waypoint),
+                    preview_time=self.cartesian_command_preview_s,
+                )
+                if accepted is False:
+                    self._hold_arm(arm)
+                    raise CalibrationJogStop(
+                        f"{arm} IK rejected Cartesian waypoint {index}/{steps}"
+                    )
+                check_torque()
+                deadline = start + index * self.cartesian_move_time_s / steps
+                delay = deadline - self.clock()
+                if delay > 0.0:
+                    self.sleep(delay)
+            monitor_time = 0.3
         elif command.kind == "joint":
             joint_index = int(command.joint_index)
             delta_rad = float(command.joint_delta_rad)
@@ -359,13 +503,25 @@ class CalibrationJogController:
                 raise CalibrationJogStop("joint jog exceeds 0.005 rad")
             target_qpos = before_qpos.copy()
             target_qpos[joint_index] += delta_rad
-            getattr(self.rpc, f"set_{arm}_joint_target")(
-                target_qpos,
-                preview_time=self.joint_preview_time_s,
-            )
-            monitor_time = max(
-                self.monitor_time_s, self.joint_preview_time_s + 0.3
-            )
+            # Piper's timestamp is a short command horizon, not a request to
+            # synthesize a long trajectory.  A single target five seconds in
+            # the future may be ignored.  Follow the proven teleop pattern:
+            # stream closely-spaced targets with a short preview horizon.
+            steps = max(2, int(np.ceil(self.joint_move_time_s * self.monitor_hz)))
+            start = self.clock()
+            for index in range(1, steps + 1):
+                fraction = index / steps
+                waypoint = before_qpos + fraction * (target_qpos - before_qpos)
+                getattr(self.rpc, f"set_{arm}_joint_target")(
+                    waypoint,
+                    preview_time=self.joint_command_preview_s,
+                )
+                check_torque()
+                deadline = start + index * self.joint_move_time_s / steps
+                delay = deadline - self.clock()
+                if delay > 0.0:
+                    self.sleep(delay)
+            monitor_time = 0.3
         elif command.kind == "gripper":
             method = "open" if command.gripper_target == 1.0 else "close"
             getattr(self.rpc, f"{method}_{arm}_gripper")()
@@ -373,33 +529,10 @@ class CalibrationJogController:
         else:
             raise AssertionError(command.kind)
 
-        watchdog = TorqueWatchdog(
-            {arm: self.thresholds[arm]},
-            consecutive_limit=self.torque_consecutive_samples,
-        )
-        samples = [before_torque]
         deadline = self.clock() + monitor_time
         next_sample = self.clock()
         while self.clock() < deadline:
-            torque = _finite_vector(
-                getattr(self.rpc, f"get_{arm}_joint_torque")(),
-                6,
-                f"{arm} torque",
-            )
-            samples.append(torque)
-            if not watchdog.check(arm, torque):
-                self._hold_arm(arm)
-                self.latched_stop = dict(watchdog.tripped or {})
-                record = {
-                    "event": "torque_stop",
-                    "command": command.__dict__,
-                    "trip": self.latched_stop,
-                    "torque_samples": np.asarray(samples).tolist(),
-                }
-                self._audit(record)
-                raise CalibrationJogStop(
-                    f"{arm} sustained torque limit exceeded; hold sent"
-                )
+            check_torque()
             next_sample += 1.0 / self.monitor_hz
             delay = next_sample - self.clock()
             if delay > 0.0:
@@ -411,6 +544,53 @@ class CalibrationJogController:
             6,
             f"{arm} qpos",
         )
+        if target_xyz is not None:
+            measured_xyz = _finite_vector(
+                after_pose.translation(), 3, f"{arm} EE translation"
+            )
+            error = float(np.linalg.norm(measured_xyz - target_xyz))
+            if error > self.cartesian_tracking_tolerance_m:
+                self._hold_arm(arm)
+                record = {
+                    "event": "tracking_stop",
+                    "command": command.__dict__,
+                    "target_translation_xyz_m": target_xyz.tolist(),
+                    "measured_translation_xyz_m": measured_xyz.tolist(),
+                    "tracking_error_m": error,
+                    "tracking_tolerance_m": self.cartesian_tracking_tolerance_m,
+                }
+                self._audit(record)
+                raise CalibrationJogStop(
+                    f"{arm} Cartesian target was not reached "
+                    f"(error {error*1000.0:.1f} mm); joint hold sent"
+                )
+        if target_qpos is not None:
+            joint_index = int(command.joint_index)
+            requested = float(command.joint_delta_rad)
+            achieved = float(after_qpos[joint_index] - before_qpos[joint_index])
+            progress = achieved / requested
+            if (
+                not np.isfinite(progress)
+                or progress < self.joint_minimum_progress
+                or progress > self.joint_maximum_progress
+            ):
+                self._hold_arm(arm)
+                record = {
+                    "event": "tracking_stop",
+                    "command": command.__dict__,
+                    "target_joint_positions_rad": target_qpos.tolist(),
+                    "measured_joint_positions_rad": after_qpos.tolist(),
+                    "requested_delta_rad": requested,
+                    "achieved_delta_rad": achieved,
+                    "progress_fraction": progress,
+                    "minimum_progress": self.joint_minimum_progress,
+                    "maximum_progress": self.joint_maximum_progress,
+                }
+                self._audit(record)
+                raise CalibrationJogStop(
+                    f"{arm} joint target progress was {progress:.2f}; "
+                    "joint hold sent"
+                )
         record = {
             "event": "command_completed",
             "command": command.__dict__,

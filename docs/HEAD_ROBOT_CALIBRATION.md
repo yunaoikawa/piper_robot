@@ -52,14 +52,33 @@ PYTHONPATH=. python src/calibration_keyboard_jog.py \
   --allow-symmetric-left-torque-fallback
 ```
 
+If Quest teleoperation is more convenient, keep the capture terminal running
+and use the established recovery controller without opening Record3D twice:
+
+```bash
+PYTHONPATH=. python src/run_recovery_teleop_no_camera.py
+```
+
+This preserves the recovery controls and 30 Hz target loop, but does not
+record, home, return, or claim any camera.  The MacBook controller relay must
+be online.  Disengage the arm before capturing each stopped pose.
+
 The jog UI never initializes or homes.  A direction key stages one 5 mm
-robot-frame Cartesian move; it sends nothing until Enter confirms it.  The
-historical ConeE Cartesian workspace is not mirrored for the left arm, so the
-UI refuses any left Cartesian command that would be clamped.  Select a joint
-with `[` / `]`, then use `-` / `+` for a slow 0.005 rad joint move instead.
+robot-frame Cartesian move; it sends nothing until Enter confirms it.  ConeE
+uses separate mirrored Y workspace bounds for the left and right arms; the UI
+refuses any command that would be clamped.  Cartesian jogs stream a one-second
+trajectory of short-horizon IK targets, matching the command pattern used by
+teleoperation, and require the measured EE to finish within 3 mm.  Select a
+joint with `[` / `]`, then use `-` / `+` for a slow 0.005 rad joint move when
+joint-space diversity is needed.
+The joint jog streams a one-second trajectory using the same short-horizon
+command pattern as teleoperation; a far-future one-shot target is not used.
+The measured final joint angle must progress at least 25% in the requested
+direction without overtravel, matching the established realtime servo gate.
+Calibration diversity is computed only from measured final qpos, never from
+requested targets.
 Space holds the measured joint positions of both arms, Esc cancels a staged
-move, and `q` holds and exits.  Holding never resends an EE target, because an
-EE target outside the historical shared clamp could move instead of hold.
+move, and `q` holds and exits.  Holding never resends an EE target.
 
 Pose requirements are geometric rather than saved pixel targets:
 

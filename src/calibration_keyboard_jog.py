@@ -25,6 +25,7 @@ from rollout.calibration_keyboard_jog import (
     CalibrationJogStop,
     load_torque_thresholds,
 )
+from rollout.piper_realtime_motion import PiperRealtimeMotionPreparation
 
 
 HELP = """
@@ -72,8 +73,11 @@ def main(argv=None) -> int:
     parser.add_argument("--preview-time-s", type=float, default=0.6)
     parser.add_argument("--monitor-time-s", type=float, default=0.9)
     parser.add_argument("--monitor-hz", type=float, default=30.0)
+    parser.add_argument("--cartesian-move-time-s", type=float, default=1.0)
+    parser.add_argument("--cartesian-command-preview-s", type=float, default=0.05)
     parser.add_argument("--joint-step-rad", type=float, default=0.005)
-    parser.add_argument("--joint-preview-time-s", type=float, default=5.0)
+    parser.add_argument("--joint-move-time-s", type=float, default=1.0)
+    parser.add_argument("--joint-command-preview-s", type=float, default=0.05)
     parser.add_argument(
         "--torque-config",
         default="src/configs/pasteur_lid_torque.json",
@@ -115,8 +119,17 @@ def main(argv=None) -> int:
         allow_symmetric_left_fallback=args.allow_symmetric_left_torque_fallback,
     )
     rpc = RPCClient(args.robot_host, args.robot_port, timeout_ms=4000)
-    from robot.cone_e import WORKSPACE_MAX, WORKSPACE_MIN
+    from robot.cone_e import (
+        LEFT_WORKSPACE_MAX,
+        LEFT_WORKSPACE_MIN,
+        RIGHT_WORKSPACE_MAX,
+        RIGHT_WORKSPACE_MIN,
+    )
 
+    motion_preparers = {
+        arm: PiperRealtimeMotionPreparation(rpc, arm)
+        for arm in ("left", "right")
+    }
     controller = CalibrationJogController(
         rpc,
         torque_thresholds=thresholds,
@@ -126,10 +139,16 @@ def main(argv=None) -> int:
         preview_time_s=args.preview_time_s,
         monitor_time_s=args.monitor_time_s,
         monitor_hz=args.monitor_hz,
+        cartesian_move_time_s=args.cartesian_move_time_s,
+        cartesian_command_preview_s=args.cartesian_command_preview_s,
         joint_step_rad=args.joint_step_rad,
-        joint_preview_time_s=args.joint_preview_time_s,
-        workspace_min=WORKSPACE_MIN,
-        workspace_max=WORKSPACE_MAX,
+        joint_move_time_s=args.joint_move_time_s,
+        joint_command_preview_s=args.joint_command_preview_s,
+        workspace_bounds={
+            "left": (LEFT_WORKSPACE_MIN, LEFT_WORKSPACE_MAX),
+            "right": (RIGHT_WORKSPACE_MIN, RIGHT_WORKSPACE_MAX),
+        },
+        motion_preparers=motion_preparers,
         audit_path=args.audit_log,
     )
     health = controller.health_snapshot()
@@ -201,13 +220,34 @@ def main(argv=None) -> int:
                 if controller.pending is None:
                     print("\nNo pending command.")
                     continue
+                prepared_arm = None
                 try:
+                    prepared_arm = controller.prepare_pending_motion()
                     record = controller.confirm()
                     after = record["after"]["ee_pose"]["translation_xyz_m"]
                     print(f"\nCommand complete; {record['command']['arm']} EE XYZ={after}")
                 except CalibrationJogStop as exc:
                     print(f"\nSTOPPED: {exc}", file=sys.stderr)
                     exit_code = 3
+                    break
+                except Exception as exc:
+                    print(
+                        f"\nSTOPPED: {type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
+                    exit_code = 3
+                    break
+                finally:
+                    try:
+                        controller.finish_motion(prepared_arm)
+                    except Exception as exc:
+                        print(
+                            f"\nSTOPPED restoring joint hold: "
+                            f"{type(exc).__name__}: {exc}",
+                            file=sys.stderr,
+                        )
+                        exit_code = 4
+                if exit_code == 4:
                     break
                 continue
             try:
