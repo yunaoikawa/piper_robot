@@ -101,6 +101,20 @@ compilation, pinned NYU grippers, and no robot/environment penetration above
 the configured tolerance.  Motion readiness remains a separate downstream
 planning decision.
 
+### Depth ordering for touching SAM regions
+
+When a foreground arm touches a background microscope in the RGB image, do
+not use 2D connected components to decide their metric relationship. If the
+head camera was fixed while the arms changed pose, follow
+[../../docs/DEPTH_AWARE_SCENE_ALIGNMENT.md](../../docs/DEPTH_AWARE_SCENE_ALIGNMENT.md):
+build a temporal far-depth envelope, split SAM candidates at depth
+discontinuities, retain only components that move in front of the envelope,
+and infer fixed base components from persistent 3D voxels. Validate on a
+withheld view. Fit independently mounted bases independently; preserve the
+reviewed Z, yaw, gripper, and home keyframe. This can refine display
+alignment, but motion still requires explicit home-pose provenance and a
+zero-contact MuJoCo audit.
+
 ## Required behavior
 
 - Run SAM before semantic object completion.

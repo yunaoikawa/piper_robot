@@ -14,6 +14,10 @@ from rollout.home_lid_trajectory import (
     load_object_scene,
     plan_home_lid_trajectory,
 )
+from src.render_home_lid_trajectory import (
+    _apply_visibility_policy,
+    _arm_mapping,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,3 +77,24 @@ def test_object_scene_rejects_unconfirmed_lid(tmp_path):
     path.write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="confirmed target_lid"):
         load_object_scene(path)
+
+
+def test_renderer_keeps_semantic_observed_geometry_visible():
+    model = mujoco.MjModel.from_xml_path(str(ROBOT_MODEL))
+    mapping = _arm_mapping(model)
+    _apply_visibility_policy(model, mapping)
+    groups = {}
+    for name in (
+        "microscope-1-observed",
+        "support-bench-observed",
+        "support-platform-1-observed",
+        "support-platform-2-observed",
+        "measured-static-scene-observed",
+    ):
+        body = model.body(name)
+        groups[name] = int(model.geom_group[body.geomadr[0]])
+    assert groups["microscope-1-observed"] == 2
+    assert groups["support-bench-observed"] == 2
+    assert groups["support-platform-1-observed"] == 2
+    assert groups["support-platform-2-observed"] == 2
+    assert groups["measured-static-scene-observed"] == 5

@@ -29,7 +29,7 @@ def _add_objects(spec, object_scene):
         if geometry.get("type") != "cylinder":
             continue
         role = str(item.get("role"))
-        pose = item.get("pose_robot")
+        pose = item.get("pose_scene", item.get("pose_robot"))
         if pose is not None:
             position = np.asarray(pose, dtype=float)[:3, 3]
         elif role == "target_lid":
@@ -118,6 +118,20 @@ def _stage_text(frame, stage, display_only):
     )
 
 
+def _apply_visibility_policy(model, mapping):
+    """Keep semantic observed meshes visible; hide only the dense raw scan."""
+
+    for geom_id in range(model.ngeom):
+        body_name = model.body(model.geom_bodyid[geom_id]).name
+        if body_name == "measured-static-scene-observed":
+            model.geom_group[geom_id] = 5
+            continue
+        if body_name.startswith(mapping["right_body_prefix"]):
+            model.geom_rgba[geom_id] = [0.95, 0.45, 0.10, 1.0]
+        elif body_name.startswith(mapping["left_body_prefix"]):
+            model.geom_rgba[geom_id] = [0.05, 0.75, 0.85, 1.0]
+
+
 def render(args):
     payload = json.loads(Path(args.plan).read_text())
     if payload.get("schema") != SCHEMA:
@@ -137,18 +151,7 @@ def render(args):
     # Simulation-only colours make the two otherwise dark, overlapping CAD
     # branches legible on a phone: physical right/model-left moves; physical
     # left/model-right remains at home.
-    for geom_id in range(model.ngeom):
-        body_name = model.body(model.geom_bodyid[geom_id]).name
-        if body_name.endswith("-observed"):
-            # The raw RGB-D display meshes are useful for registration but can
-            # self-occlude the CAD trajectory. Collision proxies remain in
-            # group 3 and are still used by the planner.
-            model.geom_group[geom_id] = 5
-            continue
-        if body_name.startswith(mapping["right_body_prefix"]):
-            model.geom_rgba[geom_id] = [0.95, 0.45, 0.10, 1.0]
-        elif body_name.startswith(mapping["left_body_prefix"]):
-            model.geom_rgba[geom_id] = [0.05, 0.75, 0.85, 1.0]
+    _apply_visibility_policy(model, mapping)
     key_id = int(model.key(mapping["key"]).id)
     mujoco.mj_resetDataKeyframe(model, data, key_id)
     right_ids = mapping["right_ids"]
@@ -220,9 +223,12 @@ def render(args):
     ]
     encoder = subprocess.Popen(command, stdin=subprocess.PIPE)
     close_t = next(
-        float(item["t_s"])
-        for item in payload["gripper_events"]
-        if item["action"] == "close"
+        (
+            float(item["t_s"])
+            for item in payload["gripper_events"]
+            if item["action"] == "close"
+        ),
+        float("inf"),
     )
     lid_body_id = (
         int(model.body(added["target_lid"]).id)
@@ -236,18 +242,19 @@ def render(args):
             for item in payload["object_scene"]["objects"]
             if item.get("role") == "target_lid"
         )
-        grasp_q = np.asarray(lid["grasp_right_q_rad"], dtype=float)
-        data.qpos[right_ids] = (
-            right_model_home + grasp_q - right_physical_home
-        )
-        data.qpos[left_ids] = left_model_home
-        mujoco.mj_forward(model, data)
-        model.body_pos[lid_body_id] = np.asarray(
-            data.site_xpos[ee_site_id], dtype=float
-        )
-        data.qpos[right_ids] = right_model_home
-        data.qpos[left_ids] = left_model_home
-        mujoco.mj_forward(model, data)
+        if "grasp_right_q_rad" in lid:
+            grasp_q = np.asarray(lid["grasp_right_q_rad"], dtype=float)
+            data.qpos[right_ids] = (
+                right_model_home + grasp_q - right_physical_home
+            )
+            data.qpos[left_ids] = left_model_home
+            mujoco.mj_forward(model, data)
+            model.body_pos[lid_body_id] = np.asarray(
+                data.site_xpos[ee_site_id], dtype=float
+            )
+            data.qpos[right_ids] = right_model_home
+            data.qpos[left_ids] = left_model_home
+            mujoco.mj_forward(model, data)
     home_frames = max(1, int(args.home_hold_s * args.fps))
     final_frames = max(1, int(args.final_hold_s * args.fps))
     frame_count = 0
