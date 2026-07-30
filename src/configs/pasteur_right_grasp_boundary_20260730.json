@@ -67,7 +67,8 @@
         "support_ready": false,
         "closure_nonempty": true,
         "target_follows_lift": true,
-        "overall_ready": true
+        "sustained_hold": false,
+        "overall_ready": false
       },
       "measurements": {
         "right_gripper_open_ratio": 0.5734285714285714,
@@ -77,7 +78,74 @@
           0.012311442527130606
         ]
       },
-      "provenance": "target stays registered between the fingers after a measured 12.3 mm upward EE displacement"
+      "provenance": "target follows the measured 12.3 mm upward EE displacement, then slowly slips while waiting for the next instruction"
+    },
+    {
+      "id": "verified_empty_open_baseline",
+      "capture": "data/captures/pasteur/2026-07-30/20260730T085608.944329Z_right_verified_empty_closed_after_pressure_ejection_230d675a",
+      "accepted_for_training": true,
+      "labels": {
+        "target_present": false,
+        "closure_nonempty": false,
+        "overall_ready": false
+      },
+      "measurements": {
+        "right_gripper_open_ratio": 1.0
+      },
+      "provenance": "robot state proves the gripper was fully open; the provisional capture condition was incorrect and is overridden here"
+    },
+    {
+      "id": "verified_empty_closed_baseline",
+      "capture": "data/captures/pasteur/2026-07-30/20260730T085746.970819Z_right_verified_empty_fully_closed_baseline_159932af",
+      "accepted_for_training": true,
+      "labels": {
+        "target_present": false,
+        "closure_nonempty": false,
+        "overall_ready": false
+      },
+      "measurements": {
+        "right_gripper_open_ratio": 0.004857142857142857
+      },
+      "provenance": "explicit empty-gripper fully closed baseline"
+    },
+    {
+      "id": "verified_hover_support_false",
+      "capture": "data/captures/pasteur/2026-07-30/20260730T085853.416151Z_right_verified_hover_above_target_window_aligned_support_false_1da37e29",
+      "accepted_for_training": true,
+      "labels": {
+        "window_ready": true,
+        "support_ready": false,
+        "closure_nonempty": null,
+        "target_follows_lift": null,
+        "overall_ready": false
+      },
+      "provenance": "operator intentionally aligned laterally while holding the open gripper 2-3 cm above the target"
+    },
+    {
+      "id": "shallow_fingertip_first_take_rejected",
+      "capture": "data/captures/pasteur/2026-07-30/20260730T090032.116412Z_right_verified_shallow_fingertip_insertion_support_near_window_false_1d0cefad",
+      "accepted_for_training": false,
+      "labels": {
+        "window_ready": null,
+        "support_ready": null,
+        "closure_nonempty": null,
+        "target_follows_lift": null,
+        "overall_ready": null
+      },
+      "provenance": "operator rejected this take after learning that a failure example was requested"
+    },
+    {
+      "id": "verified_shallow_fingertip_retry",
+      "capture": "data/captures/pasteur/2026-07-30/20260730T090045.039504Z_right_verified_shallow_fingertip_insertion_retry_5461f63c",
+      "accepted_for_training": true,
+      "labels": {
+        "window_ready": false,
+        "support_ready": true,
+        "closure_nonempty": null,
+        "target_follows_lift": null,
+        "overall_ready": false
+      },
+      "provenance": "operator-confirmed retry with the target edge only shallowly presented at the fingertips"
     }
   ]
 }
