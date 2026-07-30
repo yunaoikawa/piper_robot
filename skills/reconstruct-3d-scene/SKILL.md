@@ -58,14 +58,15 @@ Without an accepted camera-to-robot transform this is display-only.  Do not
 promote the visually fitted robot bases to collision authority.
 
 To obtain the transform without AprilTags, keep the head camera fixed and let
-the operator teleoperate at least four distinct, fully stopped arm poses.  The
+the operator teleoperate at least five distinct, fully stopped arm poses.  The
 capture process reads qpos before and after each RGB-D burst but sends no robot
 commands:
 
 ```bash
 python src/capture_record3d_multiview.py \
   --operator-action move-robot --robot-state \
-  --view pose_1 --view pose_2 --view pose_3 --view pose_holdout
+  --view baseline --view left_excitation --view right_excitation \
+  --view both --view holdout
 ```
 
 Then fit exact pose-specific CAD to the SAM robot masks:
@@ -83,6 +84,14 @@ this suppresses static clutter such as a microscope strut mistakenly labelled
 as arm.  Accept only reports whose `accepted` field is true.  The fixed gates
 cover depth residuals, union and per-arm silhouette overlap, holdout accuracy,
 and independent-pose transform repeatability.
+
+Require the production MJCF through `robot_calibration.model`; never fall back
+to a scene approximation for camera calibration. Fit independently mounted
+arms with separate base transforms. Associate SAM instances to physical arms
+through temporal instance continuity plus arm-specific qpos excitation, never
+through image-left/image-right rules. Preserve RGB, depth, masks, and
+intrinsics in one sensor coordinate system. Any gravity-up or phone-friendly
+rotation is display-only.
 
 Rebuild the multiview report after synchronized capture so it contains
 `T_level_first_camera` and per-view qpos provenance, then pass the accepted

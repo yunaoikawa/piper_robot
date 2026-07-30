@@ -99,6 +99,18 @@
   "observed_surface_objects": ["microscope"],
   "observed_object_collision_voxel_size_m": 0.02,
   "robot_model": "robot/arm/mujoco/bimanual_piper_table.xml",
+  "robot_calibration": {
+    "model": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",
+    "physical_to_model_branch": {
+      "left": "right_arm_",
+      "right": "left_arm_"
+    },
+    "sam_prompts": [
+      "industrial robotic arm",
+      "collaborative robot arm"
+    ],
+    "independent_bases": true
+  },
   "robot_end_effector": {
     "variant": "nyu_gripper_body",
     "mesh": "robot/arm/mujoco/assets/gripper_body.stl",

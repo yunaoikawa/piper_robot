@@ -16,7 +16,14 @@ from src.build_multiview_semantic_scene import (
     transform_points,
     voxel_components,
 )
-from src.calibrate_head_robot_from_cad import _qpos_diversity, fit_transform
+from src.calibrate_head_robot_from_cad import (
+    _anchor_initial_transform,
+    _component_groups_from_parts,
+    _initial_transform,
+    _qpos_diversity,
+    _tracked_core_by_arm,
+    fit_transform,
+)
 from src.capture_record3d_multiview import _robot_state_stability
 
 
@@ -183,6 +190,109 @@ def test_cad_fit_recovers_synthetic_camera_to_robot_transform():
     assert np.degrees(rotation_error) < 0.3
 
 
+def test_cad_initial_transform_levels_camera_center_exactly_once():
+    rng = np.random.default_rng(19)
+    center = np.array([0.18, -0.12, 0.85])
+    half = rng.uniform([-0.16, -0.07, -0.12], [0.21, 0.11, 0.18], (450, 3))
+    symmetric = np.vstack((half, -half)) + center
+    observed = [symmetric, symmetric + np.r_[0.0, 0.0, 0.04]]
+    camera_pose = {
+        "translation_xyz_m": [0.0, 0.0, 0.0],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+    }
+    from rollout.multiview_scene import gravity_level_transform
+
+    truth = gravity_level_transform(camera_pose)
+    yaw = Rotation.from_euler("z", np.deg2rad(25.0)).as_matrix()
+    truth[:3, :3] = yaw @ truth[:3, :3]
+    truth[:3, 3] = [0.42, -0.31, 0.27]
+    cad = [transform_points(points, truth) for points in observed]
+
+    initial = _initial_transform(camera_pose, observed, cad)
+
+    np.testing.assert_allclose(initial, truth, atol=1e-8)
+
+
+def test_component_groups_never_promote_a_small_fragment_without_arm_core():
+    parts = [
+        np.eye(12, dtype=bool),
+        np.fliplr(np.eye(12, dtype=bool)),
+        np.zeros((12, 12), dtype=bool),
+    ]
+    parts[2][5:7, 5:7] = True
+    groups = _component_groups_from_parts(parts)
+    assert groups
+    assert all(0 in members or 1 in members for _, members in groups)
+    assert not any(members == frozenset({2}) for _, members in groups)
+
+
+def test_instance_tracking_uses_joint_excitation_not_image_left_right():
+    shape = (40, 60)
+
+    def block(y, x):
+        value = np.zeros(shape, dtype=bool)
+        value[y : y + 12, x : x + 12] = True
+        return value
+
+    # Track zero is on the image right. The physical-left joints and only that
+    # visual track move strongly in transition 0 -> 1.
+    parts = [
+        [block(4, 40), block(22, 4)],
+        [block(12, 30), block(22, 4)],
+        [block(13, 29), block(22, 5)],
+    ]
+    qposes = [
+        [0.0] * 12,
+        [0.5, -0.4, 0.2, 0.0, 0.0, 0.0] + [0.0] * 6,
+        [0.52, -0.4, 0.2, 0.0, 0.0, 0.0] + [0.02] * 6,
+    ]
+    tracked = _tracked_core_by_arm(parts, qposes)
+    assert tracked["left"] == [0, 0, 0]
+    assert tracked["right"] == [1, 1, 1]
+
+
+def test_tool_anchor_fit_recovers_upright_transform_and_rigid_offset():
+    from rollout.multiview_scene import gravity_level_transform
+
+    camera_pose = {
+        "translation_xyz_m": [0.0, 0.0, 0.0],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+    }
+    level = gravity_level_transform(camera_pose)
+    truth = np.eye(4)
+    truth[:3, :3] = (
+        Rotation.from_euler("z", 0.31).as_matrix() @ level[:3, :3]
+    )
+    truth[:3, 3] = [0.22, -0.14, 0.37]
+    offset = np.array([0.035, -0.022, 0.061])
+    ee_transforms = []
+    for xyz, euler in (
+        ([0.10, 0.03, 0.30], [0.0, 0.0, 0.0]),
+        ([0.18, -0.02, 0.38], [0.12, -0.08, 0.20]),
+        ([0.03, 0.11, 0.34], [-0.10, 0.14, -0.18]),
+        ([0.16, 0.13, 0.27], [0.08, 0.10, 0.35]),
+    ):
+        transform = np.eye(4)
+        transform[:3, :3] = Rotation.from_euler("xyz", euler).as_matrix()
+        transform[:3, 3] = xyz
+        ee_transforms.append(transform)
+    base_points = np.asarray(
+        [
+            transform[:3, :3] @ offset + transform[:3, 3]
+            for transform in ee_transforms
+        ]
+    )
+    observed = transform_points(base_points, np.linalg.inv(truth))
+    fitted, fitted_offset, residual = _anchor_initial_transform(
+        camera_pose,
+        list(observed),
+        ee_transforms,
+    )
+    np.testing.assert_allclose(fitted, truth, atol=2e-3)
+    np.testing.assert_allclose(fitted_offset, offset, atol=3e-3)
+    assert residual < 0.002
+
+
 def test_calibration_pose_diversity_requires_both_arms_and_holdout():
     poses = np.zeros((5, 12))
     poses[1, 0:2] = [0.03, -0.04]
@@ -290,5 +400,10 @@ if __name__ == "__main__":
     test_per_view_robot_state_gate_is_read_only_and_strict()
     test_semantic_support_roles_select_front_and_rear_without_pixel_rules()
     test_cad_fit_recovers_synthetic_camera_to_robot_transform()
+    test_cad_initial_transform_levels_camera_center_exactly_once()
+    test_component_groups_never_promote_a_small_fragment_without_arm_core()
+    test_instance_tracking_uses_joint_excitation_not_image_left_right()
+    test_tool_anchor_fit_recovers_upright_transform_and_rigid_offset()
+    test_calibration_pose_diversity_requires_both_arms_and_holdout()
     test_semantic_volume_fit_rejects_free_space_and_recovers_box_pose()
     print("multiview semantic completion checks passed")

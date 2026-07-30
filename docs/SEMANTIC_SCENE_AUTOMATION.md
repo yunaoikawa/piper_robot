@@ -160,12 +160,13 @@ motion readinessはこのpipelineでは付与しません。経路のswept-volum
 
 ## タグレスcamera-to-robot calibration
 
-head cameraを固定し、人が4姿勢へテレオペして停止させます。
+head cameraを固定し、人が5姿勢以上へテレオペして完全に停止させます。
 
 ```bash
 python src/capture_record3d_multiview.py \
   --operator-action move-robot --robot-state \
-  --view pose_1 --view pose_2 --view pose_3 --view pose_holdout
+  --view baseline --view left_excitation --view right_excitation \
+  --view both --view holdout
 
 python src/calibrate_head_robot_from_cad.py \
   --capture CAPTURE_DIR \
@@ -173,10 +174,20 @@ python src/calibrate_head_robot_from_cad.py \
   --output CALIBRATION.json
 ```
 
-最初の姿勢でfitし、最後をholdoutにします。各RGB-D burst前後でqposが
+最後以外の姿勢でfitし、最後をholdoutにします。各RGB-D burst前後でqposが
 変化していた場合はcaptureを拒否します。全姿勢に固定して残るrobot mask領域
 は、顕微鏡などの誤認識として除外されます。`accepted=true` のreportだけを
 pipelineの `--calibration-report` に渡します。
+
+校正にはprofileの `robot_calibration.model` で指定したproduction MJCFを使い、
+scene用の近似robotへfallbackしません。左右Piperは独立したbase transformを持ち、
+画面上の左右ではなく、SAM instanceの時間追跡と左右別qpos変化から対応付けます。
+ConeEのcontroller/model branch入れ替えは
+`physical_to_model_branch` に明記します。
+
+RGB、depth、mask、内部パラメータはcapture時の同一sensor座標のまま計算します。
+スマホやaudit画像を見やすく回転する場合も表示専用とし、校正入力の一部だけを
+回転させてはいけません。
 
 ## スマホ配信
 
@@ -211,4 +222,5 @@ PYTHONPATH=. python tests/test_build_semantic_scene.py
 ```
 
 テストには、支持面のfront/rear割当、穴保持、2本のarm分離、同期qpos gate、
-6DoF CAD calibration、known-freeを避ける体積最適化が含まれます。
+6DoF CAD calibration、画面左右に依存しないarm追跡、tool anchorの剛体offset、
+known-freeを避ける体積最適化が含まれます。
