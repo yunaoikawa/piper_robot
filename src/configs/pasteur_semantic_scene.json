@@ -75,6 +75,24 @@
       "petri_lid": "front_elevated"
     }
   },
+  "semantic_volume_fit": {
+    "enabled": true,
+    "minimum_observed_points": 200,
+    "maximum_surface_points": 2200,
+    "maximum_semantic_voxels": 3000,
+    "maximum_free_voxels": 9000,
+    "free_space_roi_radius_m": 0.7,
+    "center_search_radius_m": 0.2,
+    "semantic_shell_tolerance_m": 0.015,
+    "known_free_clearance_m": 0.005,
+    "surface_weight": 1.0,
+    "semantic_miss_weight_m": 0.08,
+    "known_free_intrusion_weight_m": 0.4,
+    "minimum_improvement_fraction": 0.15,
+    "population_size": 9,
+    "maximum_iterations": 32,
+    "seed": 17
+  },
   "esdf_voxel_size_m": 0.02,
   "esdf_maximum_voxels": 2000000,
   "unknown_minimum_area_fraction": 0.01,

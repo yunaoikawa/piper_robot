@@ -92,6 +92,10 @@ planning decision.
   Any penetration above tolerance keeps collision and motion readiness false.
 - Preserve measured support silhouettes and holes; never turn a partially
   observed support or a concave multipart object into one solid AABB.
+- Do not use PCA alone to place an opaque box template when semantic ESDF data
+  exists.  Optimize its gravity-aligned pose against the observed semantic
+  surface and volume while strongly penalizing candidate volume in known free
+  space; leave unknown space unpenalized and record before/after loss terms.
 - Keep unknown or low-confidence objects visible and pending; do not silently
   force them into a known class.
 - Store prompts, masks, model identity, scores, timestamps, depth quality, and

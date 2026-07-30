@@ -8,9 +8,11 @@ from scipy.spatial.transform import Rotation
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from rollout.semantic_scene_pipeline import ObjectGeometry
 from src.build_multiview_semantic_scene import (
     _support_for,
     discover_multilevel_supports,
+    fit_box_to_semantic_volume,
     transform_points,
     voxel_components,
 )
@@ -181,10 +183,89 @@ def test_cad_fit_recovers_synthetic_camera_to_robot_transform():
     assert np.degrees(rotation_error) < 0.3
 
 
+def test_semantic_volume_fit_rejects_free_space_and_recovers_box_pose():
+    rng = np.random.default_rng(23)
+    center = np.array([0.18, 0.42])
+    yaw = 0.48
+    size = np.array([0.40, 0.22, 0.30])
+    rotation = np.array(
+        [[np.cos(yaw), -np.sin(yaw)], [np.sin(yaw), np.cos(yaw)]]
+    )
+    values = np.linspace(-1.0, 1.0, 24)
+    first = np.array(
+        [[-size[0] / 2, value * size[1] / 2] for value in values]
+    )
+    second = np.array(
+        [[value * size[0] / 2, -size[1] / 2] for value in values]
+    )
+    surface_xy = np.vstack((first, second)) @ rotation.T + center
+    surface = np.vstack(
+        [
+            np.c_[
+                surface_xy,
+                np.full(len(surface_xy), z),
+            ]
+            for z in np.linspace(0.03, size[2] - 0.03, 8)
+        ]
+    )
+    local_semantic = rng.uniform(-0.5, 0.5, (1600, 3)) * size
+    semantic = local_semantic.copy()
+    semantic[:, :2] = semantic[:, :2] @ rotation.T + center
+    semantic[:, 2] += size[2] / 2
+    free = rng.uniform([-0.25, 0.0, 0.0], [0.65, 0.85, 0.32], (9000, 3))
+    delta = free[:, :2] - center
+    local_xy = delta @ rotation
+    inside = (
+        (np.abs(local_xy[:, 0]) <= size[0] / 2)
+        & (np.abs(local_xy[:, 1]) <= size[1] / 2)
+        & (free[:, 2] <= size[2])
+    )
+    free = free[~inside]
+    initial = ObjectGeometry(
+        kind="box",
+        center_xyz_m=(0.02, 0.28, size[2] / 2),
+        size_xyz_m=tuple(size),
+        yaw_rad=-0.25,
+    )
+    fitted, report = fit_box_to_semantic_volume(
+        surface,
+        semantic,
+        free,
+        initial,
+        support_height_m=0.0,
+        voxel_size_m=0.01,
+        configuration={
+            "minimum_observed_points": 100,
+            "maximum_surface_points": 1000,
+            "maximum_semantic_voxels": 1200,
+            "maximum_free_voxels": 3500,
+            "maximum_iterations": 22,
+            "population_size": 7,
+            "minimum_improvement_fraction": 0.10,
+            "seed": 9,
+        },
+    )
+    assert report["accepted"]
+    assert np.linalg.norm(np.asarray(fitted.center_xyz_m[:2]) - center) < 0.04
+    yaw_error = abs(
+        np.arctan2(
+            np.sin(fitted.yaw_rad - yaw),
+            np.cos(fitted.yaw_rad - yaw),
+        )
+    )
+    yaw_error = min(yaw_error, abs(np.pi - yaw_error))
+    assert np.degrees(yaw_error) < 8.0
+    assert (
+        report["optimized"]["known_free_intrusion_fraction"]
+        < report["initial"]["known_free_intrusion_fraction"]
+    )
+
+
 if __name__ == "__main__":
     test_voxel_components_separate_two_arms()
     test_multilevel_supports_keep_two_raised_platforms_and_bench()
     test_per_view_robot_state_gate_is_read_only_and_strict()
     test_semantic_support_roles_select_front_and_rear_without_pixel_rules()
     test_cad_fit_recovers_synthetic_camera_to_robot_transform()
+    test_semantic_volume_fit_rejects_free_space_and_recovers_box_pose()
     print("multiview semantic completion checks passed")

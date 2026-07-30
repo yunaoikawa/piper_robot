@@ -17,9 +17,11 @@ import time
 import xml.etree.ElementTree as ET
 
 import numpy as np
+from scipy.optimize import differential_evolution
 
 from rollout.daily_scene import DailySceneStore, SceneObject
 from rollout.semantic_scene_pipeline import (
+    ObjectGeometry,
     load_profile,
     robust_oriented_geometry,
     scene_json_ready,
@@ -303,6 +305,235 @@ def _support_for(
     return max(below, key=lambda item: item["height_m"]) if below else None
 
 
+def _signed_box_distance(
+    points: np.ndarray,
+    *,
+    center_xy: np.ndarray,
+    yaw_rad: float,
+    size_xyz: np.ndarray,
+    support_height_m: float,
+) -> np.ndarray:
+    cosine, sine = np.cos(yaw_rad), np.sin(yaw_rad)
+    delta = np.asarray(points, dtype=float).copy()
+    delta[:, :2] -= np.asarray(center_xy, dtype=float)
+    local = np.column_stack(
+        (
+            cosine * delta[:, 0] + sine * delta[:, 1],
+            -sine * delta[:, 0] + cosine * delta[:, 1],
+            delta[:, 2] - (float(support_height_m) + size_xyz[2] / 2),
+        )
+    )
+    q = np.abs(local) - size_xyz / 2
+    outside = np.linalg.norm(np.maximum(q, 0.0), axis=1)
+    inside = np.minimum(np.max(q, axis=1), 0.0)
+    return outside + inside
+
+
+def fit_box_to_semantic_volume(
+    observed_surface_points: np.ndarray,
+    semantic_voxel_points: np.ndarray,
+    known_free_voxel_points: np.ndarray,
+    initial: ObjectGeometry,
+    *,
+    support_height_m: float,
+    voxel_size_m: float,
+    configuration: dict,
+) -> tuple[ObjectGeometry, dict]:
+    """Fit a gravity-aligned box using semantic occupancy and known free space.
+
+    The observed mesh is only a partial surface, so a symmetric Chamfer score
+    alone can place the hidden half of a box in free space.  The objective
+    combines surface distance, missed semantic volume, and candidate volume
+    intruding into explicitly observed free voxels.  Unknown space is not
+    treated as free.
+    """
+
+    observed = np.asarray(observed_surface_points, dtype=float)
+    semantic = np.asarray(semantic_voxel_points, dtype=float)
+    known_free = np.asarray(known_free_voxel_points, dtype=float)
+    minimum = int(configuration.get("minimum_observed_points", 200))
+    if len(observed) < minimum or len(semantic) < minimum:
+        return initial, {
+            "attempted": False,
+            "accepted": False,
+            "reason": "semantic_volume_points_insufficient",
+            "observed_points": int(len(observed)),
+            "semantic_voxels": int(len(semantic)),
+        }
+    maximum_surface = int(configuration.get("maximum_surface_points", 2200))
+    maximum_semantic = int(configuration.get("maximum_semantic_voxels", 3000))
+    maximum_free = int(configuration.get("maximum_free_voxels", 9000))
+
+    def evenly_sample(values: np.ndarray, maximum: int) -> tuple[np.ndarray, float]:
+        if len(values) <= maximum:
+            return values, 1.0
+        indices = np.linspace(0, len(values) - 1, maximum).astype(np.int64)
+        return values[indices], float(len(values)) / float(maximum)
+
+    observed, _ = evenly_sample(observed, maximum_surface)
+    semantic, _ = evenly_sample(semantic, maximum_semantic)
+    median = np.median(observed, axis=0)
+    radius = float(configuration.get("free_space_roi_radius_m", 0.70))
+    free_roi = known_free[
+        np.all(np.abs(known_free - median) <= radius, axis=1)
+    ]
+    free_roi, free_weight = evenly_sample(free_roi, maximum_free)
+    size = np.asarray(initial.size_xyz_m, dtype=float)
+    search = float(configuration.get("center_search_radius_m", 0.20))
+    bounds = [
+        (float(median[0] - search), float(median[0] + search)),
+        (float(median[1] - search), float(median[1] + search)),
+        (-np.pi / 2, np.pi / 2),
+    ]
+    surface_weight = float(configuration.get("surface_weight", 1.0))
+    semantic_weight = float(configuration.get("semantic_miss_weight_m", 0.08))
+    free_weight_scale = float(
+        configuration.get("known_free_intrusion_weight_m", 0.40)
+    )
+    shell = float(configuration.get("semantic_shell_tolerance_m", 0.015))
+    clearance = float(configuration.get("known_free_clearance_m", 0.005))
+    candidate_volume = float(np.prod(size))
+
+    def terms(parameters: np.ndarray) -> dict:
+        center_xy = parameters[:2]
+        yaw = float(parameters[2])
+        surface_distance = np.abs(
+            _signed_box_distance(
+                observed,
+                center_xy=center_xy,
+                yaw_rad=yaw,
+                size_xyz=size,
+                support_height_m=support_height_m,
+            )
+        )
+        semantic_distance = _signed_box_distance(
+            semantic,
+            center_xy=center_xy,
+            yaw_rad=yaw,
+            size_xyz=size,
+            support_height_m=support_height_m,
+        )
+        if len(free_roi):
+            free_distance = _signed_box_distance(
+                free_roi,
+                center_xy=center_xy,
+                yaw_rad=yaw,
+                size_xyz=size,
+                support_height_m=support_height_m,
+            )
+            free_volume = (
+                np.count_nonzero(free_distance < -clearance)
+                * free_weight
+                * float(voxel_size_m) ** 3
+            )
+        else:
+            free_volume = 0.0
+        return {
+            "surface_p65_m": float(np.quantile(surface_distance, 0.65)),
+            "surface_p90_m": float(np.quantile(surface_distance, 0.90)),
+            "semantic_miss_fraction": float(
+                np.mean(semantic_distance > shell)
+            ),
+            "known_free_intrusion_fraction": float(
+                free_volume / max(candidate_volume, 1e-9)
+            ),
+        }
+
+    def objective(parameters: np.ndarray) -> float:
+        value = terms(parameters)
+        return float(
+            surface_weight
+            * (value["surface_p65_m"] + 0.4 * value["surface_p90_m"])
+            + semantic_weight * value["semantic_miss_fraction"]
+            + free_weight_scale * value["known_free_intrusion_fraction"]
+        )
+
+    initial_yaw = float(
+        np.arctan2(np.sin(initial.yaw_rad), np.cos(initial.yaw_rad))
+    )
+    if initial_yaw > np.pi / 2:
+        initial_yaw -= np.pi
+    elif initial_yaw < -np.pi / 2:
+        initial_yaw += np.pi
+    initial_parameters = np.asarray(
+        [initial.center_xyz_m[0], initial.center_xyz_m[1], initial_yaw],
+        dtype=float,
+    )
+    initial_cost = objective(initial_parameters)
+    result = differential_evolution(
+        objective,
+        bounds,
+        seed=int(configuration.get("seed", 17)),
+        popsize=int(configuration.get("population_size", 9)),
+        maxiter=int(configuration.get("maximum_iterations", 32)),
+        polish=True,
+        workers=1,
+        updating="immediate",
+    )
+    optimized = np.asarray(result.x, dtype=float)
+    optimized_cost = objective(optimized)
+    improvement = (
+        (initial_cost - optimized_cost) / max(initial_cost, 1e-9)
+    )
+    accepted = bool(
+        np.isfinite(optimized_cost)
+        and improvement
+        >= float(configuration.get("minimum_improvement_fraction", 0.15))
+    )
+    geometry = (
+        ObjectGeometry(
+            kind=initial.kind,
+            center_xyz_m=(
+                float(optimized[0]),
+                float(optimized[1]),
+                float(support_height_m + size[2] / 2),
+            ),
+            size_xyz_m=tuple(float(item) for item in size),
+            yaw_rad=float(optimized[2]),
+        )
+        if accepted
+        else initial
+    )
+    return geometry, {
+        "attempted": True,
+        "accepted": accepted,
+        "method": (
+            "gravity_aligned_box_semantic_voxel_symmetric_difference_"
+            "plus_known_free_space"
+        ),
+        "initial": {
+            "center_xy_m": initial_parameters[:2].tolist(),
+            "yaw_rad": float(initial_parameters[2]),
+            "objective": float(initial_cost),
+            **terms(initial_parameters),
+        },
+        "optimized": {
+            "center_xy_m": optimized[:2].tolist(),
+            "yaw_rad": float(optimized[2]),
+            "objective": float(optimized_cost),
+            **terms(optimized),
+        },
+        "improvement_fraction": float(improvement),
+        "candidate_volume_m3": candidate_volume,
+        "known_free_space_is_authoritative": True,
+        "unknown_space_penalized": False,
+        "optimizer_success": bool(result.success),
+        "optimizer_message": str(result.message),
+    }
+
+
+def _volume_points(
+    archive,
+    mask: np.ndarray,
+    transform: np.ndarray | None,
+) -> np.ndarray:
+    indices_zyx = np.argwhere(mask)
+    origin = np.asarray(archive["origin_xyz_m"], dtype=float)
+    voxel = float(archive["voxel_size_m"])
+    points = origin + (indices_zyx[:, [2, 1, 0]] + 0.5) * voxel
+    return points if transform is None else transform_points(points, transform)
+
+
 def _write_semantic_mesh(
     path: Path,
     vertices: np.ndarray,
@@ -495,6 +726,8 @@ def build(args) -> dict:
     faces = np.asarray(archive["faces"], dtype=np.int32)
     colors = np.asarray(archive["colors_rgb"], dtype=np.uint8)
     labels = np.asarray(archive["semantic_labels"], dtype=np.int32)
+    source_esdf = Path(report["artifacts"]["esdf"]).resolve()
+    volume_archive = np.load(source_esdf)
     profile, catalog = load_profile(args.profile)
     output = Path(args.output_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -504,6 +737,7 @@ def build(args) -> dict:
     )
     frame = "gravity_levelled_first_record3d_camera"
     transform_report = None
+    robot_from_level = None
     if calibration is not None:
         level_from_camera = np.asarray(
             report.get("coordinate_frame", {}).get("T_level_first_camera"),
@@ -528,6 +762,13 @@ def build(args) -> dict:
         name: int(value)
         for name, value in report["semantics"]["label_ids"].items()
     }
+    volume_labels = np.asarray(volume_archive["semantic_labels"], dtype=np.uint8)
+    volume_observed = np.asarray(volume_archive["observed"], dtype=bool)
+    known_free_points = _volume_points(
+        volume_archive,
+        volume_observed & (volume_labels == 1),
+        robot_from_level,
+    )
     supports = discover_multilevel_supports(vertices, faces, labels)
     if len(supports) < 3:
         raise RuntimeError(
@@ -603,6 +844,32 @@ def build(args) -> dict:
             catalog=definition,
             support_height_m=None if support is None else support["height_m"],
         )
+        volume_fit = {
+            "attempted": False,
+            "accepted": False,
+            "reason": "not_an_eligible_box_template",
+        }
+        fit_configuration = profile.get("semantic_volume_fit", {})
+        if (
+            fit_configuration.get("enabled", False)
+            and definition.completion == "template"
+            and definition.primitive == "box"
+            and support is not None
+        ):
+            semantic_voxels = _volume_points(
+                volume_archive,
+                volume_observed & (volume_labels == label_id),
+                robot_from_level,
+            )
+            geometry, volume_fit = fit_box_to_semantic_volume(
+                selected,
+                semantic_voxels,
+                known_free_points,
+                geometry,
+                support_height_m=float(support["height_m"]),
+                voxel_size_m=float(volume_archive["voxel_size_m"]),
+                configuration=fit_configuration,
+            )
         view_observations = [
             item
             for values in report["semantics"]["views"].values()
@@ -639,7 +906,10 @@ def build(args) -> dict:
             ),
             "measured_and_inferred_separate": True,
             "observed_mesh": mesh_file,
+            "semantic_volume_fit": volume_fit,
         }
+        if volume_fit.get("accepted"):
+            record["source"] += "+semantic_volume_fit"
         if name == "microscope" and mesh_file:
             record["completion"] = "observed_mesh"
             record["collision_boxes"] = single._observed_voxel_boxes(
@@ -880,7 +1150,6 @@ def build(args) -> dict:
     except Exception as error:
         compile_report["mobile_render_error"] = str(error)
 
-    source_esdf = Path(report["artifacts"]["esdf"]).resolve()
     source_viewer = Path(report["artifacts"]["viewer"]).resolve()
     copied_source_viewer = output / "source_esdf_scene.html"
     shutil.copy2(source_viewer, copied_source_viewer)
