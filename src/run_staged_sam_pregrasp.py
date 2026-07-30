@@ -1353,6 +1353,12 @@ def _execute_single_joint_probe_body(
         raise RuntimeError(
             "single joint probe requires a valid right-arm torque limit"
         )
+    enforce_torque_stop = bool(
+        getattr(runner, "torque_stop_enabled", True)
+    )
+    stationary_torque_limit = (
+        torque_limit if enforce_torque_stop else None
+    )
 
     before_feature, before_error, before_head_path, before_head_timestamp = (
         runner.observe(0.0)
@@ -1381,7 +1387,7 @@ def _execute_single_joint_probe_body(
     pre_motion_hold = verify_right_stationary(
         runner.rpc,
         duration_s=hold_window_s,
-        torque_limit=torque_limit,
+        torque_limit=stationary_torque_limit,
     )
     if not pre_motion_hold["verified"]:
         raise RuntimeError(
@@ -1460,7 +1466,7 @@ def _execute_single_joint_probe_body(
             if np.any(torque > torque_limit)
             else 0
         )
-        if torque_strikes >= torque_samples:
+        if enforce_torque_stop and torque_strikes >= torque_samples:
             raise RuntimeError(
                 f"right torque stop {stage}: "
                 f"{np.round(torque, 3).tolist()}"
@@ -1727,14 +1733,14 @@ def _execute_single_joint_probe_body(
     initial_hold = verify_right_stationary(
         runner.rpc,
         duration_s=hold_window_s,
-        torque_limit=torque_limit,
+        torque_limit=stationary_torque_limit,
     )
     if not initial_hold["verified"]:
         runner.hold_measured()
         initial_hold = verify_right_stationary(
             runner.rpc,
             duration_s=hold_window_s,
-            torque_limit=torque_limit,
+            torque_limit=stationary_torque_limit,
         )
         if not initial_hold["verified"]:
             raise RuntimeError(
@@ -1758,14 +1764,14 @@ def _execute_single_joint_probe_body(
     hold = verify_right_stationary(
         runner.rpc,
         duration_s=hold_window_s,
-        torque_limit=torque_limit,
+        torque_limit=stationary_torque_limit,
     )
     if not hold["verified"]:
         runner.hold_measured()
         hold = verify_right_stationary(
             runner.rpc,
             duration_s=hold_window_s,
-            torque_limit=torque_limit,
+            torque_limit=stationary_torque_limit,
         )
         if not hold["verified"]:
             raise RuntimeError(
@@ -1956,6 +1962,12 @@ def _execute_single_horizontal_probe_body(
         raise RuntimeError(
             "single probe requires a valid right-arm torque limit"
         )
+    enforce_torque_stop = bool(
+        getattr(runner, "torque_stop_enabled", True)
+    )
+    stationary_torque_limit = (
+        torque_limit if enforce_torque_stop else None
+    )
 
     before_feature, before_error, before_head_path, before_head_timestamp = (
         runner.observe(0.0)
@@ -2040,14 +2052,14 @@ def _execute_single_horizontal_probe_body(
     initial_hold = verify_right_stationary(
         runner.rpc,
         duration_s=hold_window_s,
-        torque_limit=torque_limit,
+        torque_limit=stationary_torque_limit,
     )
     if not initial_hold["verified"]:
         runner.hold_measured()
         initial_hold = verify_right_stationary(
             runner.rpc,
             duration_s=hold_window_s,
-            torque_limit=torque_limit,
+            torque_limit=stationary_torque_limit,
         )
         if not initial_hold["verified"]:
             raise RuntimeError(
@@ -2071,14 +2083,14 @@ def _execute_single_horizontal_probe_body(
     hold = verify_right_stationary(
         runner.rpc,
         duration_s=hold_window_s,
-        torque_limit=torque_limit,
+        torque_limit=stationary_torque_limit,
     )
     if not hold["verified"]:
         runner.hold_measured()
         hold = verify_right_stationary(
             runner.rpc,
             duration_s=hold_window_s,
-            torque_limit=torque_limit,
+            torque_limit=stationary_torque_limit,
         )
         if not hold["verified"]:
             raise RuntimeError(

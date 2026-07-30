@@ -831,6 +831,7 @@ class ChunkExecutor:
         *,
         torque_limit_nm: Sequence[float],
         consecutive_torque_samples: int = 2,
+        enforce_torque_stop: bool = True,
         control_hz: float = CONTROL_HZ,
         preview_time_s: float = PREVIEW_TIME_S,
         clock: Callable[[], float] = time.monotonic,
@@ -844,6 +845,9 @@ class ChunkExecutor:
         if self.torque_limit.shape != (6,) or np.any(self.torque_limit <= 0):
             raise ValueError("torque_limit_nm must contain six positive values")
         self.strikes_required = int(consecutive_torque_samples)
+        self.enforce_torque_stop = bool(enforce_torque_stop)
+        self.torque_warning_count = 0
+        self.last_torque_warning = None
         if self.strikes_required <= 0:
             raise ValueError("consecutive_torque_samples must be positive")
         self.period_s = 1.0 / float(control_hz)
@@ -853,12 +857,29 @@ class ChunkExecutor:
     def _check_torque(self, strikes: int) -> int:
         sample = np.asarray(self.rpc.get_right_joint_torque(), dtype=float)
         if sample.shape != (6,) or not np.all(np.isfinite(sample)):
-            self.sender.hold()
-            raise AutonomousStop("invalid right-arm torque sample")
+            if self.enforce_torque_stop:
+                self.sender.hold()
+                raise AutonomousStop("invalid right-arm torque sample")
+            self.torque_warning_count += 1
+            self.last_torque_warning = {
+                "reason": "invalid right-arm torque sample",
+                "sample": sample.tolist(),
+            }
+            return 0
         strikes = strikes + 1 if np.any(np.abs(sample) > self.torque_limit) else 0
         if strikes >= self.strikes_required:
-            self.sender.hold()
-            raise AutonomousStop("sustained right-arm torque limit exceeded")
+            if self.enforce_torque_stop:
+                self.sender.hold()
+                raise AutonomousStop(
+                    "sustained right-arm torque limit exceeded"
+                )
+            self.torque_warning_count += 1
+            self.last_torque_warning = {
+                "reason": "sustained right-arm torque limit exceeded",
+                "sample": sample.tolist(),
+                "limit": self.torque_limit.tolist(),
+            }
+            return 0
         return strikes
 
     def execute(self, waypoints: Iterable[TimedWaypoint]) -> Pose:

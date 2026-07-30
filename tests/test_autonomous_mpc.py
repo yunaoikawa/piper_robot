@@ -302,6 +302,20 @@ else:
 assert high_torque.holds == 1
 assert len(high_torque.commands) == 2  # first target, then measured-pose hold
 
+observed_torque = FakeRPC([np.ones(6) * 2.0] * 4)
+executor = ChunkExecutor(
+    observed_torque,
+    torque_limit_nm=np.ones(6),
+    enforce_torque_stop=False,
+    clock=clock,
+    sleep=clock.sleep,
+)
+executor.execute(plan.waypoints[:3])
+assert observed_torque.holds == 0
+assert len(observed_torque.commands) == 3
+assert executor.torque_warning_count >= 1
+assert executor.last_torque_warning["reason"].startswith("sustained")
+
 with tempfile.TemporaryDirectory() as directory:
     path = Path(directory) / "run_state.json"
     state = AtomicRunState(path)

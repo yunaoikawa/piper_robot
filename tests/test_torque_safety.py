@@ -8,7 +8,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rollout.torque_safety import TorqueCalibrator, TorqueWatchdog
+from rollout.torque_safety import (
+    TorqueCalibrator,
+    TorqueWatchdog,
+    torque_stop_enabled_from_config,
+)
 
 
 cal = TorqueCalibrator()
@@ -28,5 +32,16 @@ assert watchdog.tripped["joint"] == 0
 
 bad = TorqueWatchdog({"right": [2.0]})
 assert not bad.check("right", [float("nan")])
+
+assert torque_stop_enabled_from_config({}) is True
+assert torque_stop_enabled_from_config(
+    {"motion_torque_policy": "observe_only"}
+) is False
+try:
+    torque_stop_enabled_from_config({"motion_torque_policy": "unknown"})
+except ValueError:
+    pass
+else:
+    raise AssertionError("unknown torque policy was accepted")
 
 print("torque safety checks passed")

@@ -26,6 +26,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robot.rpc import RPCClient
+from rollout.torque_safety import torque_stop_enabled_from_config
 from rollout.realtime_sam_servo import (
     GRIPPER_COLOR_MINIMUM_MASK_FRACTION,
     GRIPPER_COLOR_MINIMUM_PIXELS,
@@ -699,6 +700,7 @@ class LiveSamGrasp:
         self.camera = None
         self.sam = None
         torque_cfg = json.loads(Path(args.torque_config).read_text())
+        self.torque_stop_enabled = torque_stop_enabled_from_config(torque_cfg)
         self.torque_limit = np.asarray(
             torque_cfg["thresholds"]["right"], dtype=float
         )
@@ -1985,7 +1987,7 @@ class LiveSamGrasp:
                 np.asarray(self.rpc.get_right_joint_torque(), dtype=float)
             )
             strikes = strikes + 1 if np.any(torque > self.torque_limit) else 0
-            if strikes >= self.torque_samples:
+            if self.torque_stop_enabled and strikes >= self.torque_samples:
                 self.hold_measured()
                 raise TorqueStop(
                     f"right torque stop: {np.round(torque, 3).tolist()}"
@@ -2159,7 +2161,7 @@ class LiveSamGrasp:
                 if np.any(torque > self.torque_limit)
                 else 0
             )
-            if strikes >= self.torque_samples:
+            if self.torque_stop_enabled and strikes >= self.torque_samples:
                 raise TorqueStop(
                     f"right torque stop {stage}: "
                     f"{np.round(torque, 3).tolist()}"

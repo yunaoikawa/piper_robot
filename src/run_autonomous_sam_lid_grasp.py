@@ -44,6 +44,7 @@ from rollout.autonomous_mpc import (
     select_collision_aware_plan,
     validate_calibration,
 )
+from rollout.torque_safety import torque_stop_enabled_from_config
 from rollout.autonomous_grasp_state_machine import (
     GraspGates,
     GraspState,
@@ -721,7 +722,25 @@ def run_live(config, args, state, calibration):
             runner.rpc,
             torque_limit_nm=torque["thresholds"]["right"],
             consecutive_torque_samples=torque["consecutive_samples"],
+            enforce_torque_stop=torque_stop_enabled_from_config(torque),
         )
+        state.event(
+            "torque_policy",
+            mode=torque.get("motion_torque_policy", "enforce"),
+            thresholds_nm=torque["thresholds"]["right"],
+        )
+
+        def execute_with_torque_observation(waypoints):
+            warning_count = executor.torque_warning_count
+            result = executor.execute(waypoints)
+            if executor.torque_warning_count > warning_count:
+                state.event(
+                    "torque_observer_warning",
+                    warning=executor.last_torque_warning,
+                    total_warning_count=executor.torque_warning_count,
+                )
+            return result
+
         policy = ReplanPolicy(
             maximum_observation_age_s=float(
                 config["replan"]["maximum_observation_age_s"]
@@ -750,7 +769,7 @@ def run_live(config, args, state, calibration):
                     except SceneNotConfirmed as error:
                         executor.sender.hold()
                         raise AutonomousStop(str(error)) from error
-                    commanded = executor.execute(chunk)
+                    commanded = execute_with_torque_observation(chunk)
                     current, image = perception.head_snapshot()
                     decision = decide_replan(
                         now_s=time.time(),
@@ -942,7 +961,7 @@ def run_live(config, args, state, calibration):
                 )
                 for waypoint in recovery_waypoints:
                     recovery_simulation.validate(waypoint.pose)
-                executor.execute(recovery_waypoints)
+                execute_with_torque_observation(recovery_waypoints)
                 reference, _ = perception.head_snapshot()
                 recovery_plan = make_plan(reference)
                 reference, replans = execute_visual_plan(
@@ -1022,7 +1041,7 @@ def run_live(config, args, state, calibration):
                 runner.rpc.get_right_joint_torque(), dtype=float
             )
             pose_before = Pose.from_se3(runner.rpc.get_right_ee_pose())
-            executor.execute(probe_waypoints)
+            execute_with_torque_observation(probe_waypoints)
             pose_after = Pose.from_se3(runner.rpc.get_right_ee_pose())
             torque_after = np.asarray(
                 runner.rpc.get_right_joint_torque(), dtype=float
@@ -1147,7 +1166,7 @@ def run_live(config, args, state, calibration):
             0.75,
             stage="verification_lift",
         )
-        executor.execute(lift)
+        execute_with_torque_observation(lift)
         after, _ = perception.head_snapshot()
         after_right = perception.right_snapshot(after)
         followed = float(np.asarray(after.target_xyz_m)[2] - before_target[2])

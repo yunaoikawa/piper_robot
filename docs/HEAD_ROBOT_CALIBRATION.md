@@ -71,6 +71,10 @@ The residual settings are still audited under `recovery_teleop` in
 `src/configs/pasteur_lid_torque.json`, so they can be evaluated offline without
 interrupting teleoperation. `--enforce-recovery-torque-stop` is an explicit
 experimental opt-in and must not be used with the current unvalidated model.
+The same profile uses `motion_torque_policy: observe_only` for autonomous
+chunks. Torque excursions are included in the run journal but do not stop
+motion by themselves; the independent geometric, tracking, freshness, and
+visual gates remain active.
 
 The jog UI never initializes or homes.  A direction key stages one 5 mm
 robot-frame Cartesian move; it sends nothing until Enter confirms it.  The

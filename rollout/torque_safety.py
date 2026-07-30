@@ -9,6 +9,17 @@ from pathlib import Path
 import numpy as np
 
 
+def torque_stop_enabled_from_config(config: dict) -> bool:
+    """Return whether torque telemetry alone may stop robot motion."""
+
+    mode = config.get("motion_torque_policy", "enforce")
+    if mode not in {"enforce", "observe_only"}:
+        raise ValueError(
+            "motion_torque_policy must be 'enforce' or 'observe_only'"
+        )
+    return mode == "enforce"
+
+
 @dataclass
 class TorqueWatchdog:
     thresholds: dict[str, np.ndarray]

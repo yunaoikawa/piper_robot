@@ -441,7 +441,12 @@ is inert if unused.
    authority. Continue collecting multiple poses and speeds with
    `--calibrate-torque`, especially for a dedicated left-arm envelope. A later
    autonomous stop must combine model residual with tracking stall/contact
-   evidence rather than treating this warning alone as collision.
+   evidence rather than treating this warning alone as collision. The current
+   shared torque profile therefore sets
+   `motion_torque_policy: observe_only`: autonomous chunks continue while
+   writing `torque_policy` and `torque_observer_warning` events. IK continuity,
+   visual replanning, daily-scene validity, ESDF clearance, and tracking-error
+   stops remain enforced.
 2. **Confirm the marker/edge profile** — checkpoint inspection uses the blue
    fiducial to register a narrow ROI, enlarges it 4×, and overlays the expected
    and detected transparent-lid edges for operator confirmation.
