@@ -1,9 +1,11 @@
 import numpy as np
+import pytest
 
 from rollout.recorded_trajectory_replay import (
     _minimum_jerk,
     _segment_duration,
 )
+from src.run_pasteur_offline_replay import _validate_physical_arm_identity
 
 
 def test_minimum_jerk_has_exact_endpoints_and_zero_endpoint_velocity():
@@ -27,3 +29,63 @@ def test_offline_replay_source_does_not_import_hardware_control():
     ).read_text()
     forbidden = ("PiperClient", "robot_rpc", "teleop", "send_joint")
     assert not any(token in source for token in forbidden)
+
+
+def _right_arm_identity_inputs():
+    return {
+        "calibration_mapping": {
+            "left": "right_arm_",
+            "right": "left_arm_",
+        },
+        "carving": {
+            "physical_right_model_branch": "left",
+            "robot_body_prefixes": ["left/"],
+        },
+        "target_profile": {
+            "kinematic_bridge": {
+                "physical_arm": "right",
+                "model_branch": "left",
+            }
+        },
+        "replay_profile": {"physical_right_model_branch": "left"},
+        "target_capture_manifests": [
+            {"camera_label": "right"},
+            {"camera_label": "right"},
+        ],
+        "replay_capture_manifests": [{"camera_label": "right"}],
+    }
+
+
+def test_right_wrist_evidence_drives_only_right_model_branch():
+    result = _validate_physical_arm_identity(**_right_arm_identity_inputs())
+    assert result["accepted"]
+    assert result["physical_arm"] == "right"
+    assert result["model_branch"] == "left"
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("carving", "physical_right_model_branch", "right"),
+        ("replay_profile", "physical_right_model_branch", "right"),
+    ],
+)
+def test_offline_replay_rejects_cross_arm_mapping(section, field, value):
+    inputs = _right_arm_identity_inputs()
+    inputs[section][field] = value
+    with pytest.raises(ValueError, match="physical-right branch mismatch"):
+        _validate_physical_arm_identity(**inputs)
+
+
+def test_offline_replay_rejects_left_camera_capture():
+    inputs = _right_arm_identity_inputs()
+    inputs["target_capture_manifests"][0]["camera_label"] = "left"
+    with pytest.raises(ValueError, match="capture labels"):
+        _validate_physical_arm_identity(**inputs)
+
+
+def test_offline_replay_uses_robot_calibration_as_branch_authority():
+    inputs = _right_arm_identity_inputs()
+    inputs["calibration_mapping"]["right"] = "right_arm_"
+    with pytest.raises(ValueError, match="physical-right branch mismatch"):
+        _validate_physical_arm_identity(**inputs)

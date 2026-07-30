@@ -44,7 +44,9 @@ MUJOCO_GL=egl \
 ```
 
 Do not manually transfer target pixels or joint values. The pipeline must pin
-physical-right to model-left, fit the latest wrist RGB-D target, distinguish
+physical-right to one explicitly configured branch across sensing, carving,
+and replay (the current ConeE-derived model calls it `left/`), fit the latest
+wrist RGB-D target, distinguish
 the successful target episode from the latest post-drop episode, pass the
 object-radius geometry gate, preserve exact stopped keyframes, and reconstruct
 only the unrecorded intervals. A clear moving-arm path does not imply global

@@ -112,6 +112,23 @@ def render(
     data = mujoco.MjData(model)
     moving_branch = replay["physical_to_model_branch"]["right"]
     static_branch = replay["physical_to_model_branch"]["left"]
+    # The current ConeE-derived model historically calls the physical-right
+    # branch left/. Make physical identity visually unambiguous instead of
+    # asking the viewer to infer it from the internal MJCF name.
+    for geom_id in range(model.ngeom):
+        body_name = model.body(int(model.geom_bodyid[geom_id])).name
+        if body_name.startswith(f"{moving_branch}/"):
+            model.geom_rgba[geom_id, :3] = [0.10, 0.82, 0.95]
+            model.geom_rgba[geom_id, 3] = max(
+                0.82,
+                float(model.geom_rgba[geom_id, 3]),
+            )
+        elif body_name.startswith(f"{static_branch}/"):
+            model.geom_rgba[geom_id, :3] = [0.32, 0.35, 0.40]
+            model.geom_rgba[geom_id, 3] = min(
+                0.42,
+                float(model.geom_rgba[geom_id, 3]),
+            )
     moving_ids = [
         int(model.joint(f"{moving_branch}/joint{index}").qposadr[0])
         for index in range(1, 7)
@@ -283,10 +300,26 @@ def render(
             )
             cv2.putText(
                 frame,
-                "cyan=planned EE path  yellow=recorded target  blue=latest",
-                (14, height - 18),
+                (
+                    "CYAN ROBOT = PHYSICAL RIGHT ARM "
+                    f"(internal MJCF {moving_branch}/)"
+                ),
+                (14, 52),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.46,
+                (90, 235, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                frame,
+                (
+                    "cyan robot/path=physical RIGHT  gray=physical LEFT home  "
+                    "yellow=recorded target  blue=latest"
+                ),
+                (14, height - 18),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.38,
                 (245, 245, 245),
                 1,
                 cv2.LINE_AA,
@@ -329,6 +362,11 @@ def render(
         "fps": fps,
         "frames": len(frame_times),
         "physical_right_model_branch": moving_branch,
+        "moving_physical_arm": "right",
+        "static_physical_arm": "left",
+        "arm_display_policy": (
+            "physical-right robot is cyan; static physical-left robot is gray"
+        ),
         "static_physical_left_home_q_rad": static_home.tolist(),
         "recorded_target_center_scene_m": recorded_target.tolist(),
         "latest_target_center_scene_m": latest_target.tolist(),

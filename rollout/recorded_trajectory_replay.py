@@ -368,8 +368,9 @@ def build_recorded_replay(
         static_branch,
     ) = _model_mapping(model, keyframe, physical_right_model_branch)
     mujoco.mj_resetDataKeyframe(model, data, key_id)
-    # Canonical semantic mapping: physical right is model-left and physical
-    # left is model-right.  Joint coordinates use the physical Piper values
+    # Physical arm identity follows the capture/controller label. The current
+    # ConeE-derived MJCF explicitly maps physical-right to its historically
+    # named left/ branch. Joint coordinates use the physical Piper values
     # directly; the old MJCF zero offsets are not applied.
     model_home_right = home_q.copy()
     model_home_left = physical_home_q("left")

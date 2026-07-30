@@ -59,6 +59,90 @@ def _file_sha256(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _validate_physical_arm_identity(
+    *,
+    calibration_mapping: dict,
+    carving: dict,
+    target_profile: dict,
+    replay_profile: dict,
+    target_capture_manifests: list[dict],
+    replay_capture_manifests: list[dict],
+) -> dict:
+    """Fail closed if sensing, kinematics, carving, and replay change arms."""
+
+    bridge = target_profile["kinematic_bridge"]
+    physical_arm = bridge["physical_arm"]
+    target_branch = bridge["model_branch"]
+    replay_branch = replay_profile["physical_right_model_branch"]
+    carving_branch = carving["physical_right_model_branch"]
+    if physical_arm != "right":
+        raise ValueError(
+            f"expected right-wrist evidence, got physical arm {physical_arm!r}"
+        )
+    calibration_branch = str(calibration_mapping[physical_arm]).lower()
+    matching_branches = [
+        branch
+        for branch in ("left", "right")
+        if calibration_branch == branch
+        or calibration_branch.startswith(f"{branch}_")
+        or calibration_branch.startswith(f"{branch}/")
+    ]
+    if len(matching_branches) != 1:
+        raise ValueError(
+            "cannot resolve physical-right model branch from robot calibration "
+            f"mapping {calibration_branch!r}"
+        )
+    authoritative_branch = matching_branches[0]
+    branches = {
+        "robot_calibration": authoritative_branch,
+        "wrist_target": target_branch,
+        "collision_carving": carving_branch,
+        "trajectory_replay": replay_branch,
+    }
+    if len(set(branches.values())) != 1:
+        raise ValueError(
+            "physical-right branch mismatch: "
+            + ", ".join(f"{name}={value}" for name, value in branches.items())
+        )
+    expected_prefix = f"{target_branch}/"
+    prefixes = set(carving.get("robot_body_prefixes", []))
+    if prefixes != {expected_prefix}:
+        raise ValueError(
+            "collision carving must be scoped only to physical-right branch "
+            f"{expected_prefix!r}; got {sorted(prefixes)!r}"
+        )
+    target_capture_labels = [
+        manifest.get("camera_label") for manifest in target_capture_manifests
+    ]
+    replay_capture_labels = [
+        manifest.get("camera_label") for manifest in replay_capture_manifests
+    ]
+    capture_labels = target_capture_labels + replay_capture_labels
+    if (
+        not target_capture_labels
+        or not replay_capture_labels
+        or set(capture_labels) != {physical_arm}
+    ):
+        raise ValueError(
+            "target/replay capture labels do not match the physical arm: "
+            f"expected {physical_arm!r}, got {capture_labels!r}"
+        )
+    return {
+        "accepted": True,
+        "physical_arm": physical_arm,
+        "model_branch": target_branch,
+        "calibration_mapping": calibration_mapping,
+        "target_capture_labels": target_capture_labels,
+        "replay_capture_labels": replay_capture_labels,
+        "stages": branches,
+        "policy": (
+            "robot calibration is the model-branch authority; right-wrist "
+            "RGB-D and right controller joints must remain mapped to that "
+            "branch through target calibration, collision carving, and replay"
+        ),
+    }
+
+
 def _run_stage(
     *,
     name: str,
@@ -174,8 +258,8 @@ small{{color:#a8b4c5}}code{{overflow-wrap:anywhere}}
 <video controls playsinline preload="metadata"
  poster="render/recorded_replay_start.png">
 <source src="render/recorded_replay.mp4" type="video/mp4"></video>
-<small>黄=成功時対象、青=最新推定、シアン=計画EE軌道。記録点は実測、
-点間はMuJoCoで再計画。</small>
+<small>シアンのrobot/軌道=物理右手、灰色robot=静止した物理左手、
+黄=成功時対象、青=最新推定。記録点は実測、点間はMuJoCoで再計画。</small>
 <a href="mobile/mujoco_home.html"><b>MuJoCo home（軽量3D）</b></a>
 <a href="mobile/semantic_3d.html"><b>SAM意味付き3D（軽量）</b></a>
 <a href="mobile/source_esdf_scene.html"><b>ESDF（軽量）</b></a>
@@ -317,10 +401,31 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         raise ValueError("depth-aware alignment gates failed")
 
     carving = config["collision_carving"]
+    replay_config = _resolve(config["recorded_replay_config"])
+    replay_profile = json.loads(replay_config.read_text())
+    target_config = _resolve(config["wrist_target_config"])
+    target_profile = json.loads(target_config.read_text())
+    target_capture_manifests = [
+        json.loads((_resolve(item["path"]) / "manifest.json").read_text())
+        for item in target_profile["captures"]
+    ]
+    replay_capture_manifests = [
+        json.loads((_resolve(item["capture"]) / "manifest.json").read_text())
+        for item in replay_profile["measured_keyframes"]
+    ]
+    arm_identity = _validate_physical_arm_identity(
+        calibration_mapping=semantic_profile_data["robot_calibration"][
+            "physical_to_model_branch"
+        ],
+        carving=carving,
+        target_profile=target_profile,
+        replay_profile=replay_profile,
+        target_capture_manifests=target_capture_manifests,
+        replay_capture_manifests=replay_capture_manifests,
+    )
     collision_dir = output / "collision_scene"
     collision_model = collision_dir / "scene.mjcf"
     carve_report = collision_dir / "carve_report.json"
-    replay_config = _resolve(config["recorded_replay_config"])
     carve_command = [
         python,
         str(ROOT / "src/carve_robot_semantic_collision.py"),
@@ -365,7 +470,6 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
     if not carve.get("accepted"):
         raise ValueError("semantic collision carving gate failed")
 
-    target_config = _resolve(config["wrist_target_config"])
     target_dir = output / "target"
     target_report = target_dir / "wrist_target_report.json"
     object_scene = target_dir / "latest_target_scene.json"
@@ -379,7 +483,6 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         "--output-dir",
         str(target_dir),
     ]
-    target_profile = json.loads(target_config.read_text())
     target_inputs = [
         target_config,
         collision_model,
@@ -598,6 +701,7 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         "output": str(output),
         "stages": stages,
         "summary": summary,
+        "physical_arm_identity": arm_identity,
         "limitations": [
             (
                 "The exact stopped keyframes are measured; motion between "
@@ -608,8 +712,8 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
                 if summary["global_scene_home_clear"]
                 else [
                     (
-                        "Static physical-left/model-right contacts remain; "
-                        "only the moving physical-right/model-left path passed."
+                        "Static physical-left contacts remain; only the moving "
+                        "physical-right path passed."
                     )
                 ]
             ),

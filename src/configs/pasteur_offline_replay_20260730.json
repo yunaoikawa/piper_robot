@@ -27,7 +27,7 @@
     "width": 640,
     "height": 480,
     "fps": 15,
-    "camera_azimuth_deg": 90.0,
+    "camera_azimuth_deg": -90.0,
     "camera_elevation_deg": -28.0,
     "camera_distance_m": 1.65
   },

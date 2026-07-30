@@ -31,8 +31,10 @@ mask、前stage出力をSHA-256に入れます。同じ入力で再実行する�
 
 ## 座標と左右の不変条件
 
-- physical right arm = semantic MuJoCo `left/`
-- physical left arm = semantic MuJoCo `right/`
+- physical right arm = 現行ConeE由来MuJoCoの歴史的名称 `left/`
+- physical left arm = 現行ConeE由来MuJoCoの歴史的名称 `right/`
+- `left/`は物理左手を意味しない。右camera、右controller関節、対象fit、
+  collision carving、trajectoryの明示mappingが全て一致しない場合は停止する
 - joint値はcontrollerの物理Piper値をそのまま使い、古いMJCF home offsetを
   加えない
 - homeは `robot.arm.home.physical_home_q()` を唯一の権威とする
@@ -100,7 +102,7 @@ arm表面が混入します。carvingは次をすべて満たすvoxelだけを�
 - 削除割合がconfig上限以下
 
 観測visual mesh、支持面、box template、allowlist外の物体は変更しません。
-今回の出力はmoving right armの軌道接触0です。一方、静止physical-left側には
+今回の出力はmoving physical-right armの軌道接触0です。一方、静止physical-left側には
 残存接触があるため、`global_scene_home_clear=false`、
 `hardware_motion_authorized=false`のままです。
 
