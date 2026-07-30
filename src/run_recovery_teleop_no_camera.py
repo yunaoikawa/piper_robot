@@ -74,6 +74,10 @@ def main(argv=None) -> int:
     # envelope is collected after this calibration session; until then the
     # user explicitly chose the audited right-to-left fallback.
     args.allow_symmetric_left_torque_fallback = True
+    # Human recovery control keeps Quest freshness, IK continuity, and the
+    # measured hold on explicit disengagement. Torque is recorded as telemetry
+    # only; pose-dependent gravity changes are not a reliable contact stop.
+    args.enforce_recovery_torque_stop = False
 
     collector = NoCameraRecoveryTeleop(args)
     atexit.register(collector.stop)

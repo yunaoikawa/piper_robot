@@ -132,6 +132,28 @@ class RecoveryTorqueGuardTest(unittest.TestCase):
             rpc.torque["left"][3] = sample / 90.0
             self.assertTrue(value.check("left"))
 
+    def test_observer_only_warns_without_holding_or_latching(self):
+        rpc = FakeRPC()
+        clock = FakeClock()
+        with tempfile.TemporaryDirectory() as directory:
+            audit = Path(directory) / "guard.jsonl"
+            value = guard(
+                rpc,
+                enforce=False,
+                clock=clock,
+                audit_path=audit,
+                residual_duration_s=0.1,
+                baseline_slew_nm_per_s=0.1,
+            )
+            rpc.torque["left"][2] = 0.8
+            for _ in range(4):
+                clock.advance(0.05)
+                self.assertTrue(value.check("left"))
+            text = audit.read_text()
+        self.assertIn("torque_warning", text)
+        self.assertNotIn("left", value.latched)
+        self.assertEqual(rpc.holds, [])
+
     def test_invalid_torque_fails_closed_and_writes_audit(self):
         rpc = FakeRPC()
         rpc.torque["left"] = np.array([np.nan] * 6)

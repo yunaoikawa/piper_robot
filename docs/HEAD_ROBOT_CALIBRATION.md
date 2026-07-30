@@ -26,12 +26,12 @@ PYTHONPATH=. python src/calibration_keyboard_jog.py \
 
 The left fallback is explicit because the current torque file contains a
 measured right-Piper envelope.  It copies that conservative envelope only for
-the mechanically identical left Piper. Recovery teleop records a short
-stationary baseline at engagement, tracks gradual pose-dependent gravity load,
-and stops on a sustained residual or a much larger hard absolute torque. This
-prevents ordinary multi-second motion from being mistaken for contact while
-retaining a latched measured-joint hold. Replace the fallback with measured
-left thresholds when those are available.
+the mechanically identical left Piper. Recovery teleop records torque and
+residual warnings, but they have no stop authority by default: measured
+pose-dependent gravity changes produced false stops during normal human
+motion. Quest freshness, IK continuity, explicit disengagement, and measured
+pose holding remain active. Replace the fallback with measured left thresholds
+and a validated model-based contact detector before enabling torque stops.
 
 ## 2. Collect five stopped poses
 
@@ -67,9 +67,10 @@ record, home, return, or claim any camera.  The MacBook controller relay must
 not be online: by default Pasteur subscribes directly to the lab Quest at
 `192.168.1.48:5555`.  Pass `--use-relay` only when intentionally routing
 through the MacBook.  Disengage the arm before capturing each stopped pose.
-The residual duration, baseline slew rate, and hard-limit multiplier are
-audited settings under `recovery_teleop` in
-`src/configs/pasteur_lid_torque.json`.
+The residual settings are still audited under `recovery_teleop` in
+`src/configs/pasteur_lid_torque.json`, so they can be evaluated offline without
+interrupting teleoperation. `--enforce-recovery-torque-stop` is an explicit
+experimental opt-in and must not be used with the current unvalidated model.
 
 The jog UI never initializes or homes.  A direction key stages one 5 mm
 robot-frame Cartesian move; it sends nothing until Enter confirms it.  The

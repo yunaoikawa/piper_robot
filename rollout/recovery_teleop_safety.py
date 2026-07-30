@@ -80,6 +80,8 @@ class RecoveryTorqueGuard:
         residual_duration_s: float = 0.35,
         baseline_slew_nm_per_s: float = 0.50,
         hard_limit_multiplier: float = 2.0,
+        enforce: bool = True,
+        warning_interval_s: float = 2.0,
         audit_path: str | Path | None = None,
         provenance: dict[str, Any] | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -106,6 +108,8 @@ class RecoveryTorqueGuard:
         self.residual_duration_s = float(residual_duration_s)
         self.baseline_slew_nm_per_s = float(baseline_slew_nm_per_s)
         self.hard_limit_multiplier = float(hard_limit_multiplier)
+        self.enforce = bool(enforce)
+        self.warning_interval_s = float(warning_interval_s)
         self.clock = clock
         if (
             self.consecutive_samples < 1
@@ -115,6 +119,7 @@ class RecoveryTorqueGuard:
             or not 0.05 <= self.residual_duration_s <= 2.0
             or not 0.0 < self.baseline_slew_nm_per_s <= 2.0
             or not 1.0 < self.hard_limit_multiplier <= 5.0
+            or not 0.1 <= self.warning_interval_s <= 60.0
         ):
             raise ValueError("invalid recovery torque guard configuration")
         self.residual_limits = {
@@ -132,6 +137,10 @@ class RecoveryTorqueGuard:
         self._last_check_s: dict[str, float] = {}
         self._residual_started_s: dict[str, np.ndarray] = {}
         self._hard_counts: dict[str, np.ndarray] = {}
+        self._last_warning_s: dict[str, float] = {
+            "left": float("-inf"),
+            "right": float("-inf"),
+        }
         for arm in ("left", "right"):
             self.reset(arm)
         self._audit(
@@ -149,6 +158,7 @@ class RecoveryTorqueGuard:
                 "residual_duration_s": self.residual_duration_s,
                 "baseline_slew_nm_per_s": self.baseline_slew_nm_per_s,
                 "hard_limit_multiplier": self.hard_limit_multiplier,
+                "enforce": self.enforce,
                 "provenance": self.provenance,
             }
         )
@@ -255,6 +265,20 @@ class RecoveryTorqueGuard:
                 "reason": f"torque read failed: {type(exc).__name__}: {exc}",
             }
         if safe:
+            return True
+        if not self.enforce:
+            now = self.clock()
+            record = {
+                **dict(trip or {"arm": arm}),
+                "arm": arm,
+                "torque_nm": torque.tolist(),
+                "hold_sent": False,
+                "observer_only": True,
+            }
+            if now - self._last_warning_s[arm] >= self.warning_interval_s:
+                self._audit({"event": "torque_warning", "warning": record})
+                self._last_warning_s[arm] = now
+            self.reset(arm)
             return True
         self._latch_hold(arm, torque, dict(trip or {"arm": arm}))
         return False

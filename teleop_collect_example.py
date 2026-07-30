@@ -250,11 +250,21 @@ class MinimalTeleopCollector:
                 consecutive_samples=torque_provenance["consecutive_samples"],
                 audit_path=args.recovery_audit_log,
                 provenance=torque_provenance,
+                enforce=getattr(
+                    args,
+                    "enforce_recovery_torque_stop",
+                    False,
+                ),
                 **torque_provenance["recovery_teleop"],
             )
             print(
-                "[RECOVERY] Torque watchdog active; "
-                f"audit={Path(args.recovery_audit_log).resolve()}",
+                "[RECOVERY] Torque observer active"
+                + (
+                    " with stop authority; "
+                    if self.recovery_torque_guard.enforce
+                    else " without stop authority; "
+                )
+                + f"audit={Path(args.recovery_audit_log).resolve()}",
                 flush=True,
             )
 
@@ -831,6 +841,14 @@ def main():
                     help="Joint-torque thresholds for recovery mode.")
     ap.add_argument("--allow-symmetric-left-torque-fallback", action="store_true",
                     help="Explicitly reuse right-arm torque thresholds for the identical left Piper.")
+    ap.add_argument(
+        "--enforce-recovery-torque-stop",
+        action="store_true",
+        help=(
+            "Let torque telemetry latch a recovery-teleop hold. Disabled by "
+            "default because unmodeled pose load caused false stops."
+        ),
+    )
     ap.add_argument(
         "--recovery-audit-log",
         default=(
