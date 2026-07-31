@@ -33,12 +33,15 @@ display-only fallbackを明示したprofileでは、モデルと動画は生成�
 `collision_ready=false`、`motion_authorized=false`を保持します。
 
 同じcurrent-scene profileは、更新したlid位置に対してrim grasp候補も自動探索
-します。固定表示だったNYU gripperを元モデル内で改変せず、派生MJCFだけに
-可動padとdynamic lidを追加して接触物理を計算します。スマホ入口には成功動画、
+します。元モデルを改変せず、派生MJCFだけで固定NYU meshを同一asset familyの
+housing・左右可動jawへ分離し、dynamic lidを追加して接触物理を計算します。
+スマホ入口には成功動画、
 最終frame、候補別report、model/physical双方のjoint値を持つ最良軌道JSONが
 追加されます。全候補失敗時はstageを非0で停止し、見た目だけの追従動画を成功
-として扱いません。liftはXY/姿勢固定の細分化したCartesian Z軌道で生成し、
-対象座標系内の把持点滑りと手先XY逸脱を物体寸法比でgateします。閉じ量は
+として扱いません。閉じ中に両jawの蓋側面接触と高さ整合を同時確認した場合だけ
+dynamic weldを有効化し、qposの直接追従は禁止します。liftはXY/姿勢固定の
+16点Cartesian Z軌道で生成し、対象座標系内の把持点滑り、手先XY逸脱、
+基準から増えたrobot/environment penetrationをgateします。閉じ量は
 静止済み実測`closed_nonempty` keyframeのopen ratioを再利用し、captureと
 manifestのprovenanceもreport/trajectoryへ保存します。
 

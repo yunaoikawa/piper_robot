@@ -123,16 +123,21 @@ captureでは`accepted_masks`を省き、`--sam-endpoint tcp://HOST:PORT`を指�
 ## 現在の蓋に対する物理把持探索
 
 `simulated_grasp_search.enabled=true`では、現在対象を反映した直後に
-`src/optimize_lid_grasp_trajectory.py`を実行します。承認済みNYU gripperの外観と
-姿勢は基準モデルに残し、派生したsimulation-only MJCFでのみ左右可動padと
-lid free jointを追加します。探索順はhome、上空XY、降下、水平挿入、閉じる、
-verification lift、holdです。liftは一発のjoint-space補間ではなく、対象poseの
-XYとgripper姿勢を固定した8個のCartesian Z waypointで40 mm上げます。
+`src/optimize_lid_grasp_trajectory.py`を実行します。承認済みNYU gripperと基準
+sceneは変更せず、派生したsimulation-only MJCFだけで一体型gripper meshを
+同じasset familyのhousing・upper jaw・lower jawへ分離し、lid free jointを
+追加します。探索順はhome、上空XY、降下、水平挿入、閉じる、verification
+lift、holdです。liftは一発のjoint-space補間ではなく、対象poseのXYとgripper
+姿勢を固定した16個のCartesian Z waypointで40 mm上げます。
 
-候補は、hold中の両pad接触、物体による閉じ残り、20 mm以上の持上げ、
+候補は、閉じる間とhold中の同時両pad側面接触、物体による閉じ残り、
+lid/grasp高さ整合、20 mm以上の持上げ、
 lift/hold中のlid/grasp相対距離が物体半径の1.5倍以下、gripperのXY逸脱が
-物体半径の7.5%以下、対象座標系内での把持点滑りが物体半径の10%以下を
-全て満たす場合だけ成功です。粗いsupport voxelは完成済み対象と二重衝突
+物体半径の7.5%以下、対象座標系内での把持点滑りが物体半径の10%以下、
+基準姿勢から増えたrobot/environment penetrationが2 mm以下を全て満たす
+場合だけ成功です。同時両側面接触を確認した瞬間の相対姿勢で、初期状態では
+inactiveなMuJoCo weld equalityを有効化して保持を計算します。lid qposの直接
+上書きやrenderだけの追従は行いません。粗いsupport voxelは完成済み対象と二重衝突
 しないよう局所接触から外し、対象底面から生成した滑らかな作業台と皿を
 支持authorityにします。出力は
 `grasp_search/`の動画、最終画像、全候補report、物理検証済み最良軌道JSONです。

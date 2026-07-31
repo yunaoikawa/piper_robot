@@ -250,13 +250,19 @@ def _write_mobile_index(output: Path, pipeline: dict) -> Path:
 成功候補 {grasp['successful_candidate_count']} /
 {grasp['candidate_count']}、持上げ {1000.0 * grasp['lid_lift_m']:.1f} mm、
 手先XY逸脱 {1000.0 * grasp['maximum_grasp_xy_deviation_during_lift_m']:.2f} mm、
-把持点滑り {1000.0 * grasp['maximum_grasp_point_slip_in_lid_frame_m']:.2f} mm
+把持点滑り {1000.0 * grasp['maximum_grasp_point_slip_in_lid_frame_m']:.2f} mm<br>
+両爪側面接触 {'確認' if grasp['hold_bilateral_pad_side_contact'] else '未確認'}、
+蓋高さずれ {1000.0 * grasp['maximum_hold_lid_grasp_vertical_offset_m']:.2f} mm、
+台への新規食込み
+{1000.0 * grasp['maximum_new_robot_environment_penetration_m']:.2f} mm、
+保持方式 {grasp['retention_model']}
 </div>
 <video controls playsinline preload="metadata"
  poster="grasp_search/best_lid_grasp_final.png">
 <source src="grasp_search/best_lid_grasp.mp4" type="video/mp4"></video>
-<small>free jointの蓋、可動爪、両側接触、閉じ残り、持上げ追従を
-MuJoCo物理で検証。実機コマンド送信なし。</small>
+<small>緑=free jointの蓋、青=分離したNYU可動爪。両側面接触後だけ
+dynamic weldを有効化し、台の非貫通、閉じ残り、真上持上げをMuJoCo物理で検証。
+位置上書きおよび実機コマンド送信なし。</small>
 <a href="grasp_search/grasp_search_report.json">
 <b>把持候補の全評価</b></a>
 <a href="grasp_search/best_lid_grasp_trajectory.json">
@@ -913,6 +919,22 @@ def run(
                 "hold_bilateral_pad_contact": grasp_search_report[
                     "best_candidate"
                 ]["simulation"]["hold_bilateral_pad_contact"],
+                "hold_bilateral_pad_side_contact": grasp_search_report[
+                    "best_candidate"
+                ]["simulation"]["hold_bilateral_pad_side_contact"],
+                "maximum_hold_lid_grasp_vertical_offset_m": (
+                    grasp_search_report["best_candidate"]["simulation"][
+                        "maximum_hold_lid_grasp_vertical_offset_m"
+                    ]
+                ),
+                "maximum_new_robot_environment_penetration_m": (
+                    grasp_search_report["best_candidate"]["simulation"][
+                        "maximum_new_robot_environment_penetration_m"
+                    ]
+                ),
+                "retention_model": grasp_search_report["best_candidate"][
+                    "simulation"
+                ]["retention_model"],
                 "closure_obstructed": grasp_search_report["best_candidate"][
                     "simulation"
                 ]["closure_obstructed"],

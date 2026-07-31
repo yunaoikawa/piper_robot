@@ -5,13 +5,17 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from src.optimize_lid_grasp_trajectory import (
     CLOSED_TARGET_HALF_GAP_M,
     JOINT_LIMIT_MARGIN_RAD,
+    NYU_JAW_AXIS_LOCAL,
     OPEN_HALF_GAP_M,
+    VERTICAL_LIFT_WAYPOINT_COUNT,
     GraspKinematics,
     _rotation_for_rim,
+    _align_demonstrated_rotation_to_rim,
     _trajectory_samples,
     _vertical_lift_targets,
     build_articulated_grasp_model,
@@ -109,10 +113,29 @@ def test_derived_grasp_model_has_dynamic_lid_and_articulated_pads(tmp_path):
     assert model.joint("grasp_search_lid_free").type[0] == mujoco.mjtJoint.mjJNT_FREE
     assert model.joint("right/grasp_search_upper_joint").limited[0]
     assert model.joint("right/grasp_search_lower_joint").limited[0]
-    assert model.geom("right/nyu_gripper_collision").contype[0] == 0
-    assert model.geom("right/grasp_search_upper_pad").contype[0] == 1
-    assert model.geom("right/grasp_search_lower_pad").contype[0] == 1
+    assert model.geom("right/grasp_search_housing_collision").contype[0] == 2
+    assert (
+        model.geom("right/grasp_search_upper_environment_collision").contype[0]
+        == 2
+    )
+    assert model.geom("right/grasp_search_upper_pad").contype[0] == 3
+    assert model.geom("right/grasp_search_lower_pad").contype[0] == 3
     assert model.geom("grasp_search_local_support_surface").contype[0] == 1
+    assert model.geom("grasp_search_lid").contype[0] == 1
+    assert model.actuator("right/grasp_search_close").id >= 0
+    assert model.actuator("right/grasp_search_close_lower").id >= 0
+    weld = model.equality("right/grasp_search_verified_grasp_weld")
+    assert weld.id >= 0
+    assert model.eq_active0[weld.id] == 0
+    assert np.allclose(model.eq_solref[weld.id], [0.001, 1.0])
+    assert (
+        mujoco.mj_name2id(
+            model,
+            mujoco.mjtObj.mjOBJ_GEOM,
+            "right/nyu_gripper_collision",
+        )
+        == -1
+    )
     kinematics = GraspKinematics(output)
     assert np.all(
         kinematics.lower
@@ -120,10 +143,16 @@ def test_derived_grasp_model_has_dynamic_lid_and_articulated_pads(tmp_path):
     )
 
 
-def test_rim_rotation_is_level_and_trajectory_closes_before_lift():
+def test_rim_rotation_lays_fingers_flat_and_closes_tangent_to_rim():
     rotation = _rotation_for_rim(np.asarray([-0.4, -0.8]), 0.0)
     assert np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-12)
     assert np.allclose(rotation[:, 2], [0, 0, 1], atol=1e-12)
+    outward = np.asarray([-0.4, -0.8, 0.0])
+    outward /= np.linalg.norm(outward)
+    tangent = np.cross([0.0, 0.0, 1.0], outward)
+    assert np.allclose(
+        rotation @ NYU_JAW_AXIS_LOCAL, tangent, atol=1e-12
+    )
     home = np.zeros(6)
     grasp = np.full(6, 0.1)
     samples = _trajectory_samples(
@@ -156,11 +185,22 @@ def test_rim_rotation_is_level_and_trajectory_closes_before_lift():
 
 def test_vertical_lift_targets_hold_xy_and_increase_z():
     start = np.asarray([0.1, -0.2, 0.3])
-    targets = _vertical_lift_targets(start, height_m=0.04, count=8)
-    assert len(targets) == 8
+    targets = _vertical_lift_targets(start, height_m=0.04)
+    assert len(targets) == VERTICAL_LIFT_WAYPOINT_COUNT == 16
     assert all(np.allclose(target[:2], start[:2]) for target in targets)
     assert np.all(np.diff([target[2] for target in targets]) > 0)
     assert np.isclose(targets[-1][2], 0.34)
+
+
+def test_demonstrated_rotation_transfer_aligns_jaw_with_rim_tangent():
+    demonstrated = Rotation.from_euler("xyz", [0.2, -0.1, 0.3]).as_matrix()
+    outward = np.asarray([0.6, -0.8])
+    aligned = _align_demonstrated_rotation_to_rim(demonstrated, outward)
+    jaw_xy = (aligned @ NYU_JAW_AXIS_LOCAL)[:2]
+    jaw_xy /= np.linalg.norm(jaw_xy)
+    tangent = np.asarray([-outward[1], outward[0]])
+    tangent /= np.linalg.norm(tangent)
+    assert np.allclose(jaw_xy, tangent, atol=1e-12)
 
 
 def test_demonstrated_closure_is_loaded_from_stationary_keyframe(tmp_path):
@@ -173,7 +213,10 @@ def test_demonstrated_closure_is_loaded_from_stationary_keyframe(tmp_path):
                 "robot_state": {
                     "commands_sent": False,
                     "stability": {"stationary": True},
-                    "after": {"right_gripper_open_ratio": 0.5888571428571429},
+                    "after": {
+                        "right_gripper_open_ratio": 0.5888571428571429,
+                        "right_joint_positions_rad": [0.0] * 6,
+                    },
                 },
             }
         )

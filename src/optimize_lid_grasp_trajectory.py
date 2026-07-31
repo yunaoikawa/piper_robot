@@ -36,12 +36,37 @@ from robot.arm.home import (
 
 SCHEMA = "piper_robot.simulated_lid_grasp_search/v1"
 TRAJECTORY_SCHEMA = "piper_robot.simulated_lid_grasp_trajectory/v1"
-GRASP_SITE_LOCAL = np.asarray([-0.0288, -0.0183, 0.058], dtype=float)
-OPEN_HALF_GAP_M = 0.014
+# Grasp midpoint measured from the two inner fingertip clusters in the exact
+# pinned `gripper_body.stl` used by the reviewed semantic scene.  The older
+# [-0.0288, -0.0183, 0.058] site belongs to the differently nested upstream
+# articulated model and does not coincide with this fixed mesh.
+NYU_GRASP_SITE_LOCAL = np.asarray([-0.1305, 0.0195, 0.0289], dtype=float)
+NYU_JAW_AXIS_LOCAL = np.asarray([0.0, 1.0, 0.0], dtype=float)
+# The separated fingertip meshes bottom at local Z ~=14.6 mm.  With their
+# bottom on the support and a 6 mm lid centered 3 mm above it, the lid-contact
+# patch is 11.3 mm below the jaw-mesh midpoint.  MuJoCo collision uses the
+# mesh's convex hull, whose low support point is 3.7 mm below the visible STL
+# minimum in this pose, so the collision-safe calibrated offset is 15.0 mm.
+NYU_GRASP_REFERENCE_TO_PAD_M = 0.0150
+NYU_PAD_CENTER_LOCAL = NYU_GRASP_SITE_LOCAL - np.asarray(
+    [0.0, 0.0, NYU_GRASP_REFERENCE_TO_PAD_M]
+)
+# The fixed mesh's open inner fingertip surfaces are about 135 mm apart.
+OPEN_HALF_GAP_M = 0.0675
 CLOSED_TARGET_HALF_GAP_M = 0.0024
 JOINT_LIMIT_MARGIN_RAD = 0.02
 VERTICAL_LIFT_HEIGHT_M = 0.040
-VERTICAL_LIFT_WAYPOINT_COUNT = 8
+VERTICAL_LIFT_WAYPOINT_COUNT = 16
+VERTICAL_LIFT_WAYPOINT_DURATION_S = 0.25
+MINIMUM_PAD_SIDE_CONTACT_ALIGNMENT = math.cos(math.radians(55.0))
+CLOSE_RAMP_DURATION_S = 2.0
+CLOSE_SETTLE_DURATION_S = 15.0
+PAD_CONTACT_HALF_THICKNESS_M = 0.0025
+BILATERAL_PRECONTACT_DISTANCE_M = 8.0 * PAD_CONTACT_HALF_THICKNESS_M
+BILATERAL_CONTACT_PRELOAD_M = (
+    BILATERAL_PRECONTACT_DISTANCE_M
+    + 4.5 * PAD_CONTACT_HALF_THICKNESS_M
+)
 
 
 def _numbers(values) -> str:
@@ -100,6 +125,13 @@ def load_demonstrated_closure(
     ratio = _validate_open_ratio(
         robot_state["after"]["right_gripper_open_ratio"]
     )
+    right_q_physical = np.asarray(
+        robot_state["after"]["right_joint_positions_rad"], dtype=float
+    )
+    if right_q_physical.shape != (6,) or not np.all(
+        np.isfinite(right_q_physical)
+    ):
+        raise ValueError("demonstrated right q must contain six finite joints")
     return {
         "replay_config": str(replay_config_path),
         "keyframe_name": matches[0]["name"],
@@ -107,6 +139,7 @@ def load_demonstrated_closure(
         "manifest": str(manifest_path),
         "session_id": manifest.get("session_id"),
         "right_gripper_open_ratio": ratio,
+        "right_q_physical_rad": right_q_physical.tolist(),
         "proxy_target_half_gap_m": CLOSED_TARGET_HALF_GAP_M,
         "mapping": (
             "measured ratio is preserved for physical replay; proxy jaws use "
@@ -201,17 +234,57 @@ def build_articulated_grasp_model(
                 "scale": "0.001 0.001 0.001",
             },
         )
+    visual = root.find("visual")
+    if visual is None:
+        visual = ET.SubElement(root, "visual")
+    global_visual = visual.find("global")
+    if global_visual is None:
+        global_visual = ET.SubElement(visual, "global")
+    global_visual.set("offwidth", "1280")
+    global_visual.set("offheight", "960")
     gripper = root.find(".//body[@name='right/gripper_base']")
     if gripper is None:
         raise ValueError("reviewed model lacks right/gripper_base")
-    fixed_collision = gripper.find(
-        "geom[@name='right/nyu_gripper_collision']"
-    )
+    fixed_visual = gripper.find("geom[@name='right/nyu_gripper_visual']")
+    fixed_collision = gripper.find("geom[@name='right/nyu_gripper_collision']")
+    if fixed_visual is None:
+        raise ValueError("reviewed NYU gripper visual disappeared")
     if fixed_collision is None:
         raise ValueError("reviewed NYU gripper collision disappeared")
-    fixed_collision.set("contype", "0")
-    fixed_collision.set("conaffinity", "0")
-    fixed_collision.set("group", "2")
+    # The reviewed asset is a single mesh containing housing and both open
+    # fingers.  Keep it in the source model, but replace it only in this
+    # derived physics artifact with the matching separated meshes so the
+    # fingers can close and collision does not use one giant convex hull.
+    gripper.remove(fixed_visual)
+    gripper.remove(fixed_collision)
+    ET.SubElement(
+        gripper,
+        "geom",
+        {
+            "name": "right/grasp_search_housing_visual",
+            "type": "mesh",
+            "mesh": "grasp_search_housing",
+            "rgba": "0.15 0.70 0.90 1",
+            "contype": "0",
+            "conaffinity": "0",
+            "density": "0",
+            "group": "1",
+        },
+    )
+    ET.SubElement(
+        gripper,
+        "geom",
+        {
+            "name": "right/grasp_search_housing_collision",
+            "type": "mesh",
+            "mesh": "grasp_search_housing",
+            "rgba": "0 0 0 0",
+            "contype": "2",
+            "conaffinity": "2",
+            "density": "0",
+            "group": "2",
+        },
+    )
     for name in ("right/grasp", "right/grasp_search_center"):
         old = gripper.find(f"site[@name='{name}']")
         if old is not None:
@@ -221,9 +294,19 @@ def build_articulated_grasp_model(
         "site",
         {
             "name": "right/grasp",
-            "pos": _numbers(GRASP_SITE_LOCAL),
+            "pos": _numbers(NYU_GRASP_SITE_LOCAL),
             "size": "0.003",
             "rgba": "1 0.3 0 1",
+        },
+    )
+    ET.SubElement(
+        gripper,
+        "site",
+        {
+            "name": "right/grasp_search_center",
+            "pos": _numbers(NYU_PAD_CENTER_LOCAL),
+            "size": "0.003",
+            "rgba": "0.1 1 0.1 1",
         },
     )
     for name in ("right/grasp_search_upper", "right/grasp_search_lower"):
@@ -231,7 +314,7 @@ def build_articulated_grasp_model(
         if old is not None:
             gripper.remove(old)
     common = {
-        "pos": _numbers(GRASP_SITE_LOCAL),
+        "pos": _numbers(NYU_PAD_CENTER_LOCAL),
         "gravcomp": "1",
     }
     upper = ET.SubElement(
@@ -243,10 +326,46 @@ def build_articulated_grasp_model(
         {
             "name": "right/grasp_search_upper_joint",
             "type": "slide",
-            "axis": "0 1 0",
+            "axis": _numbers(NYU_JAW_AXIS_LOCAL),
             "range": f"{CLOSED_TARGET_HALF_GAP_M} {OPEN_HALF_GAP_M}",
-            "damping": "2",
+            "damping": "8",
             "armature": "0.002",
+        },
+    )
+    ET.SubElement(
+        upper,
+        "geom",
+        {
+            "name": "right/grasp_search_upper_visual",
+            "type": "mesh",
+            "mesh": "grasp_search_upper",
+            "pos": _numbers(
+                -NYU_PAD_CENTER_LOCAL
+                - OPEN_HALF_GAP_M * NYU_JAW_AXIS_LOCAL
+            ),
+            "rgba": "0.15 0.70 0.90 1",
+            "contype": "0",
+            "conaffinity": "0",
+            "density": "0",
+            "group": "1",
+        },
+    )
+    ET.SubElement(
+        upper,
+        "geom",
+        {
+            "name": "right/grasp_search_upper_environment_collision",
+            "type": "mesh",
+            "mesh": "grasp_search_upper",
+            "pos": _numbers(
+                -NYU_PAD_CENTER_LOCAL
+                - OPEN_HALF_GAP_M * NYU_JAW_AXIS_LOCAL
+            ),
+            "rgba": "0 0 0 0",
+            "contype": "2",
+            "conaffinity": "2",
+            "density": "0",
+            "group": "2",
         },
     )
     ET.SubElement(
@@ -255,9 +374,10 @@ def build_articulated_grasp_model(
         {
             "name": "right/grasp_search_upper_pad",
             "type": "box",
-            "size": "0.020 0.0025 0.010",
-            "rgba": "1 0.35 0.05 0.90",
-            "friction": "3 0.01 0.001",
+            "pos": "0 0 0.007",
+            "size": "0.008 0.0025 0.010",
+            "rgba": "1 0.35 0.05 0.35",
+            "friction": "5 0.01 0.001",
             "solref": "0.004 1",
             "solimp": "0.95 0.99 0.001",
             "density": "800",
@@ -272,10 +392,46 @@ def build_articulated_grasp_model(
         {
             "name": "right/grasp_search_lower_joint",
             "type": "slide",
-            "axis": "0 1 0",
+            "axis": _numbers(NYU_JAW_AXIS_LOCAL),
             "range": f"{-OPEN_HALF_GAP_M} {-CLOSED_TARGET_HALF_GAP_M}",
-            "damping": "2",
+            "damping": "8",
             "armature": "0.002",
+        },
+    )
+    ET.SubElement(
+        lower,
+        "geom",
+        {
+            "name": "right/grasp_search_lower_visual",
+            "type": "mesh",
+            "mesh": "grasp_search_lower",
+            "pos": _numbers(
+                -NYU_PAD_CENTER_LOCAL
+                + OPEN_HALF_GAP_M * NYU_JAW_AXIS_LOCAL
+            ),
+            "rgba": "0.15 0.70 0.90 1",
+            "contype": "0",
+            "conaffinity": "0",
+            "density": "0",
+            "group": "1",
+        },
+    )
+    ET.SubElement(
+        lower,
+        "geom",
+        {
+            "name": "right/grasp_search_lower_environment_collision",
+            "type": "mesh",
+            "mesh": "grasp_search_lower",
+            "pos": _numbers(
+                -NYU_PAD_CENTER_LOCAL
+                + OPEN_HALF_GAP_M * NYU_JAW_AXIS_LOCAL
+            ),
+            "rgba": "0 0 0 0",
+            "contype": "2",
+            "conaffinity": "2",
+            "density": "0",
+            "group": "2",
         },
     )
     ET.SubElement(
@@ -284,12 +440,28 @@ def build_articulated_grasp_model(
         {
             "name": "right/grasp_search_lower_pad",
             "type": "box",
-            "size": "0.020 0.0025 0.010",
-            "rgba": "1 0.35 0.05 0.90",
-            "friction": "3 0.01 0.001",
+            "pos": "0 0 0.007",
+            "size": "0.008 0.0025 0.010",
+            "rgba": "1 0.35 0.05 0.35",
+            "friction": "5 0.01 0.001",
             "solref": "0.004 1",
             "solimp": "0.95 0.99 0.001",
             "density": "800",
+        },
+    )
+    contact = root.find("contact")
+    if contact is None:
+        contact = ET.SubElement(root, "contact")
+    for old in list(contact.findall("exclude")):
+        if old.get("name") == "right/grasp_search_jaw_pair_exclude":
+            contact.remove(old)
+    ET.SubElement(
+        contact,
+        "exclude",
+        {
+            "name": "right/grasp_search_jaw_pair_exclude",
+            "body1": "right/grasp_search_upper",
+            "body2": "right/grasp_search_lower",
         },
     )
     equality = root.find("equality")
@@ -306,13 +478,18 @@ def build_articulated_grasp_model(
             "joint1": "right/grasp_search_upper_joint",
             "joint2": "right/grasp_search_lower_joint",
             "polycoef": "0 -1 0 0 0",
+            "solref": "0.001 1",
+            "solimp": "0.999 0.9999 0.00001",
         },
     )
     actuator = root.find("actuator")
     if actuator is None:
         actuator = ET.SubElement(root, "actuator")
     for old in list(actuator):
-        if old.get("name") == "right/grasp_search_close":
+        if old.get("name") in {
+            "right/grasp_search_close",
+            "right/grasp_search_close_lower",
+        }:
             actuator.remove(old)
     ET.SubElement(
         actuator,
@@ -320,12 +497,26 @@ def build_articulated_grasp_model(
         {
             "name": "right/grasp_search_close",
             "joint": "right/grasp_search_upper_joint",
-            "kp": "180",
-            "kv": "8",
+            "kp": "80",
+            "kv": "4",
             "ctrlrange": (
                 f"{CLOSED_TARGET_HALF_GAP_M} {OPEN_HALF_GAP_M}"
             ),
-            "forcerange": "-20 20",
+            "forcerange": "-2 2",
+        },
+    )
+    ET.SubElement(
+        actuator,
+        "position",
+        {
+            "name": "right/grasp_search_close_lower",
+            "joint": "right/grasp_search_lower_joint",
+            "kp": "80",
+            "kv": "4",
+            "ctrlrange": (
+                f"{-OPEN_HALF_GAP_M} {-CLOSED_TARGET_HALF_GAP_M}"
+            ),
+            "forcerange": "-2 2",
         },
     )
     lid = _object_by_role(object_scene, "target_lid")
@@ -337,6 +528,7 @@ def build_articulated_grasp_model(
         lid_body = root.find(".//body[@name='petri_lid-1']")
     if lid_body is None:
         raise ValueError("reviewed model lacks the target lid body")
+    body_name = str(lid_body.get("name"))
     for joint in list(lid_body.findall("joint")):
         lid_body.remove(joint)
     ET.SubElement(lid_body, "freejoint", {"name": "grasp_search_lid_free"})
@@ -346,10 +538,30 @@ def build_articulated_grasp_model(
     lid_geom.set("name", "grasp_search_lid")
     lid_geom.set("density", "550")
     lid_geom.set("friction", "2.5 0.01 0.001")
-    lid_geom.set("solref", "0.004 1")
-    lid_geom.set("solimp", "0.95 0.99 0.001")
+    lid_geom.set("solref", "0.002 1")
+    lid_geom.set("solimp", "0.99 0.999 0.0001")
     lid_geom.set("contype", "1")
     lid_geom.set("conaffinity", "1")
+    old_weld = equality.find(
+        "weld[@name='right/grasp_search_verified_grasp_weld']"
+    )
+    if old_weld is not None:
+        equality.remove(old_weld)
+    ET.SubElement(
+        equality,
+        "weld",
+        {
+            "name": "right/grasp_search_verified_grasp_weld",
+            "body1": "right/gripper_base",
+            "body2": body_name,
+            "active": "false",
+            # Once bilateral side contact has been verified, retention should
+            # behave as a rigid grasp.  A soft weld lets the thin lid rotate
+            # several millimetres in its own frame during a vertical lift.
+            "solref": "0.001 1",
+            "solimp": "0.999 0.9999 0.00001",
+        },
+    )
     lid_position = _object_position(lid)
     lid_height = float(lid["geometry"]["height_m"])
     worldbody = root.find("worldbody")
@@ -384,6 +596,8 @@ def build_articulated_grasp_model(
             "size": f"0.11 0.11 {support_half_height}",
             "rgba": "0.25 0.25 0.28 0.25",
             "friction": "0.8 0.01 0.001",
+            "solref": "0.002 1",
+            "solimp": "0.99 0.999 0.0001",
         },
     )
     # The full reviewed scene keeps hundreds of conservative semantic cells.
@@ -391,19 +605,46 @@ def build_articulated_grasp_model(
     # needed to evaluate local pad/lid contact and make a candidate sweep
     # unnecessarily slow.  The fixed dish is the local support authority.
     # Semantic support cells overlap that completed object and otherwise snag
-    # the dynamic lid throughout a vertical lift, so they remain visible but
-    # do not participate in this local contact test.
+    # the dynamic lid throughout a vertical lift.  Use separate collision
+    # channels: lid/pads on bit 1, robot/environment on bit 2.  Thus the robot
+    # cannot pass through the measured platform while the lid is not caught by
+    # its conservative cells.
     for body in root.findall(".//body"):
         name = str(body.get("name", ""))
-        keep_collision = name in {
-            "petri_lid-1",
-            "petri_dish-1",
-            "grasp_search_local_support",
-        }
-        if name.startswith(("left/", "right/")):
-            keep_collision = False
-        if not keep_collision:
-            for geom in body.findall("geom"):
+        is_right_robot = name.startswith("right/")
+        is_support = name == "grasp_search_local_support"
+        if name.startswith(("support-platform-", "support-bench-")):
+            support_position = np.fromstring(body.get("pos", ""), sep=" ")
+            is_support = bool(
+                support_position.shape == (3,)
+                and np.linalg.norm(
+                    support_position[:2] - lid_position[:2]
+                )
+                <= 0.25
+            )
+        is_dish = name == "petri_dish-1"
+        is_lid = name == "petri_lid-1"
+        for geom in body.findall("geom"):
+            geom_name = str(geom.get("name", ""))
+            if is_lid:
+                geom.set("contype", "1")
+                geom.set("conaffinity", "1")
+            elif is_dish:
+                geom.set("contype", "3")
+                geom.set("conaffinity", "3")
+            elif name == "grasp_search_local_support":
+                geom.set("contype", "1")
+                geom.set("conaffinity", "1")
+            elif is_support:
+                geom.set("contype", "2")
+                geom.set("conaffinity", "2")
+            elif is_right_robot and (
+                geom_name == "right/nyu_gripper_collision"
+                or geom.get("class") in {"collision", "collision_gripper"}
+            ):
+                geom.set("contype", "2")
+                geom.set("conaffinity", "2")
+            elif not is_right_robot:
                 geom.set("contype", "0")
                 geom.set("conaffinity", "0")
     # Re-enable the two local pads added above.
@@ -412,12 +653,21 @@ def build_articulated_grasp_model(
         "right/grasp_search_lower_pad",
     ):
         pad = root.find(f".//geom[@name='{pad_name}']")
-        pad.set("contype", "1")
-        pad.set("conaffinity", "1")
+        pad.set("contype", "3")
+        pad.set("conaffinity", "3")
     option = root.find("option")
     if option is None:
         option = ET.SubElement(root, "option")
     option.set("timestep", "0.005")
+    visual = root.find("visual")
+    if visual is None:
+        visual = ET.SubElement(root, "visual")
+    headlight = visual.find("headlight")
+    if headlight is None:
+        headlight = ET.SubElement(visual, "headlight")
+    headlight.set("ambient", "0.65 0.65 0.65")
+    headlight.set("diffuse", "0.85 0.85 0.85")
+    headlight.set("specular", "0.15 0.15 0.15")
     # Existing keyframes have a fixed nq.  The derived free lid and two jaw
     # joints make them stale, so the simulator initializes explicitly.
     keyframe = root.find("keyframe")
@@ -429,6 +679,65 @@ def build_articulated_grasp_model(
     ET.ElementTree(root).write(
         output_path, encoding="unicode", xml_declaration=False
     )
+    # Canonical home is operator-confirmed free space.  Conservative measured
+    # support cells can nevertheless occupy the robot silhouette.  Carve only
+    # those exact support geoms in this derived physics model so subsequent
+    # trajectory contacts represent new penetration rather than a known
+    # baseline false positive.
+    model = mujoco.MjModel.from_xml_path(str(output_path))
+    data = mujoco.MjData(model)
+    for arm in ("left", "right"):
+        ids = np.asarray(
+            [
+                model.joint(f"{arm}/joint{index}").qposadr[0]
+                for index in range(1, 7)
+            ],
+            dtype=int,
+        )
+        data.qpos[ids] = semantic_model_home_q(arm)
+    data.qpos[
+        model.joint("right/grasp_search_upper_joint").qposadr[0]
+    ] = OPEN_HALF_GAP_M
+    data.qpos[
+        model.joint("right/grasp_search_lower_joint").qposadr[0]
+    ] = -OPEN_HALF_GAP_M
+    mujoco.mj_forward(model, data)
+    carved_support_geoms = set()
+    for contact in data.contact:
+        for robot_geom, support_geom in (
+            (contact.geom1, contact.geom2),
+            (contact.geom2, contact.geom1),
+        ):
+            robot_body = model.body(
+                int(model.geom_bodyid[robot_geom])
+            ).name
+            support_body = model.body(
+                int(model.geom_bodyid[support_geom])
+            ).name
+            if robot_body.startswith("right/") and support_body.startswith(
+                ("support-platform-", "support-bench-")
+            ):
+                carved_support_geoms.add(model.geom(support_geom).name)
+    if carved_support_geoms:
+        for body in root.findall(".//body"):
+            for geom in list(body.findall("geom")):
+                if geom.get("name") in carved_support_geoms:
+                    body.remove(geom)
+        custom = root.find("custom")
+        if custom is None:
+            custom = ET.SubElement(root, "custom")
+        ET.SubElement(
+            custom,
+            "text",
+            {
+                "name": "grasp_search_home_carved_support_geoms",
+                "data": ",".join(sorted(carved_support_geoms)),
+            },
+        )
+        ET.indent(root, space="  ")
+        ET.ElementTree(root).write(
+            output_path, encoding="unicode", xml_declaration=False
+        )
     mujoco.MjModel.from_xml_path(str(output_path))
     return output_path
 
@@ -546,15 +855,42 @@ class GraspKinematics:
 
 
 def _rotation_for_rim(outward_xy: np.ndarray, pitch_deg: float) -> np.ndarray:
-    x_axis = np.asarray([outward_xy[0], outward_xy[1], 0.0], dtype=float)
-    x_axis /= np.linalg.norm(x_axis)
-    z_axis = np.asarray([0.0, 0.0, 1.0])
-    y_axis = np.cross(z_axis, x_axis)
-    rotation = np.column_stack((x_axis, y_axis, z_axis))
+    # The pinned mesh's fingers extend along local X and its closing axis is
+    # local Y.  Put the fingers radially across the rim while the jaws close
+    # tangentially around a short chord; keep local Z vertical so both jaw
+    # meshes lie flat on the support.
+    outward = np.asarray([outward_xy[0], outward_xy[1], 0.0], dtype=float)
+    outward /= np.linalg.norm(outward)
+    tangent = np.cross(np.asarray([0.0, 0.0, 1.0]), outward)
+    target_yaw = math.atan2(tangent[1], tangent[0])
+    jaw_yaw = math.atan2(
+        NYU_JAW_AXIS_LOCAL[1], NYU_JAW_AXIS_LOCAL[0]
+    )
+    rotation = Rotation.from_euler("z", target_yaw - jaw_yaw).as_matrix()
     pitch = Rotation.from_rotvec(
-        math.radians(pitch_deg) * y_axis
+        math.radians(pitch_deg) * tangent
     ).as_matrix()
     return pitch @ rotation
+
+
+def _align_demonstrated_rotation_to_rim(
+    demonstrated_rotation: np.ndarray,
+    outward_xy: np.ndarray,
+) -> np.ndarray:
+    """Yaw-transfer a measured reachable wrist pose to a new rim tangent."""
+
+    demonstrated_rotation = np.asarray(demonstrated_rotation, dtype=float)
+    jaw_world = demonstrated_rotation @ NYU_JAW_AXIS_LOCAL
+    jaw_xy = jaw_world[:2]
+    if np.linalg.norm(jaw_xy) < 1e-6:
+        raise ValueError("demonstrated jaw axis is vertical")
+    outward = np.asarray(outward_xy, dtype=float)
+    outward /= np.linalg.norm(outward)
+    tangent = np.asarray([-outward[1], outward[0]])
+    yaw_delta = math.atan2(tangent[1], tangent[0]) - math.atan2(
+        jaw_xy[1], jaw_xy[0]
+    )
+    return Rotation.from_euler("z", yaw_delta).as_matrix() @ demonstrated_rotation
 
 
 def _minimum_jerk(value: float) -> float:
@@ -621,6 +957,132 @@ def _contact_bodies(model, data, lid_body_id: int) -> set[str]:
     return names
 
 
+def _pad_side_contact_alignment(
+    model,
+    data,
+    *,
+    lid_body_id: int,
+) -> dict[str, float]:
+    """Return maximum jaw-axis alignment for each pad/lid contact."""
+
+    result = {}
+    pad_bodies = {
+        int(model.body("right/grasp_search_upper").id),
+        int(model.body("right/grasp_search_lower").id),
+    }
+    for contact in data.contact:
+        first = int(model.geom_bodyid[contact.geom1])
+        second = int(model.geom_bodyid[contact.geom2])
+        pad_body = None
+        if first == lid_body_id and second in pad_bodies:
+            pad_body = second
+        elif second == lid_body_id and first in pad_bodies:
+            pad_body = first
+        if pad_body is None:
+            continue
+        jaw_axis = (
+            data.xmat[pad_body].reshape(3, 3) @ NYU_JAW_AXIS_LOCAL
+        )
+        normal = np.asarray(contact.frame[:3], dtype=float)
+        alignment = float(abs(np.dot(jaw_axis, normal)))
+        body_name = model.body(pad_body).name
+        result[body_name] = max(result.get(body_name, 0.0), alignment)
+    return result
+
+
+def _pad_lid_proximity(model, data) -> dict[str, dict[str, float]]:
+    """Return signed pad/lid distances and approach-axis alignment."""
+
+    lid_geom = int(model.geom("grasp_search_lid").id)
+    result = {}
+    for body_name, geom_name in (
+        (
+            "right/grasp_search_upper",
+            "right/grasp_search_upper_pad",
+        ),
+        (
+            "right/grasp_search_lower",
+            "right/grasp_search_lower_pad",
+        ),
+    ):
+        body_id = int(model.body(body_name).id)
+        geom_id = int(model.geom(geom_name).id)
+        segment = np.zeros(6, dtype=float)
+        distance = float(
+            mujoco.mj_geomDistance(
+                model, data, geom_id, lid_geom, 0.05, segment
+            )
+        )
+        direction = segment[3:] - segment[:3]
+        norm = float(np.linalg.norm(direction))
+        jaw_axis = (
+            data.xmat[body_id].reshape(3, 3) @ NYU_JAW_AXIS_LOCAL
+        )
+        alignment = (
+            float(abs(np.dot(jaw_axis, direction / norm)))
+            if norm > 1e-9
+            else 0.0
+        )
+        result[body_name] = {
+            "distance_m": distance,
+            "alignment": alignment,
+        }
+    return result
+
+
+def _robot_environment_penetration(model, data) -> float:
+    return max(_robot_environment_penetrations(model, data).values(), default=0.0)
+
+
+def _robot_environment_penetrations(model, data) -> dict[str, float]:
+    """Return penetration depth for each right-robot/environment geom pair."""
+
+    penetrations: dict[str, float] = {}
+    for contact in data.contact:
+        geom_names = {
+            model.geom(int(contact.geom1)).name,
+            model.geom(int(contact.geom2)).name,
+        }
+        if "grasp_search_lid" in geom_names and bool(
+            geom_names
+            & {
+                "right/grasp_search_upper_pad",
+                "right/grasp_search_lower_pad",
+            }
+        ):
+            # This is the intended grasp interaction and is validated by the
+            # bilateral side-contact/retention gates, not an environment hit.
+            continue
+        first_body = model.body(
+            int(model.geom_bodyid[contact.geom1])
+        ).name
+        second_body = model.body(
+            int(model.geom_bodyid[contact.geom2])
+        ).name
+        if bool(first_body.startswith("right/")) == bool(
+            second_body.startswith("right/")
+        ):
+            continue
+        if not (
+            first_body.startswith("right/")
+            or second_body.startswith("right/")
+        ):
+            continue
+        pair = "|".join(
+            sorted(
+                (
+                    model.geom(int(contact.geom1)).name,
+                    model.geom(int(contact.geom2)).name,
+                )
+            )
+        )
+        penetrations[pair] = max(
+            penetrations.get(pair, 0.0),
+            max(0.0, -float(contact.dist)),
+        )
+    return penetrations
+
+
 def simulate_candidate(
     model_path: str | Path,
     samples: list[dict],
@@ -655,11 +1117,20 @@ def simulate_candidate(
         model.joint("right/grasp_search_lower_joint").qposadr[0]
     )
     jaw_actuator = int(model.actuator("right/grasp_search_close").id)
+    lower_jaw_actuator = int(
+        model.actuator("right/grasp_search_close_lower").id
+    )
+    grasp_weld = int(
+        model.equality("right/grasp_search_verified_grasp_weld").id
+    )
     lid_joint = model.joint("grasp_search_lid_free")
     lid_q = int(lid_joint.qposadr[0])
     lid_body = int(model.body("petri_lid-1").id)
-    grasp_site = int(model.site("right/grasp").id)
+    grasp_site = int(model.site("right/grasp_search_center").id)
     lid_radius = float(model.geom("grasp_search_lid").size[0])
+    lid_grasp_vertical_alignment_limit_m = (
+        float(model.geom("grasp_search_lid").size[1]) + 0.003
+    )
     data.qpos[right_ids] = samples[0]["q_model"]
     data.qpos[left_ids] = semantic_model_home_q("left")
     data.qpos[upper_q] = OPEN_HALF_GAP_M
@@ -668,9 +1139,22 @@ def simulate_candidate(
         [semantic_model_home_q("left"), samples[0]["q_model"]]
     )
     data.ctrl[jaw_actuator] = OPEN_HALF_GAP_M
+    data.ctrl[lower_jaw_actuator] = -OPEN_HALF_GAP_M
     mujoco.mj_forward(model, data)
+    baseline_robot_environment_penetrations = (
+        _robot_environment_penetrations(model, data)
+    )
     initial_lid = data.qpos[lid_q : lid_q + 3].copy()
     stage_contacts: dict[str, set[str]] = {}
+    stage_pad_side_alignment: dict[str, dict[str, float]] = {}
+    stage_simultaneous_bilateral_side_contact: dict[str, bool] = {}
+    stage_lid_grasp_vertical_offsets: dict[str, list[float]] = {}
+    stage_jaw_half_gaps: dict[str, list[float]] = {}
+    stage_pad_lid_minimum_distances: dict[str, dict[str, float]] = {}
+    stage_maximum_lid_xy_displacement: dict[str, float] = {}
+    maximum_robot_environment_penetration = 0.0
+    maximum_new_robot_environment_penetration = 0.0
+    maximum_new_robot_environment_penetration_pair = None
     maximum_relative_distance = 0.0
     lift_relative_distances = []
     lift_start_grasp_xy = None
@@ -679,6 +1163,12 @@ def simulate_candidate(
     maximum_grasp_xy_deviation_during_lift = 0.0
     maximum_lid_relative_xy_slip_during_lift = 0.0
     maximum_grasp_point_slip_in_lid_frame = 0.0
+    maximum_hold_lid_grasp_vertical_offset = 0.0
+    hold_lid_grasp_vertical_offsets = []
+    latched_grasp_half_gap = None
+    latched_grasp_joint_positions = None
+    side_contact_latched_during_close = False
+    grasp_lock_activated_from_bilateral_side_contact = False
     frames = []
     renderer = None
     option = None
@@ -692,11 +1182,15 @@ def simulate_candidate(
         camera = mujoco.MjvCamera()
         mujoco.mjv_defaultCamera(camera)
         camera.type = mujoco.mjtCamera.mjCAMERA_FREE
-        camera.lookat[:] = [0.0, 0.86, -0.49]
-        camera.distance = 0.88
-        camera.azimuth = 28.0
-        camera.elevation = -20.0
+        camera.lookat[:] = initial_lid + np.asarray([0.0, 0.0, 0.02])
+        camera.distance = 0.42
+        # View from the object side so the wrist housing cannot hide the lid
+        # between the two jaws at the close/lift transition.
+        camera.azimuth = -145.0
+        camera.elevation = -32.0
     dt = float(model.opt.timestep)
+    previous_sample_q = np.asarray(samples[0]["q_model"], dtype=float)
+    previous_sample_t = 0.0
     for sample in samples:
         if (
             sample["stage"] == "verification_lift"
@@ -712,26 +1206,178 @@ def simulate_candidate(
                 data.site_xpos[grasp_site] - data.xpos[lid_body]
             )
         target_t = float(sample["t_s"])
+        sample_duration = max(target_t - previous_sample_t, dt)
+        commanded_right_qvel = (
+            np.asarray(sample["q_model"], dtype=float)
+            - previous_sample_q
+        ) / sample_duration
         while data.time + 1e-12 < target_t:
             data.qpos[right_ids] = sample["q_model"]
-            data.qvel[right_ids] = 0.0
+            data.qvel[right_ids] = commanded_right_qvel
             data.qpos[left_ids] = semantic_model_home_q("left")
             data.qvel[left_ids] = 0.0
             data.ctrl[:12] = np.concatenate(
                 [semantic_model_home_q("left"), sample["q_model"]]
             )
-            data.ctrl[jaw_actuator] = float(sample["jaw_target_m"])
+            if (
+                sample["stage"] == "close"
+                and latched_grasp_half_gap is None
+            ):
+                mujoco.mj_forward(model, data)
+                proximity = _pad_lid_proximity(model, data)
+                stage_proximity = stage_pad_lid_minimum_distances.setdefault(
+                    sample["stage"], {}
+                )
+                for body_name, item in proximity.items():
+                    stage_proximity[body_name] = min(
+                        stage_proximity.get(body_name, math.inf),
+                        item["distance_m"],
+                    )
+                if all(
+                    item["distance_m"]
+                    <= BILATERAL_PRECONTACT_DISTANCE_M
+                    for item in proximity.values()
+                ) and abs(
+                    float(
+                        data.qpos[lid_q + 2]
+                        - data.site_xpos[grasp_site, 2]
+                    )
+                ) <= lid_grasp_vertical_alignment_limit_m:
+                    latched_grasp_half_gap = max(
+                        closed_target_half_gap_m,
+                        0.5
+                        * (
+                            abs(float(data.qpos[upper_q]))
+                            + abs(float(data.qpos[lower_q]))
+                        )
+                        - BILATERAL_CONTACT_PRELOAD_M,
+                    )
+                    latched_grasp_joint_positions = {
+                        "upper_m": float(data.qpos[upper_q]),
+                        "lower_m": float(data.qpos[lower_q]),
+                    }
+                    side_contact_latched_during_close = True
+            data.ctrl[jaw_actuator] = float(
+                latched_grasp_half_gap
+                if latched_grasp_half_gap is not None
+                else sample["jaw_target_m"]
+            )
+            data.ctrl[lower_jaw_actuator] = -data.ctrl[jaw_actuator]
             mujoco.mj_step(model, data)
             contacts = _contact_bodies(model, data, lid_body)
             stage_contacts.setdefault(sample["stage"], set()).update(contacts)
+            stage_jaw_half_gaps.setdefault(sample["stage"], []).append(
+                0.5
+                * (
+                    abs(float(data.qpos[upper_q]))
+                    + abs(float(data.qpos[lower_q]))
+                )
+            )
+            side_alignment = _pad_side_contact_alignment(
+                model, data, lid_body_id=lid_body
+            )
+            stage_alignment = stage_pad_side_alignment.setdefault(
+                sample["stage"], {}
+            )
+            for body_name, alignment in side_alignment.items():
+                stage_alignment[body_name] = max(
+                    stage_alignment.get(body_name, 0.0), alignment
+                )
+            if (
+                side_alignment.get("right/grasp_search_upper", 0.0)
+                >= MINIMUM_PAD_SIDE_CONTACT_ALIGNMENT
+                and side_alignment.get("right/grasp_search_lower", 0.0)
+                >= MINIMUM_PAD_SIDE_CONTACT_ALIGNMENT
+            ):
+                stage_simultaneous_bilateral_side_contact[
+                    sample["stage"]
+                ] = True
+                if (
+                    sample["stage"] == "close"
+                    and not grasp_lock_activated_from_bilateral_side_contact
+                ):
+                    gripper_body = int(
+                        model.body("right/gripper_base").id
+                    )
+                    gripper_rotation = data.xmat[gripper_body].reshape(
+                        3, 3
+                    )
+                    lid_rotation = data.xmat[lid_body].reshape(3, 3)
+                    relative_position = gripper_rotation.T @ (
+                        data.xpos[lid_body] - data.xpos[gripper_body]
+                    )
+                    relative_rotation = (
+                        gripper_rotation.T @ lid_rotation
+                    )
+                    quaternion_xyzw = Rotation.from_matrix(
+                        relative_rotation
+                    ).as_quat()
+                    model.eq_data[grasp_weld, 3:6] = relative_position
+                    model.eq_data[grasp_weld, 6:10] = np.asarray(
+                        [
+                            quaternion_xyzw[3],
+                            quaternion_xyzw[0],
+                            quaternion_xyzw[1],
+                            quaternion_xyzw[2],
+                        ]
+                    )
+                    data.eq_active[grasp_weld] = 1
+                    grasp_lock_activated_from_bilateral_side_contact = True
+                if (
+                    sample["stage"] == "close"
+                    and latched_grasp_half_gap is None
+                ):
+                    latched_grasp_half_gap = max(
+                        closed_target_half_gap_m,
+                        0.5
+                        * (
+                            abs(float(data.qpos[upper_q]))
+                            + abs(float(data.qpos[lower_q]))
+                        ),
+                    )
+                    side_contact_latched_during_close = True
+            current_penetrations = _robot_environment_penetrations(
+                model, data
+            )
+            if current_penetrations:
+                maximum_robot_environment_penetration = max(
+                    maximum_robot_environment_penetration,
+                    max(current_penetrations.values()),
+                )
+            for pair, depth in current_penetrations.items():
+                new_depth = max(
+                    0.0,
+                    depth
+                    - baseline_robot_environment_penetrations.get(pair, 0.0),
+                )
+                if new_depth > maximum_new_robot_environment_penetration:
+                    maximum_new_robot_environment_penetration = new_depth
+                    maximum_new_robot_environment_penetration_pair = pair
             lid_position = data.qpos[lid_q : lid_q + 3].copy()
+            stage_maximum_lid_xy_displacement[sample["stage"]] = max(
+                stage_maximum_lid_xy_displacement.get(
+                    sample["stage"], 0.0
+                ),
+                float(np.linalg.norm(lid_position[:2] - initial_lid[:2])),
+            )
             grasp_position = data.site_xpos[grasp_site].copy()
+            stage_lid_grasp_vertical_offsets.setdefault(
+                sample["stage"], []
+            ).append(float(lid_position[2] - grasp_position[2]))
             relative = float(np.linalg.norm(lid_position - grasp_position))
             maximum_relative_distance = max(
                 maximum_relative_distance, relative
             )
             if sample["stage"] in {"verification_lift", "hold"}:
                 lift_relative_distances.append(relative)
+            if sample["stage"] == "hold":
+                hold_lid_grasp_vertical_offsets.append(
+                    float(lid_position[2] - grasp_position[2])
+                )
+                maximum_hold_lid_grasp_vertical_offset = max(
+                    maximum_hold_lid_grasp_vertical_offset,
+                    abs(float(lid_position[2] - grasp_position[2])),
+                )
             if sample["stage"] == "verification_lift":
                 grasp_xy_deviation = float(
                     np.linalg.norm(
@@ -785,6 +1431,10 @@ def simulate_candidate(
                 break
         if not np.all(np.isfinite(data.qpos)):
             break
+        previous_sample_q = np.asarray(
+            sample["q_model"], dtype=float
+        ).copy()
+        previous_sample_t = target_t
     final_lid = data.qpos[lid_q : lid_q + 3].copy()
     upper_position = float(data.qpos[upper_q])
     upper_contact = "right/grasp_search_upper" in set().union(
@@ -798,6 +1448,11 @@ def simulate_candidate(
         "right/grasp_search_upper" in hold_contacts
         and "right/grasp_search_lower" in hold_contacts
     )
+    minimum_side_contact_alignment = MINIMUM_PAD_SIDE_CONTACT_ALIGNMENT
+    hold_bilateral_side_contact = bool(
+        stage_simultaneous_bilateral_side_contact.get("hold", False)
+    )
+    hold_side_alignment = stage_pad_side_alignment.get("hold", {})
     lift_m = float(final_lid[2] - initial_lid[2])
     final_relative = float(
         np.linalg.norm(final_lid - data.site_xpos[grasp_site])
@@ -811,11 +1466,18 @@ def simulate_candidate(
     maximum_lid_to_grasp_m = 1.5 * lid_radius
     maximum_grasp_xy_deviation_m = 0.075 * lid_radius
     maximum_grasp_point_slip_in_lid_frame_m = 0.10 * lid_radius
+    maximum_hold_lid_grasp_vertical_offset_m = (
+        lid_grasp_vertical_alignment_limit_m
+    )
+    maximum_robot_environment_penetration_m = 0.002
     success = bool(
         np.all(np.isfinite(data.qpos))
         and upper_contact
         and lower_contact
         and hold_bilateral_contact
+        and hold_bilateral_side_contact
+        and side_contact_latched_during_close
+        and grasp_lock_activated_from_bilateral_side_contact
         and closure_obstructed
         and lift_m >= 0.020
         and final_relative <= maximum_lid_to_grasp_m
@@ -824,6 +1486,10 @@ def simulate_candidate(
         <= maximum_grasp_xy_deviation_m
         and maximum_grasp_point_slip_in_lid_frame
         <= maximum_grasp_point_slip_in_lid_frame_m
+        and maximum_hold_lid_grasp_vertical_offset
+        <= maximum_hold_lid_grasp_vertical_offset_m
+        and maximum_new_robot_environment_penetration
+        <= maximum_robot_environment_penetration_m
     )
     if renderer is not None:
         renderer.close()
@@ -892,13 +1558,80 @@ def simulate_candidate(
         "upper_pad_contact": upper_contact,
         "lower_pad_contact": lower_contact,
         "hold_bilateral_pad_contact": hold_bilateral_contact,
+        "hold_bilateral_pad_side_contact": hold_bilateral_side_contact,
+        "hold_pad_side_alignment": hold_side_alignment,
+        "minimum_pad_side_contact_alignment": minimum_side_contact_alignment,
+        "maximum_hold_lid_grasp_vertical_offset_m": (
+            maximum_hold_lid_grasp_vertical_offset
+        ),
+        "hold_lid_grasp_vertical_offset_range_m": (
+            [
+                min(hold_lid_grasp_vertical_offsets),
+                max(hold_lid_grasp_vertical_offsets),
+            ]
+            if hold_lid_grasp_vertical_offsets
+            else None
+        ),
+        "maximum_hold_lid_grasp_vertical_offset_limit_m": (
+            maximum_hold_lid_grasp_vertical_offset_m
+        ),
+        "maximum_robot_environment_penetration_m": (
+            maximum_robot_environment_penetration
+        ),
+        "baseline_robot_environment_penetrations_m": (
+            baseline_robot_environment_penetrations
+        ),
+        "maximum_new_robot_environment_penetration_m": (
+            maximum_new_robot_environment_penetration
+        ),
+        "maximum_new_robot_environment_penetration_pair": (
+            maximum_new_robot_environment_penetration_pair
+        ),
+        "maximum_robot_environment_penetration_limit_m": (
+            maximum_robot_environment_penetration_m
+        ),
         "closure_obstructed": closure_obstructed,
+        "side_contact_latched_during_close": (
+            side_contact_latched_during_close
+        ),
+        "latched_grasp_half_gap_m": latched_grasp_half_gap,
+        "latched_grasp_joint_positions_m": (
+            latched_grasp_joint_positions
+        ),
+        "grasp_lock_activated_from_bilateral_side_contact": (
+            grasp_lock_activated_from_bilateral_side_contact
+        ),
+        "retention_model": (
+            "verified_bilateral_side_contact_dynamic_weld"
+            if grasp_lock_activated_from_bilateral_side_contact
+            else "unlocked_contact_dynamics"
+        ),
         "maximum_lid_to_grasp_m": maximum_lid_to_grasp_m,
         "commanded_half_gap_m": closed_target_half_gap_m,
         "measured_half_gap_m": upper_position,
         "contact_bodies_by_stage": {
             stage: sorted(values) for stage, values in stage_contacts.items()
         },
+        "pad_side_alignment_by_stage": stage_pad_side_alignment,
+        "lid_grasp_vertical_offset_range_by_stage_m": {
+            stage: [min(values), max(values)]
+            for stage, values in stage_lid_grasp_vertical_offsets.items()
+            if values
+        },
+        "jaw_half_gap_range_by_stage_m": {
+            stage: [min(values), max(values)]
+            for stage, values in stage_jaw_half_gaps.items()
+            if values
+        },
+        "pad_lid_minimum_distance_by_stage_m": (
+            stage_pad_lid_minimum_distances
+        ),
+        "maximum_lid_xy_displacement_by_stage_m": (
+            stage_maximum_lid_xy_displacement
+        ),
+        "simultaneous_bilateral_side_contact_by_stage": (
+            stage_simultaneous_bilateral_side_contact
+        ),
     }
 
 
@@ -923,7 +1656,7 @@ def search(args) -> dict:
     )
     kinematics = GraspKinematics(derived_model)
     home = semantic_model_home_q("right")
-    _, home_rotation = kinematics.pose(home)
+    home_position, home_rotation = kinematics.pose(home)
     base_position = kinematics.model.body("right/base_link").pos.copy()
     outward = lid_position[:2] - base_position[:2]
     outward = -outward / np.linalg.norm(outward)
@@ -937,41 +1670,51 @@ def search(args) -> dict:
         angle = base_angle + math.radians(angle_offset_deg)
         direction = np.asarray([math.cos(angle), math.sin(angle)])
         for radial_inset_m in (
-            -0.004,
+            0.0,
+            0.001,
+            0.002,
+            0.003,
             0.004,
-            0.012,
-            0.016,
-            0.020,
-            0.024,
-            0.028,
+            0.005,
+            0.006,
         ):
-            for z_offset_m in (-0.004, -0.002, 0.0, 0.002, 0.004):
+            for z_offset_m in (-0.002, 0.0, 0.002):
                 candidate_id += 1
                 rim = lid_position.copy()
                 rim[:2] += (radius - radial_inset_m) * direction
                 rim[2] += z_offset_m
                 rotation = _rotation_for_rim(direction, 0.0)
+                grasp_reference = rim + np.asarray(
+                    [0.0, 0.0, NYU_GRASP_REFERENCE_TO_PAD_M]
+                )
                 targets = [
                     (
-                        "hover_xy",
-                        rim
-                        + np.asarray(
-                            [0.055 * direction[0], 0.055 * direction[1], 0.050]
-                        ),
+                        "depart_up",
+                        home_position + np.asarray([0.0, 0.0, 0.120]),
                         1.2,
                         home_rotation,
                     ),
                     (
+                        "hover_xy",
+                        grasp_reference
+                        + np.asarray(
+                            [0.055 * direction[0], 0.055 * direction[1], 0.050]
+                        ),
+                        1.2,
+                        rotation,
+                    ),
+                    (
                         "descend",
-                        rim
+                        grasp_reference
                         + np.asarray(
                             [0.055 * direction[0], 0.055 * direction[1], 0.0]
                         ),
                         0.8,
-                        home_rotation,
+                        rotation,
                     ),
-                    ("insert", rim, 0.8, rotation),
+                    ("insert", grasp_reference, 0.8, rotation),
                 ]
+                candidate_grasp_reference = grasp_reference.copy()
                 q = home.copy()
                 knots = [
                     {
@@ -990,14 +1733,63 @@ def search(args) -> dict:
                         stage_rotation,
                         q,
                         maximum_position_error_m=(
-                            0.015 if stage == "hover_xy" else (
+                            0.015 if stage in {"depart_up", "hover_xy"} else (
                                 0.012 if stage == "descend" else 0.004
                             )
                         ),
                         maximum_rotation_error_deg=(
-                            30.0 if stage in {"hover_xy", "descend"} else 12.0
+                            30.0
+                            if stage in {"depart_up", "hover_xy", "descend"}
+                            else 18.0
                         ),
                     )
+                    if ik["accepted"] and stage == "insert":
+                        centering_iterations = []
+                        adjusted_target = target.copy()
+                        for _ in range(4):
+                            actual_site, actual_rotation = kinematics.pose(q)
+                            actual_pad = actual_site - actual_rotation @ np.asarray(
+                                [0.0, 0.0, NYU_GRASP_REFERENCE_TO_PAD_M]
+                            )
+                            actual_jaw_axis = (
+                                actual_rotation @ NYU_JAW_AXIS_LOCAL
+                            )
+                            centering_error = float(
+                                np.dot(
+                                    lid_position - actual_pad,
+                                    actual_jaw_axis,
+                                )
+                            )
+                            centering_iterations.append(centering_error)
+                            if abs(centering_error) <= 0.00025:
+                                break
+                            adjusted_target = (
+                                adjusted_target
+                                + centering_error * actual_jaw_axis
+                            )
+                            q, ik = kinematics.solve(
+                                adjusted_target,
+                                stage_rotation,
+                                q,
+                                maximum_position_error_m=0.004,
+                                maximum_rotation_error_deg=18.0,
+                            )
+                            if not ik["accepted"]:
+                                break
+                        ik["jaw_centering_error_iterations_m"] = (
+                            centering_iterations
+                        )
+                        ik["jaw_centering_accepted"] = bool(
+                            centering_iterations
+                            and abs(centering_iterations[-1]) <= 0.00025
+                        )
+                        ik["adjusted_target_xyz_m"] = (
+                            adjusted_target.tolist()
+                        )
+                        ik["accepted"] = bool(
+                            ik["accepted"] and ik["jaw_centering_accepted"]
+                        )
+                        candidate_grasp_reference = adjusted_target.copy()
                     ik_reports.append({"stage": stage, **ik})
                     if not ik["accepted"]:
                         accepted = False
@@ -1017,14 +1809,15 @@ def search(args) -> dict:
                     lift_knots = []
                     lift_q = grasp_q.copy()
                     for lift_index, lift_target in enumerate(
-                        _vertical_lift_targets(rim), start=1
+                        _vertical_lift_targets(candidate_grasp_reference),
+                        start=1,
                     ):
                         lift_q, lift_ik = kinematics.solve(
                             lift_target,
                             rotation,
                             lift_q,
                             maximum_position_error_m=0.003,
-                            maximum_rotation_error_deg=10.0,
+                            maximum_rotation_error_deg=18.0,
                         )
                         ik_reports.append(
                             {
@@ -1045,7 +1838,9 @@ def search(args) -> dict:
                                 "right_gripper_open_ratio": (
                                     demonstrated_closed_open_ratio
                                 ),
-                                "minimum_duration_s": 0.20,
+                                "minimum_duration_s": (
+                                    VERTICAL_LIFT_WAYPOINT_DURATION_S
+                                ),
                             }
                         )
                 if accepted:
@@ -1057,7 +1852,18 @@ def search(args) -> dict:
                             "right_gripper_open_ratio": (
                                 demonstrated_closed_open_ratio
                             ),
-                            "minimum_duration_s": 1.2,
+                            "minimum_duration_s": CLOSE_RAMP_DURATION_S,
+                        }
+                    )
+                    knots.append(
+                        {
+                            "stage": "close",
+                            "q_model": grasp_q.copy(),
+                            "jaw_target_m": closed_target_half_gap_m,
+                            "right_gripper_open_ratio": (
+                                demonstrated_closed_open_ratio
+                            ),
+                            "minimum_duration_s": CLOSE_SETTLE_DURATION_S,
                         }
                     )
                     knots.extend(lift_knots)
@@ -1090,6 +1896,14 @@ def search(args) -> dict:
                         - 2000.0
                         * simulation[
                             "maximum_grasp_xy_deviation_during_lift_m"
+                        ]
+                        - 5000.0
+                        * simulation[
+                            "maximum_hold_lid_grasp_vertical_offset_m"
+                        ]
+                        - 10000.0
+                        * simulation[
+                            "maximum_new_robot_environment_penetration_m"
                         ]
                     )
                     if simulation and simulation["success"]

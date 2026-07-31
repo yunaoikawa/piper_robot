@@ -72,9 +72,15 @@ accepted masks and provide `--sam-endpoint`.
 When that profile enables `simulated_grasp_search`, the pipeline must also run
 `src/optimize_lid_grasp_trajectory.py`. Do not accept a render-only policy that
 teleports the lid to the end effector. Preserve the reviewed fixed NYU visual
-in the source model, derive a simulation-only articulated pad model, make only
-the target lid free, and require bilateral pad contact, non-empty closure, at
-least 20 mm of lift, and bounded target/tool drift through the hold. Keep this
+in the source model, derive a simulation-only articulated pad model from its
+pinned housing/upper/lower mesh family, make only the target lid free, and
+require simultaneous bilateral pad side contact, lid/tool height alignment,
+non-empty closure, at least 20 mm of lift, and bounded target/tool drift
+through the hold. Only after verified simultaneous side contact may an
+initially inactive MuJoCo weld equality be populated from the measured
+relative pose and enabled for dynamic retention. Never update the lid qpos to
+follow the tool. Gate new robot/environment penetration relative to the
+canonical baseline so a jaw cannot pass through a support platform. Keep this
 result separate from source-scene collision and hardware motion authority.
 Generate verification lift as multiple Cartesian Z waypoints with fixed XY and
 orientation; do not use one long joint-space interpolation. Gate both tool XY
