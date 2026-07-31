@@ -47,6 +47,36 @@ def _parse_masks(specs: list[str]) -> dict[str, Path]:
     return result
 
 
+def _load_mask_in_sensor_coordinates(
+    path: str | Path,
+    sensor_shape_hw: tuple[int, int],
+) -> tuple[np.ndarray, str]:
+    """Load an accepted mask without silently mixing display/sensor axes.
+
+    Record3D RGB-D arrays are portrait sensor coordinates. The operator-facing
+    preview is rotated clockwise into landscape. A SAM mask drawn on that
+    preview must therefore be rotated counter-clockwise before depth lookup.
+    Arbitrary aspect-ratio mismatches are rejected instead of being resized,
+    since resizing a 90-degree mismatch can look plausible while corrupting
+    camera calibration.
+    """
+
+    image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        raise FileNotFoundError(path)
+    if image.shape == sensor_shape_hw:
+        return image > 100, "sensor"
+    if image.shape == sensor_shape_hw[::-1]:
+        return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE) > 100, (
+            "display_clockwise_rotated_back_to_sensor"
+        )
+    raise ValueError(
+        f"{path}: mask shape {image.shape} is neither sensor shape "
+        f"{sensor_shape_hw} nor clockwise display shape "
+        f"{sensor_shape_hw[::-1]}"
+    )
+
+
 def _qpos(view: dict) -> list[float]:
     state = view.get("robot_state", {})
     stability = state.get("stability", {})
@@ -188,6 +218,9 @@ def _cad_geometry(
         mesh_id = int(model.geom_dataid[geom_id])
         start = int(model.mesh_vertadr[mesh_id])
         count = int(model.mesh_vertnum[mesh_id])
+        # Compiled geom_xpos/geom_xmat already include MuJoCo's mesh
+        # recentering transform. Applying mesh_pos/mesh_quat here would
+        # double-transform every mesh and displace articulated links.
         local = np.asarray(model.mesh_vert[start : start + count], dtype=float)
         stride = max(1, len(local) // 1200)
         local = local[::stride]
@@ -1043,6 +1076,7 @@ def build(args) -> dict:
         )
     masks = []
     mask_sources = []
+    mask_coordinate_conversions = {}
     for item in temporal:
         mask_path = accepted_masks.get(item["name"])
         if mask_path is None:
@@ -1063,8 +1097,11 @@ def build(args) -> dict:
             rgb_mask = np.logical_or.reduce(robot_masks)
             mask_sources.append([record.mask_path for record in observations])
         else:
-            rgb_mask = load_mask(mask_path, item["rgb_bgr"].shape[:2])
+            rgb_mask, conversion = _load_mask_in_sensor_coordinates(
+                mask_path, item["rgb_bgr"].shape[:2]
+            )
             mask_sources.append([str(mask_path)])
+            mask_coordinate_conversions[item["name"]] = conversion
         depth_mask = cv2.resize(
             rgb_mask.astype(np.uint8),
             (item["depth_m"].shape[1], item["depth_m"].shape[0]),
@@ -1271,12 +1308,19 @@ def build(args) -> dict:
     for item, mask_pair, projected in zip(
         temporal, selected_masks, projected_masks
     ):
+        sensor_overlay = audit_dir / f"{item['name']}_overlay_sensor.png"
         _mask_overlay(
             item["rgb_bgr"],
             np.logical_or(mask_pair["left"], mask_pair["right"]),
             projected,
-            audit_dir / f"{item['name']}_overlay.png",
+            sensor_overlay,
         )
+        sensor_image = cv2.imread(str(sensor_overlay), cv2.IMREAD_COLOR)
+        display_image = cv2.rotate(sensor_image, cv2.ROTATE_90_CLOCKWISE)
+        if not cv2.imwrite(
+            str(audit_dir / f"{item['name']}_overlay.png"), display_image
+        ):
+            raise RuntimeError(f"failed to write display overlay for {item['name']}")
 
     independent = {
         arm: [
@@ -1427,6 +1471,7 @@ def build(args) -> dict:
                 view["name"]: sources
                 for view, sources in zip(views, mask_sources)
             },
+            "mask_coordinate_conversions": mask_coordinate_conversions,
             "qpos_rad": {
                 view["name"]: qpos for view, qpos in zip(views, qposes)
             },
@@ -1452,10 +1497,11 @@ def build(args) -> dict:
             "blue_tool_anchor_view_indices": tool_anchor_views,
             "blue_tool_anchor_diagnostics": tool_anchor_diagnostics,
             "audit_display": {
-                "rotation": "none",
+                "rotation": "90_degrees_clockwise_from_sensor",
                 "note": (
-                    "RGB, depth, masks, and intrinsics remain in the captured "
-                    "sensor coordinates; viewer rotation is presentation-only"
+                    "Calibration remains in captured portrait sensor "
+                    "coordinates; *_overlay.png is landscape presentation and "
+                    "*_overlay_sensor.png is the numerical audit source"
                 ),
             },
             "calibration_robot_model": str(calibration_model),

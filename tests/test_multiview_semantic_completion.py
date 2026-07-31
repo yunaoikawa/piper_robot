@@ -20,6 +20,7 @@ from src.calibrate_head_robot_from_cad import (
     _anchor_initial_transform,
     _component_groups_from_parts,
     _initial_transform,
+    _load_mask_in_sensor_coordinates,
     _qpos_diversity,
     _tracked_core_by_arm,
     fit_transform,
@@ -249,6 +250,33 @@ def test_instance_tracking_uses_joint_excitation_not_image_left_right():
     tracked = _tracked_core_by_arm(parts, qposes)
     assert tracked["left"] == [0, 0, 0]
     assert tracked["right"] == [1, 1, 1]
+
+
+def test_landscape_display_mask_is_rotated_back_to_sensor(tmp_path):
+    import cv2
+
+    display_mask = np.zeros((3, 4), dtype=np.uint8)
+    display_mask[0, 3] = 255
+    path = tmp_path / "display_mask.png"
+    assert cv2.imwrite(str(path), display_mask)
+
+    sensor_mask, conversion = _load_mask_in_sensor_coordinates(path, (4, 3))
+
+    assert conversion == "display_clockwise_rotated_back_to_sensor"
+    expected = cv2.rotate(
+        display_mask, cv2.ROTATE_90_COUNTERCLOCKWISE
+    ).astype(bool)
+    np.testing.assert_array_equal(sensor_mask, expected)
+
+
+def test_mask_coordinate_loader_rejects_arbitrary_resize(tmp_path):
+    import cv2
+    import pytest
+
+    path = tmp_path / "wrong_shape.png"
+    assert cv2.imwrite(str(path), np.ones((2, 5), dtype=np.uint8) * 255)
+    with pytest.raises(ValueError, match="neither sensor shape"):
+        _load_mask_in_sensor_coordinates(path, (4, 3))
 
 
 def test_tool_anchor_fit_recovers_upright_transform_and_rigid_offset():
