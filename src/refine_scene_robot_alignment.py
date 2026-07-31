@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 import cv2
 import numpy as np
 
-from robot.arm.home import physical_home_q
+from robot.arm.home import physical_home_q, semantic_model_home_q
 from rollout.scene_registration import (
     apply_independent_base_translations_to_mjcf,
     apply_shared_planar_transform_to_mjcf,
@@ -161,7 +161,7 @@ def _derived_scene(
 
 
 def _pin_canonical_physical_home(positioned_model: Path) -> None:
-    """Pin semantic model-left/right to physical left/right home q."""
+    """Pin physical home after mapping into the semantic model joint frame."""
 
     tree = ET.parse(positioned_model)
     root = tree.getroot()
@@ -169,8 +169,8 @@ def _pin_canonical_physical_home(positioned_model: Path) -> None:
     if keyframe is None:
         raise ValueError("positioned Piper model lacks keyframe home")
     values = np.r_[
-        physical_home_q("left"),
-        physical_home_q("right"),
+        semantic_model_home_q("left"),
+        semantic_model_home_q("right"),
     ]
     serialized = " ".join(f"{value:.10g}" for value in values)
     keyframe.set("qpos", serialized)

@@ -9,6 +9,11 @@ from rollout.recorded_trajectory_replay import (
     _segment_duration,
 )
 from src.run_pasteur_offline_replay import _validate_physical_arm_identity
+from robot.arm.home import (
+    physical_home_q,
+    physical_to_semantic_model_q_offset,
+    semantic_model_home_q,
+)
 
 
 def test_minimum_jerk_has_exact_endpoints_and_zero_endpoint_velocity():
@@ -24,6 +29,21 @@ def test_segment_duration_enforces_quintic_peak_joint_speed():
     finish = np.array([0.7, -0.2, 0.1, 0.0, 0.0, 0.0])
     duration = _segment_duration(start, finish, 0.35, 0.5)
     assert duration == 1.875 * 0.7 / 0.35
+
+
+def test_semantic_home_maps_both_nyu_grippers_to_common_horizontal_roll():
+    left = semantic_model_home_q("left")
+    right = semantic_model_home_q("right")
+    assert left[5] == pytest.approx(1.355)
+    assert right[5] == pytest.approx(1.355)
+    assert np.allclose(
+        physical_home_q("right")
+        + physical_to_semantic_model_q_offset("right"),
+        right,
+    )
+    assert physical_to_semantic_model_q_offset("right")[5] == pytest.approx(
+        -0.995
+    )
 
 
 def test_offline_replay_source_does_not_import_hardware_control():

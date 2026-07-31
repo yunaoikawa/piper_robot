@@ -9,7 +9,11 @@ from typing import Iterable
 
 import numpy as np
 
-from robot.arm.home import physical_home_q
+from robot.arm.home import (
+    physical_home_q,
+    physical_to_semantic_model_q_offset,
+    semantic_model_home_q,
+)
 
 
 SCHEMA = "piper_robot.measured_keyframe_trajectory_replay/v1"
@@ -379,12 +383,12 @@ def build_recorded_replay(
     # right/ and physical-left maps to left/. Production ConeE branch names
     # are intentionally not reused here. Joint coordinates use the physical
     # Piper values directly; old MJCF zero offsets are not applied.
-    model_home_right = home_q.copy()
-    model_home_left = physical_home_q("left")
+    model_home_right = semantic_model_home_q("right")
+    model_home_left = semantic_model_home_q("left")
     data.qpos[right_ids] = model_home_right
     data.qpos[left_ids] = model_home_left
     mujoco.mj_forward(model, data)
-    right_offset = np.zeros(6, dtype=float)
+    right_offset = physical_to_semantic_model_q_offset("right")
     samples = []
     cursor_s = 0.0
     maximum_contact_count = 0

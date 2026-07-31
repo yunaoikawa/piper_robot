@@ -11,7 +11,10 @@ from typing import Sequence
 
 import numpy as np
 
-from robot.arm.home import physical_home_q
+from robot.arm.home import (
+    physical_home_q,
+    physical_to_semantic_model_q_offset,
+)
 from rollout.autonomous_mpc import (
     AnalyticObstacleSet,
     AutonomousStop,
@@ -122,8 +125,8 @@ class HomeSceneValidator:
                 joint_names=right_names,
                 left_joint_names=left_names,
                 ee_frame="right/ee",
-                right_q_offset=np.zeros(6),
-                left_q_offset=np.zeros(6),
+                right_q_offset=physical_to_semantic_model_q_offset("right"),
+                left_q_offset=physical_to_semantic_model_q_offset("left"),
                 contact_body_prefix="right/",
                 link_capsules=link_capsules,
                 attached_spheres=[("right/gripper_base", 0.055)],

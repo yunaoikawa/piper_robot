@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from robot.arm.home import (
     physical_home_q,
     production_mujoco_home_qpos,
+    semantic_model_home_q,
     semantic_mujoco_home_qpos,
 )
 from rollout.home_lid_trajectory import SCHEMA
@@ -162,8 +163,8 @@ def render(args):
     left_ids = mapping["left_ids"]
     right_physical_home = physical_home_q("right")
     left_physical_home = physical_home_q("left")
-    right_model_home = right_physical_home.copy()
-    left_model_home = left_physical_home.copy()
+    right_model_home = semantic_model_home_q("right")
+    left_model_home = semantic_model_home_q("left")
     data.qpos[right_ids] = right_model_home
     data.qpos[left_ids] = left_model_home
     mujoco.mj_forward(model, data)

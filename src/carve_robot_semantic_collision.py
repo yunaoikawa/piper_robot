@@ -11,7 +11,10 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rollout.semantic_collision_carving import carve_robot_contamination
-from robot.arm.home import physical_home_q
+from robot.arm.home import (
+    physical_to_semantic_model_q_offset,
+    semantic_model_home_q,
+)
 
 
 def _verified_qpos(config_path: str | None, model_branch: str) -> dict:
@@ -27,6 +30,13 @@ def _verified_qpos(config_path: str | None, model_branch: str) -> dict:
         right = manifest["robot_state"]["after"][
             "right_joint_positions_rad"
         ]
+        right = [
+            value + offset
+            for value, offset in zip(
+                right,
+                physical_to_semantic_model_q_offset("right"),
+            )
+        ]
         values = {
             f"{model_branch}/joint{index + 1}": value
             for index, value in enumerate(right)
@@ -34,7 +44,7 @@ def _verified_qpos(config_path: str | None, model_branch: str) -> dict:
         values.update(
             {
                 f"{other_branch}/joint{index + 1}": value
-                for index, value in enumerate(physical_home_q("left"))
+                for index, value in enumerate(semantic_model_home_q("left"))
             }
         )
         result[item["name"]] = values

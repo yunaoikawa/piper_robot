@@ -14,7 +14,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from robot.arm.home import physical_home_q
+from robot.arm.home import semantic_model_home_q
 
 
 def _transform(rotation: np.ndarray, translation: np.ndarray) -> np.ndarray:
@@ -167,7 +167,7 @@ def render(
     recorded_target, latest_target, geometry = _object_centers(object_scene)
     radius = float(geometry["radius_m"])
     half_height = float(geometry["height_m"]) / 2.0
-    static_home = physical_home_q("left")
+    static_home = semantic_model_home_q("left")
 
     # Compute the complete EE path once, and the measured closed attachment.
     ee_poses = []
