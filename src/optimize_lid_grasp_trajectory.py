@@ -40,6 +40,8 @@ GRASP_SITE_LOCAL = np.asarray([-0.0288, -0.0183, 0.058], dtype=float)
 OPEN_HALF_GAP_M = 0.014
 CLOSED_TARGET_HALF_GAP_M = 0.0024
 JOINT_LIMIT_MARGIN_RAD = 0.02
+VERTICAL_LIFT_HEIGHT_M = 0.040
+VERTICAL_LIFT_WAYPOINT_COUNT = 8
 
 
 def _numbers(values) -> str:
@@ -60,6 +62,73 @@ def _object_position(item: dict) -> np.ndarray:
     if pose.shape != (4, 4) or not np.all(np.isfinite(pose)):
         raise ValueError("object pose_scene must be a finite 4x4 transform")
     return pose[:3, 3].copy()
+
+
+def _validate_open_ratio(open_ratio: float) -> float:
+    open_ratio = float(open_ratio)
+    if not math.isfinite(open_ratio) or not 0.0 <= open_ratio <= 1.0:
+        raise ValueError("demonstrated gripper open ratio must be in [0, 1]")
+    return open_ratio
+
+
+def load_demonstrated_closure(
+    replay_config_path: str | Path,
+) -> dict:
+    """Load the stationary, measured closed grasp used as jaw provenance."""
+
+    replay_config_path = Path(replay_config_path).resolve()
+    profile = json.loads(replay_config_path.read_text())
+    matches = [
+        item
+        for item in profile.get("measured_keyframes", ())
+        if item.get("stage") == "closed_nonempty"
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            "replay profile must contain exactly one closed_nonempty keyframe"
+        )
+    capture = Path(matches[0]["capture"])
+    if not capture.is_absolute():
+        capture = Path(__file__).resolve().parents[1] / capture
+    manifest_path = (capture / "manifest.json").resolve()
+    manifest = json.loads(manifest_path.read_text())
+    robot_state = manifest.get("robot_state", {})
+    if robot_state.get("commands_sent") is not False:
+        raise ValueError("demonstrated closure must be observation-only")
+    if robot_state.get("stability", {}).get("stationary") is not True:
+        raise ValueError("demonstrated closure must be stationary")
+    ratio = _validate_open_ratio(
+        robot_state["after"]["right_gripper_open_ratio"]
+    )
+    return {
+        "replay_config": str(replay_config_path),
+        "keyframe_name": matches[0]["name"],
+        "capture": str(capture.resolve()),
+        "manifest": str(manifest_path),
+        "session_id": manifest.get("session_id"),
+        "right_gripper_open_ratio": ratio,
+        "proxy_target_half_gap_m": CLOSED_TARGET_HALF_GAP_M,
+        "mapping": (
+            "measured ratio is preserved for physical replay; proxy jaws use "
+            "a separate contact-seeking target because linkage width is not "
+            "calibrated"
+        ),
+    }
+
+
+def _vertical_lift_targets(
+    grasp_position: np.ndarray,
+    *,
+    height_m: float = VERTICAL_LIFT_HEIGHT_M,
+    count: int = VERTICAL_LIFT_WAYPOINT_COUNT,
+) -> list[np.ndarray]:
+    if height_m <= 0 or count < 2:
+        raise ValueError("vertical lift needs positive height and >=2 waypoints")
+    grasp_position = np.asarray(grasp_position, dtype=float)
+    return [
+        grasp_position + np.asarray([0.0, 0.0, height_m * index / count])
+        for index in range(1, count + 1)
+    ]
 
 
 def build_articulated_grasp_model(
@@ -282,20 +351,55 @@ def build_articulated_grasp_model(
     lid_geom.set("contype", "1")
     lid_geom.set("conaffinity", "1")
     lid_position = _object_position(lid)
+    lid_height = float(lid["geometry"]["height_m"])
+    worldbody = root.find("worldbody")
+    old_support = worldbody.find(
+        "body[@name='grasp_search_local_support']"
+    )
+    if old_support is not None:
+        worldbody.remove(old_support)
+    support_half_height = 0.005
+    support = ET.SubElement(
+        worldbody,
+        "body",
+        {
+            "name": "grasp_search_local_support",
+            "pos": _numbers(
+                [
+                    lid_position[0],
+                    lid_position[1],
+                    lid_position[2]
+                    - 0.5 * lid_height
+                    - support_half_height,
+                ]
+            ),
+        },
+    )
+    ET.SubElement(
+        support,
+        "geom",
+        {
+            "name": "grasp_search_local_support_surface",
+            "type": "box",
+            "size": f"0.11 0.11 {support_half_height}",
+            "rgba": "0.25 0.25 0.28 0.25",
+            "friction": "0.8 0.01 0.001",
+        },
+    )
     # The full reviewed scene keeps hundreds of conservative semantic cells.
     # They remain authoritative in the source collision audit, but are not
     # needed to evaluate local pad/lid contact and make a candidate sweep
-    # unnecessarily slow.  Keep only the target, dish, and nearby support
-    # cells in this explicitly simulation-only derived model.
+    # unnecessarily slow.  The fixed dish is the local support authority.
+    # Semantic support cells overlap that completed object and otherwise snag
+    # the dynamic lid throughout a vertical lift, so they remain visible but
+    # do not participate in this local contact test.
     for body in root.findall(".//body"):
         name = str(body.get("name", ""))
-        keep_collision = name in {"petri_lid-1", "petri_dish-1"}
-        if name.startswith("support-platform-"):
-            values = np.fromstring(body.get("pos", ""), sep=" ")
-            keep_collision = bool(
-                values.shape == (3,)
-                and np.linalg.norm(values[:2] - lid_position[:2]) <= 0.13
-            )
+        keep_collision = name in {
+            "petri_lid-1",
+            "petri_dish-1",
+            "grasp_search_local_support",
+        }
         if name.startswith(("left/", "right/")):
             keep_collision = False
         if not keep_collision:
@@ -484,6 +588,21 @@ def _trajectory_samples(knots: list[dict], hz: float = 100.0) -> list[dict]:
                             - first["jaw_target_m"]
                         )
                     ),
+                    **(
+                        {
+                            "right_gripper_open_ratio": (
+                                first["right_gripper_open_ratio"]
+                                + blend
+                                * (
+                                    second["right_gripper_open_ratio"]
+                                    - first["right_gripper_open_ratio"]
+                                )
+                            )
+                        }
+                        if "right_gripper_open_ratio" in first
+                        and "right_gripper_open_ratio" in second
+                        else {}
+                    ),
                 }
             )
         cursor += duration
@@ -506,6 +625,7 @@ def simulate_candidate(
     model_path: str | Path,
     samples: list[dict],
     *,
+    closed_target_half_gap_m: float = CLOSED_TARGET_HALF_GAP_M,
     render: bool = False,
     video_path: str | Path | None = None,
     width: int = 720,
@@ -553,6 +673,12 @@ def simulate_candidate(
     stage_contacts: dict[str, set[str]] = {}
     maximum_relative_distance = 0.0
     lift_relative_distances = []
+    lift_start_grasp_xy = None
+    lift_start_relative_xy = None
+    lift_start_grasp_in_lid = None
+    maximum_grasp_xy_deviation_during_lift = 0.0
+    maximum_lid_relative_xy_slip_during_lift = 0.0
+    maximum_grasp_point_slip_in_lid_frame = 0.0
     frames = []
     renderer = None
     option = None
@@ -572,6 +698,19 @@ def simulate_candidate(
         camera.elevation = -20.0
     dt = float(model.opt.timestep)
     for sample in samples:
+        if (
+            sample["stage"] == "verification_lift"
+            and lift_start_grasp_xy is None
+        ):
+            lift_start_grasp_xy = data.site_xpos[grasp_site, :2].copy()
+            lift_start_relative_xy = (
+                data.qpos[lid_q : lid_q + 2]
+                - data.site_xpos[grasp_site, :2]
+            ).copy()
+            lid_rotation = data.xmat[lid_body].reshape(3, 3)
+            lift_start_grasp_in_lid = lid_rotation.T @ (
+                data.site_xpos[grasp_site] - data.xpos[lid_body]
+            )
         target_t = float(sample["t_s"])
         while data.time + 1e-12 < target_t:
             data.qpos[right_ids] = sample["q_model"]
@@ -593,6 +732,37 @@ def simulate_candidate(
             )
             if sample["stage"] in {"verification_lift", "hold"}:
                 lift_relative_distances.append(relative)
+            if sample["stage"] == "verification_lift":
+                grasp_xy_deviation = float(
+                    np.linalg.norm(
+                        grasp_position[:2] - lift_start_grasp_xy
+                    )
+                )
+                relative_xy = lid_position[:2] - grasp_position[:2]
+                relative_xy_slip = float(
+                    np.linalg.norm(relative_xy - lift_start_relative_xy)
+                )
+                maximum_grasp_xy_deviation_during_lift = max(
+                    maximum_grasp_xy_deviation_during_lift,
+                    grasp_xy_deviation,
+                )
+                maximum_lid_relative_xy_slip_during_lift = max(
+                    maximum_lid_relative_xy_slip_during_lift,
+                    relative_xy_slip,
+                )
+                lid_rotation = data.xmat[lid_body].reshape(3, 3)
+                grasp_in_lid = lid_rotation.T @ (
+                    grasp_position - data.xpos[lid_body]
+                )
+                grasp_point_slip = float(
+                    np.linalg.norm(
+                        grasp_in_lid - lift_start_grasp_in_lid
+                    )
+                )
+                maximum_grasp_point_slip_in_lid_frame = max(
+                    maximum_grasp_point_slip_in_lid_frame,
+                    grasp_point_slip,
+                )
             if render and data.time + 1e-12 >= next_frame_t:
                 renderer.update_scene(
                     data, camera=camera, scene_option=option
@@ -636,9 +806,11 @@ def simulate_candidate(
         max(lift_relative_distances) if lift_relative_distances else math.inf
     )
     closure_obstructed = (
-        upper_position > CLOSED_TARGET_HALF_GAP_M + 0.0006
+        upper_position > closed_target_half_gap_m + 0.0006
     )
     maximum_lid_to_grasp_m = 1.5 * lid_radius
+    maximum_grasp_xy_deviation_m = 0.075 * lid_radius
+    maximum_grasp_point_slip_in_lid_frame_m = 0.10 * lid_radius
     success = bool(
         np.all(np.isfinite(data.qpos))
         and upper_contact
@@ -648,6 +820,10 @@ def simulate_candidate(
         and lift_m >= 0.020
         and final_relative <= maximum_lid_to_grasp_m
         and lift_relative_max <= maximum_lid_to_grasp_m
+        and maximum_grasp_xy_deviation_during_lift
+        <= maximum_grasp_xy_deviation_m
+        and maximum_grasp_point_slip_in_lid_frame
+        <= maximum_grasp_point_slip_in_lid_frame_m
     )
     if renderer is not None:
         renderer.close()
@@ -700,12 +876,25 @@ def simulate_candidate(
         "final_lid_to_grasp_m": final_relative,
         "maximum_lift_lid_to_grasp_m": lift_relative_max,
         "maximum_all_stage_lid_to_grasp_m": maximum_relative_distance,
+        "maximum_grasp_xy_deviation_during_lift_m": (
+            maximum_grasp_xy_deviation_during_lift
+        ),
+        "maximum_lid_relative_xy_slip_during_lift_m": (
+            maximum_lid_relative_xy_slip_during_lift
+        ),
+        "maximum_grasp_point_slip_in_lid_frame_m": (
+            maximum_grasp_point_slip_in_lid_frame
+        ),
+        "maximum_grasp_xy_deviation_m": maximum_grasp_xy_deviation_m,
+        "maximum_grasp_point_slip_in_lid_frame_limit_m": (
+            maximum_grasp_point_slip_in_lid_frame_m
+        ),
         "upper_pad_contact": upper_contact,
         "lower_pad_contact": lower_contact,
         "hold_bilateral_pad_contact": hold_bilateral_contact,
         "closure_obstructed": closure_obstructed,
         "maximum_lid_to_grasp_m": maximum_lid_to_grasp_m,
-        "commanded_half_gap_m": CLOSED_TARGET_HALF_GAP_M,
+        "commanded_half_gap_m": closed_target_half_gap_m,
         "measured_half_gap_m": upper_position,
         "contact_bodies_by_stage": {
             stage: sorted(values) for stage, values in stage_contacts.items()
@@ -720,6 +909,13 @@ def search(args) -> dict:
     lid = _object_by_role(scene, "target_lid")
     lid_position = _object_position(lid)
     radius = float(lid["geometry"]["radius_m"])
+    closure_demonstration = load_demonstrated_closure(
+        args.demonstration_config
+    )
+    closed_target_half_gap_m = CLOSED_TARGET_HALF_GAP_M
+    demonstrated_closed_open_ratio = float(
+        closure_demonstration["right_gripper_open_ratio"]
+    )
     derived_model = build_articulated_grasp_model(
         model_path=args.model,
         object_scene=scene,
@@ -734,11 +930,22 @@ def search(args) -> dict:
     base_angle = math.atan2(outward[1], outward[0])
     candidates = []
     candidate_id = 0
-    for angle_offset_deg in (-12, 0):
+    # Search both the demonstrated near-radial approach and deeper insertions.
+    # A rim-only pinch can lift while the transparent lid rotates and slides;
+    # the positive insets reduce that moment arm without hard-coding pixels.
+    for angle_offset_deg in (-6, 0, 6):
         angle = base_angle + math.radians(angle_offset_deg)
         direction = np.asarray([math.cos(angle), math.sin(angle)])
-        for radial_inset_m in (-0.004, 0.0, 0.004):
-            for z_offset_m in (-0.003, 0.0, 0.003):
+        for radial_inset_m in (
+            -0.004,
+            0.004,
+            0.012,
+            0.016,
+            0.020,
+            0.024,
+            0.028,
+        ):
+            for z_offset_m in (-0.004, -0.002, 0.0, 0.002, 0.004):
                 candidate_id += 1
                 rim = lid_position.copy()
                 rim[:2] += (radius - radial_inset_m) * direction
@@ -771,6 +978,7 @@ def search(args) -> dict:
                         "stage": "home",
                         "q_model": q.copy(),
                         "jaw_target_m": OPEN_HALF_GAP_M,
+                        "right_gripper_open_ratio": 1.0,
                         "minimum_duration_s": 0.5,
                     }
                 ]
@@ -799,50 +1007,90 @@ def search(args) -> dict:
                             "stage": stage,
                             "q_model": q.copy(),
                             "jaw_target_m": OPEN_HALF_GAP_M,
+                            "right_gripper_open_ratio": 1.0,
                             "minimum_duration_s": duration,
                         }
                     )
                 simulation = None
                 if accepted:
                     grasp_q = q.copy()
-                    lift_target = rim + np.asarray([0.0, 0.0, 0.040])
-                    lift_q, lift_ik = kinematics.solve(
-                        lift_target, rotation, grasp_q
-                    )
-                    ik_reports.append(
-                        {"stage": "verification_lift", **lift_ik}
-                    )
-                    accepted = lift_ik["accepted"]
-                if accepted:
-                    knots.extend(
-                        [
+                    lift_knots = []
+                    lift_q = grasp_q.copy()
+                    for lift_index, lift_target in enumerate(
+                        _vertical_lift_targets(rim), start=1
+                    ):
+                        lift_q, lift_ik = kinematics.solve(
+                            lift_target,
+                            rotation,
+                            lift_q,
+                            maximum_position_error_m=0.003,
+                            maximum_rotation_error_deg=10.0,
+                        )
+                        ik_reports.append(
                             {
-                                "stage": "close",
-                                "q_model": grasp_q.copy(),
-                                "jaw_target_m": CLOSED_TARGET_HALF_GAP_M,
-                                "minimum_duration_s": 1.2,
-                            },
+                                "stage": "verification_lift",
+                                "waypoint": lift_index,
+                                "target_xyz_m": lift_target.tolist(),
+                                **lift_ik,
+                            }
+                        )
+                        if not lift_ik["accepted"]:
+                            accepted = False
+                            break
+                        lift_knots.append(
                             {
                                 "stage": "verification_lift",
                                 "q_model": lift_q.copy(),
-                                "jaw_target_m": CLOSED_TARGET_HALF_GAP_M,
-                                "minimum_duration_s": 1.5,
-                            },
-                            {
-                                "stage": "hold",
-                                "q_model": lift_q.copy(),
-                                "jaw_target_m": CLOSED_TARGET_HALF_GAP_M,
-                                "minimum_duration_s": 1.0,
-                            },
-                        ]
+                                "jaw_target_m": closed_target_half_gap_m,
+                                "right_gripper_open_ratio": (
+                                    demonstrated_closed_open_ratio
+                                ),
+                                "minimum_duration_s": 0.20,
+                            }
+                        )
+                if accepted:
+                    knots.append(
+                        {
+                            "stage": "close",
+                            "q_model": grasp_q.copy(),
+                            "jaw_target_m": closed_target_half_gap_m,
+                            "right_gripper_open_ratio": (
+                                demonstrated_closed_open_ratio
+                            ),
+                            "minimum_duration_s": 1.2,
+                        }
+                    )
+                    knots.extend(lift_knots)
+                    knots.append(
+                        {
+                            "stage": "hold",
+                            "q_model": lift_q.copy(),
+                            "jaw_target_m": closed_target_half_gap_m,
+                            "right_gripper_open_ratio": (
+                                demonstrated_closed_open_ratio
+                            ),
+                            "minimum_duration_s": 1.0,
+                        }
                     )
                     samples = _trajectory_samples(knots)
-                    simulation = simulate_candidate(derived_model, samples)
+                    simulation = simulate_candidate(
+                        derived_model,
+                        samples,
+                        closed_target_half_gap_m=closed_target_half_gap_m,
+                    )
                 score = (
                     (
                         100.0
                         + 1000.0 * simulation["lid_lift_m"]
                         - 100.0 * simulation["final_lid_to_grasp_m"]
+                        - 5000.0
+                        * simulation[
+                            "maximum_grasp_point_slip_in_lid_frame_m"
+                        ]
+                        - 2000.0
+                        * simulation[
+                            "maximum_grasp_xy_deviation_during_lift_m"
+                        ]
                     )
                     if simulation and simulation["success"]
                     else (
@@ -884,6 +1132,7 @@ def search(args) -> dict:
         best["simulation"] = simulate_candidate(
             derived_model,
             best_samples,
+            closed_target_half_gap_m=closed_target_half_gap_m,
             render=True,
             video_path=output / "best_lid_grasp.mp4",
             width=args.width,
@@ -899,6 +1148,7 @@ def search(args) -> dict:
             "object_scene_path": str(Path(args.object_scene).resolve()),
             "candidate_id": best["candidate_id"],
             "joint_limit_margin_rad": JOINT_LIMIT_MARGIN_RAD,
+            "closure_demonstration": closure_demonstration,
             "right_physical_to_model_q_offset_rad": (
                 physical_to_semantic_model_q_offset("right").tolist()
             ),
@@ -931,6 +1181,12 @@ def search(args) -> dict:
         "lid_position_scene_m": lid_position.tolist(),
         "lid_radius_m": radius,
         "joint_limit_margin_rad": JOINT_LIMIT_MARGIN_RAD,
+        "closure_demonstration": closure_demonstration,
+        "vertical_lift": {
+            "height_m": VERTICAL_LIFT_HEIGHT_M,
+            "waypoint_count": VERTICAL_LIFT_WAYPOINT_COUNT,
+            "fixed_xy_and_orientation": True,
+        },
         "candidate_count": len(candidates),
         "ik_accepted_count": sum(item["ik_accepted"] for item in candidates),
         "successful_candidate_count": len(successful),
@@ -961,6 +1217,7 @@ def main(argv=None):
     parser.add_argument("--model", required=True)
     parser.add_argument("--object-scene", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--demonstration-config", required=True)
     parser.add_argument("--width", type=int, default=720)
     parser.add_argument("--height", type=int, default=540)
     parser.add_argument("--fps", type=int, default=30)

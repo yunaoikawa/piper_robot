@@ -126,12 +126,19 @@ captureでは`accepted_masks`を省き、`--sam-endpoint tcp://HOST:PORT`を指�
 `src/optimize_lid_grasp_trajectory.py`を実行します。承認済みNYU gripperの外観と
 姿勢は基準モデルに残し、派生したsimulation-only MJCFでのみ左右可動padと
 lid free jointを追加します。探索順はhome、上空XY、降下、水平挿入、閉じる、
-verification lift、holdです。
+verification lift、holdです。liftは一発のjoint-space補間ではなく、対象poseの
+XYとgripper姿勢を固定した8個のCartesian Z waypointで40 mm上げます。
 
 候補は、hold中の両pad接触、物体による閉じ残り、20 mm以上の持上げ、
-lift/hold中のlid/grasp相対距離が物体半径の1.5倍以下を全て満たす場合だけ
-成功です。出力は
+lift/hold中のlid/grasp相対距離が物体半径の1.5倍以下、gripperのXY逸脱が
+物体半径の7.5%以下、対象座標系内での把持点滑りが物体半径の10%以下を
+全て満たす場合だけ成功です。粗いsupport voxelは完成済み対象と二重衝突
+しないよう局所接触から外し、対象底面から生成した滑らかな作業台と皿を
+支持authorityにします。出力は
 `grasp_search/`の動画、最終画像、全候補report、物理検証済み最良軌道JSONです。
+閉じ量はreplay profileの静止済み`closed_nonempty`実測captureから読み、
+その`right_gripper_open_ratio`をclose、lift、hold knotへ保存します。実機の
+リンク機構を未校正のproxy half-gapへ線形変換してはいけません。
 これは把持幾何のsimulation検証であり、元sceneのESDF接触やcamera-to-robot
 authorityを上書きせず、実機motion authorityも付与しません。
 

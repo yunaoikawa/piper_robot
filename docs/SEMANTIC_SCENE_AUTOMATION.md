@@ -37,7 +37,10 @@ display-only fallbackを明示したprofileでは、モデルと動画は生成�
 可動padとdynamic lidを追加して接触物理を計算します。スマホ入口には成功動画、
 最終frame、候補別report、model/physical双方のjoint値を持つ最良軌道JSONが
 追加されます。全候補失敗時はstageを非0で停止し、見た目だけの追従動画を成功
-として扱いません。
+として扱いません。liftはXY/姿勢固定の細分化したCartesian Z軌道で生成し、
+対象座標系内の把持点滑りと手先XY逸脱を物体寸法比でgateします。閉じ量は
+静止済み実測`closed_nonempty` keyframeのopen ratioを再利用し、captureと
+manifestのprovenanceもreport/trajectoryへ保存します。
 
 ## 最短の再実行
 

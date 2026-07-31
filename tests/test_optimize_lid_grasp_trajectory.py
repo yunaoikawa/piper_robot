@@ -13,7 +13,9 @@ from src.optimize_lid_grasp_trajectory import (
     GraspKinematics,
     _rotation_for_rim,
     _trajectory_samples,
+    _vertical_lift_targets,
     build_articulated_grasp_model,
+    load_demonstrated_closure,
 )
 
 
@@ -94,7 +96,7 @@ def test_derived_grasp_model_has_dynamic_lid_and_articulated_pads(tmp_path):
                 "role": "target_lid",
                 "body_name": "petri_lid-1",
                 "pose_scene": np.eye(4).tolist(),
-                "geometry": {"radius_m": 0.047},
+                "geometry": {"radius_m": 0.047, "height_m": 0.006},
             }
         ]
     }
@@ -110,6 +112,7 @@ def test_derived_grasp_model_has_dynamic_lid_and_articulated_pads(tmp_path):
     assert model.geom("right/nyu_gripper_collision").contype[0] == 0
     assert model.geom("right/grasp_search_upper_pad").contype[0] == 1
     assert model.geom("right/grasp_search_lower_pad").contype[0] == 1
+    assert model.geom("grasp_search_local_support_surface").contype[0] == 1
     kinematics = GraspKinematics(output)
     assert np.all(
         kinematics.lower
@@ -149,6 +152,51 @@ def test_rim_rotation_is_level_and_trajectory_closes_before_lift():
     stages = [item["stage"] for item in samples]
     assert stages.index("close") < stages.index("verification_lift")
     assert samples[-1]["jaw_target_m"] == CLOSED_TARGET_HALF_GAP_M
+
+
+def test_vertical_lift_targets_hold_xy_and_increase_z():
+    start = np.asarray([0.1, -0.2, 0.3])
+    targets = _vertical_lift_targets(start, height_m=0.04, count=8)
+    assert len(targets) == 8
+    assert all(np.allclose(target[:2], start[:2]) for target in targets)
+    assert np.all(np.diff([target[2] for target in targets]) > 0)
+    assert np.isclose(targets[-1][2], 0.34)
+
+
+def test_demonstrated_closure_is_loaded_from_stationary_keyframe(tmp_path):
+    capture = tmp_path / "capture"
+    capture.mkdir()
+    (capture / "manifest.json").write_text(
+        json.dumps(
+            {
+                "session_id": "closed-demo",
+                "robot_state": {
+                    "commands_sent": False,
+                    "stability": {"stationary": True},
+                    "after": {"right_gripper_open_ratio": 0.5888571428571429},
+                },
+            }
+        )
+    )
+    profile = tmp_path / "replay.json"
+    profile.write_text(
+        json.dumps(
+            {
+                "measured_keyframes": [
+                    {
+                        "name": "verified_closed_before_lift",
+                        "stage": "closed_nonempty",
+                        "capture": str(capture),
+                    }
+                ]
+            }
+        )
+    )
+    record = load_demonstrated_closure(profile)
+    assert record["session_id"] == "closed-demo"
+    assert np.isclose(record["right_gripper_open_ratio"], 0.5888571428571429)
+    assert record["proxy_target_half_gap_m"] == CLOSED_TARGET_HALF_GAP_M
+    assert "physical replay" in record["mapping"]
 
 
 def test_grasp_search_source_has_no_robot_control_imports():

@@ -248,7 +248,10 @@ def _write_mobile_index(output: Path, pipeline: dict) -> Path:
 <div class="card"><b class="{'ok' if grasp['accepted'] else 'warn'}">
 物理把持探索: {'成功' if grasp['accepted'] else '未成功'}</b><br>
 成功候補 {grasp['successful_candidate_count']} /
-{grasp['candidate_count']}、持上げ {1000.0 * grasp['lid_lift_m']:.1f} mm</div>
+{grasp['candidate_count']}、持上げ {1000.0 * grasp['lid_lift_m']:.1f} mm、
+手先XY逸脱 {1000.0 * grasp['maximum_grasp_xy_deviation_during_lift_m']:.2f} mm、
+把持点滑り {1000.0 * grasp['maximum_grasp_point_slip_in_lid_frame_m']:.2f} mm
+</div>
 <video controls playsinline preload="metadata"
  poster="grasp_search/best_lid_grasp_final.png">
 <source src="grasp_search/best_lid_grasp.mp4" type="video/mp4"></video>
@@ -649,6 +652,8 @@ def run(
             str(replay_object_scene),
             "--output-dir",
             str(grasp_dir),
+            "--demonstration-config",
+            str(replay_config),
             "--width",
             str(grasp_config.get("width", 640)),
             "--height",
@@ -664,6 +669,7 @@ def run(
                 inputs=[
                     replay_model,
                     replay_object_scene,
+                    replay_config,
                     ROOT / "src/optimize_lid_grasp_trajectory.py",
                     grasp_assets / "gripper_housing.stl",
                     grasp_assets / "gripper_upper.stl",
@@ -910,6 +916,19 @@ def run(
                 "closure_obstructed": grasp_search_report["best_candidate"][
                     "simulation"
                 ]["closure_obstructed"],
+                "maximum_grasp_xy_deviation_during_lift_m": (
+                    grasp_search_report["best_candidate"]["simulation"][
+                        "maximum_grasp_xy_deviation_during_lift_m"
+                    ]
+                ),
+                "maximum_grasp_point_slip_in_lid_frame_m": (
+                    grasp_search_report["best_candidate"]["simulation"][
+                        "maximum_grasp_point_slip_in_lid_frame_m"
+                    ]
+                ),
+                "demonstrated_closed_open_ratio": grasp_search_report[
+                    "closure_demonstration"
+                ]["right_gripper_open_ratio"],
             }
         ),
     }

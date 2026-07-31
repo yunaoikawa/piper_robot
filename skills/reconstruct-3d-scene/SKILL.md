@@ -76,6 +76,15 @@ in the source model, derive a simulation-only articulated pad model, make only
 the target lid free, and require bilateral pad contact, non-empty closure, at
 least 20 mm of lift, and bounded target/tool drift through the hold. Keep this
 result separate from source-scene collision and hardware motion authority.
+Generate verification lift as multiple Cartesian Z waypoints with fixed XY and
+orientation; do not use one long joint-space interpolation. Gate both tool XY
+deviation and grasp-point slip expressed in the target frame using
+object-dimension-relative thresholds. Load the close ratio from the stationary
+measured `closed_nonempty` keyframe and preserve its manifest provenance in the
+trajectory. Do not linearly equate that physical linkage ratio with an
+uncalibrated simulation jaw width. When completed target/support geometry
+overlaps conservative semantic support cells, use one smooth local support
+surface for the contact test and retain the cells as non-contact context.
 
 ## Tagless multiview and robot calibration
 
