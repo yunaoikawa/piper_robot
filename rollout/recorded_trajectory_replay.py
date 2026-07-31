@@ -331,8 +331,15 @@ def build_recorded_replay(
     planning_edge_step_rad: float = 0.035,
     planning_extension_step_rad: float = 0.12,
     planning_maximum_iterations: int = 20000,
+    allow_colliding_display_only: bool = False,
 ) -> dict:
-    """Build home -> exact measured states with audited collision-free motion."""
+    """Build home -> exact measured states with an audited reconstructed path.
+
+    By default every segment must be collision-free. The explicit
+    ``allow_colliding_display_only`` mode exists only to visualize a rejected
+    scene: it connects exact stopped states directly, audits every sample, and
+    keeps motion authority false.
+    """
 
     import mujoco
 
@@ -453,6 +460,7 @@ def build_recorded_replay(
         None,
     )
     planner_records = []
+    display_only_collision_fallback_used = False
     for pair_index, (start, finish) in enumerate(
         zip(keyframes, keyframes[1:])
     ):
@@ -513,29 +521,44 @@ def build_recorded_replay(
             item for item in candidate_plans if item["accepted"]
         ]
         if not accepted_candidates:
-            raise ValueError(
-                f"all planner starts failed for {start['name']} -> "
-                f"{finish['name']}"
+            if not allow_colliding_display_only:
+                raise ValueError(
+                    f"all planner starts failed for {start['name']} -> "
+                    f"{finish['name']}"
+                )
+            display_only_collision_fallback_used = True
+            selected_seed = None
+            path = [start_q.copy(), finish_q.copy()]
+            planner_record = {
+                "planner": "display_only_direct_interpolation",
+                "iterations": 0,
+                "collision_checks": 0,
+                "rejected_for_motion": True,
+                "failure_reason": (
+                    "no collision-free plan; direct interpolation retained "
+                    "only for diagnostic rendering"
+                ),
+            }
+        else:
+            selected = min(
+                accepted_candidates,
+                key=lambda item: item["joint_path_length_rad"],
             )
-        selected = min(
-            accepted_candidates,
-            key=lambda item: item["joint_path_length_rad"],
-        )
-        selected_seed = int(selected["seed"])
-        path, planner_record = _plan_collision_free_joint_path(
-            model,
-            data,
-            right_ids,
-            left_ids,
-            model_home_left,
-            moving_branch,
-            start_q,
-            finish_q,
-            seed=selected_seed,
-            edge_step_rad=planning_edge_step_rad,
-            extension_step_rad=planning_extension_step_rad,
-            maximum_iterations=planning_maximum_iterations,
-        )
+            selected_seed = int(selected["seed"])
+            path, planner_record = _plan_collision_free_joint_path(
+                model,
+                data,
+                right_ids,
+                left_ids,
+                model_home_left,
+                moving_branch,
+                start_q,
+                finish_q,
+                seed=selected_seed,
+                edge_step_rad=planning_edge_step_rad,
+                extension_step_rad=planning_extension_step_rad,
+                maximum_iterations=planning_maximum_iterations,
+            )
         planner_record.update(
             {
                 "seed": selected_seed,
@@ -602,7 +625,13 @@ def build_recorded_replay(
                     (
                         finish["stage"]
                         if final_endpoint
-                        else f"collision_free_transit_to_{finish['name']}"
+                        else (
+                            f"display_only_colliding_transit_to_"
+                            f"{finish['name']}"
+                            if planner_record["planner"]
+                            == "display_only_direct_interpolation"
+                            else f"collision_free_transit_to_{finish['name']}"
+                        )
                     ),
                     final_endpoint,
                     finish["session_id"] if final_endpoint else None,
@@ -631,7 +660,10 @@ def build_recorded_replay(
                         np.linalg.norm(edge_finish - edge_start)
                     ),
                     "spatial_policy": (
-                        "collision_free_shortcut_joint_segment"
+                        "display_only_direct_interpolation"
+                        if planner_record["planner"]
+                        == "display_only_direct_interpolation"
+                        else "collision_free_shortcut_joint_segment"
                     ),
                     "time_policy": (
                         "quintic_minimum_jerk_zero_endpoint_velocity"
@@ -683,13 +715,23 @@ def build_recorded_replay(
             "continuous_joint_log_available": False,
             "measured_states_exact": True,
             "between_state_motion_reconstructed": True,
+            "display_only_collision_fallback_used": (
+                display_only_collision_fallback_used
+            ),
             "reconstruction_policy": (
-                "direct edge when collision-free; otherwise the shortest "
-                "collision-free shortcut path across configured deterministic "
-                "bidirectional RRT-Connect seeds, with a quintic minimum-jerk "
-                "time law per edge. This reconstructs between exact measured "
-                "endpoints and is not a claim that original teleop samples "
-                "were recorded."
+                (
+                    "When collision-free planning fails, directly interpolate "
+                    "exact measured endpoints only for rejected diagnostic "
+                    "rendering; audit all contacts and never authorize motion."
+                    if display_only_collision_fallback_used
+                    else
+                    "Direct edge when collision-free; otherwise the shortest "
+                    "collision-free shortcut path across configured "
+                    "deterministic bidirectional RRT-Connect seeds, with a "
+                    "quintic minimum-jerk time law per edge."
+                )
+                + " This reconstructs between exact measured endpoints and "
+                "is not a claim that original teleop samples were recorded."
             ),
         },
         "validation": {
@@ -722,6 +764,11 @@ def build_recorded_replay(
                 []
                 if global_scene_home_clear
                 else ["static_arm_or_stale_scene_home_contacts_remain"]
+            ),
+            *(
+                []
+                if moving_arm_path_clear
+                else ["moving_arm_environment_contacts_remain"]
             ),
         ],
     }

@@ -19,6 +19,14 @@ def main(argv=None) -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--object-scene", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--display-only-on-collision",
+        action="store_true",
+        help=(
+            "write a contact-audited direct interpolation for visualization "
+            "when collision-free planning fails; never authorizes motion"
+        ),
+    )
     args = parser.parse_args(argv)
     config = json.loads(Path(args.config).read_text())
     report = build_recorded_replay(
@@ -49,6 +57,7 @@ def main(argv=None) -> None:
         planning_maximum_iterations=int(
             config.get("planning_maximum_iterations", 20000)
         ),
+        allow_colliding_display_only=args.display_only_on_collision,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
 

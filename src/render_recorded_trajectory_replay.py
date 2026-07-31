@@ -88,6 +88,7 @@ def render(
     camera_azimuth_deg: float = 155.0,
     camera_elevation_deg: float = -24.0,
     camera_distance_m: float = 1.75,
+    allow_display_only_collision: bool = False,
 ) -> dict:
     import mujoco
 
@@ -98,8 +99,18 @@ def render(
         raise ValueError("replay lacks commands_sent=false provenance")
     if not replay["validation"]["all_keyframes_exact"]:
         raise ValueError("replay keyframe exactness gate failed")
-    if not replay["validation"]["moving_arm_path_clear"]:
-        raise ValueError("moving-arm collision gate failed")
+    path_clear = bool(replay["validation"]["moving_arm_path_clear"])
+    if not path_clear:
+        display_only_provenance = bool(
+            replay.get("commands_sent") is False
+            and replay.get("observation_only") is True
+            and replay.get("motion_authorized") is False
+            and replay.get("trajectory_provenance", {}).get(
+                "display_only_collision_fallback_used"
+            )
+        )
+        if not (allow_display_only_collision and display_only_provenance):
+            raise ValueError("moving-arm collision gate failed")
     model = mujoco.MjModel.from_xml_path(str(model_path))
     # The fused static observation is useful as provenance but forms a large,
     # dark one-sided shell that occludes CAD from many synthetic cameras.
@@ -112,9 +123,8 @@ def render(
     data = mujoco.MjData(model)
     moving_branch = replay["physical_to_model_branch"]["right"]
     static_branch = replay["physical_to_model_branch"]["left"]
-    # The current ConeE-derived model historically calls the physical-right
-    # branch left/. Make physical identity visually unambiguous instead of
-    # asking the viewer to infer it from the internal MJCF name.
+    # The semantic planning model preserves physical identity. Make it
+    # visually explicit so a viewer never has to infer identity from layout.
     for geom_id in range(model.ngeom):
         body_name = model.body(int(model.geom_bodyid[geom_id])).name
         if body_name.startswith(f"{moving_branch}/"):
@@ -285,16 +295,24 @@ def render(
                 rgba=[0.10, 0.65, 1.0, 0.28],
             )
             frame = renderer.render()
+            stage_label = str(sample["stage"])
+            if stage_label.startswith("display_only_colliding_transit_to_"):
+                stage_label = "colliding transit"
             cv2.putText(
                 frame,
                 (
-                    f"OFFLINE REPLAY  t={timestamp:05.2f}s  "
-                    f"{sample['stage']}"
+                    (
+                        "REJECTED COLLISION DIAGNOSTIC"
+                        if not path_clear
+                        else "OFFLINE REPLAY"
+                    )
+                    + f"  t={timestamp:05.2f}s  "
+                    f"{stage_label}"
                 ),
                 (14, 28),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.56,
-                (255, 255, 255),
+                (255, 90, 90) if not path_clear else (255, 255, 255),
                 2,
                 cv2.LINE_AA,
             )
@@ -311,6 +329,20 @@ def render(
                 1,
                 cv2.LINE_AA,
             )
+            if not path_clear:
+                cv2.putText(
+                    frame,
+                    (
+                        "current moving-arm contacts: "
+                        f"{sample['moving_arm_environment_contact_count']}"
+                    ),
+                    (14, 74),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.44,
+                    (255, 90, 90),
+                    1,
+                    cv2.LINE_AA,
+                )
             cv2.putText(
                 frame,
                 (
@@ -374,6 +406,8 @@ def render(
             latest_target - recorded_target
         ).tolist(),
         "render_is_display_only": True,
+        "moving_arm_path_clear": path_clear,
+        "collision_diagnostic": not path_clear,
         "camera": {
             "azimuth_deg": camera_azimuth_deg,
             "elevation_deg": camera_elevation_deg,
@@ -398,6 +432,14 @@ def main(argv=None) -> int:
     parser.add_argument("--camera-azimuth-deg", type=float, default=155.0)
     parser.add_argument("--camera-elevation-deg", type=float, default=-24.0)
     parser.add_argument("--camera-distance-m", type=float, default=1.75)
+    parser.add_argument(
+        "--allow-display-only-collision",
+        action="store_true",
+        help=(
+            "render only a provenance-marked, motion-unauthorized collision "
+            "diagnostic trajectory"
+        ),
+    )
     args = parser.parse_args(argv)
     report = render(
         args.model,
@@ -409,6 +451,7 @@ def main(argv=None) -> int:
         camera_azimuth_deg=args.camera_azimuth_deg,
         camera_elevation_deg=args.camera_elevation_deg,
         camera_distance_m=args.camera_distance_m,
+        allow_display_only_collision=args.allow_display_only_collision,
     )
     print(json.dumps(report, ensure_ascii=False))
     return 0
