@@ -31,18 +31,19 @@ def test_segment_duration_enforces_quintic_peak_joint_speed():
     assert duration == 1.875 * 0.7 / 0.35
 
 
-def test_semantic_home_maps_both_nyu_grippers_to_common_horizontal_roll():
+def test_semantic_home_maps_both_nyu_grippers_to_common_jaw_aligned_roll():
     left = semantic_model_home_q("left")
     right = semantic_model_home_q("right")
-    assert left[5] == pytest.approx(1.355)
-    assert right[5] == pytest.approx(1.355)
+    expected = 1.355 - np.pi / 2.0
+    assert left[5] == pytest.approx(expected)
+    assert right[5] == pytest.approx(expected)
     assert np.allclose(
         physical_home_q("right")
         + physical_to_semantic_model_q_offset("right"),
         right,
     )
     assert physical_to_semantic_model_q_offset("right")[5] == pytest.approx(
-        -0.995
+        expected - physical_home_q("right")[5]
     )
 
 

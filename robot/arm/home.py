@@ -19,11 +19,12 @@ PHYSICAL_LEFT_HOME_Q = (0.0, 1.58, -0.58, 0.0, -0.91, 1.40)
 PHYSICAL_RIGHT_HOME_Q = (0.0, 1.58, -0.58, 0.0, -0.91, 2.35)
 
 # The semantic Piper CAD uses a common joint-6 zero for both arms, while the
-# physical right arm reports a different wrist-roll zero.  With the pinned NYU
-# gripper, 1.355 rad makes the gripper's fitted plane parallel to the support
-# plane at physical home.  Keep this model-frame calibration separate from the
-# physical home command above.
-SEMANTIC_NYU_HORIZONTAL_HOME_Q6_RAD = 1.355
+# physical arms report different wrist-roll zeros.  PCA of the pinned NYU mesh
+# only fixes a plane and leaves a 90-degree ambiguity in the actual jaw
+# direction.  Operator review resolved that ambiguity: the jaw-aligned home is
+# one negative quarter-turn from the plane-only solution (1.355 - pi/2).
+# Keep this model-frame calibration separate from physical home commands.
+SEMANTIC_NYU_JAW_ALIGNED_HOME_Q6_RAD = -0.21579632679489656
 
 
 def physical_home_q(side: str) -> np.ndarray:
@@ -42,7 +43,7 @@ def semantic_model_home_q(side: str) -> np.ndarray:
     """Return physical home expressed in the semantic MuJoCo joint frame."""
 
     values = physical_home_q(side)
-    values[5] = SEMANTIC_NYU_HORIZONTAL_HOME_Q6_RAD
+    values[5] = SEMANTIC_NYU_JAW_ALIGNED_HOME_Q6_RAD
     return values
 
 
