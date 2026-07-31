@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+"""Plan and execute a demo-free lid grasp through the teleop command path.
+
+The default mode is simulation-only.  ``--execute`` is the sole hardware
+motion switch.  No replay trajectory, successful grasp pose/image, or
+demonstrated gripper width is accepted as an input.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from types import SimpleNamespace
+import sys
+import time
+import traceback
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from robot.rpc import RPCClient
+from rollout.teleop_trajectory_stream import (
+    ProductionRightFK,
+    TeleopTrajectoryStreamer,
+    sample_joint_knots,
+)
+from rollout.torque_safety import torque_stop_enabled_from_config
+from rollout.right_active_visual_search import select_unique_scene_target
+from src.optimize_lid_grasp_trajectory import search
+
+
+RUN_SCHEMA = "piper_robot.autonomous_shape_lid_grasp/v1"
+TRAJECTORY_SCHEMA = "piper_robot.simulated_lid_grasp_trajectory/v2"
+
+
+def _load_json(path: str | Path) -> dict:
+    return json.loads(Path(path).resolve().read_text())
+
+
+def validate_demo_free_trajectory(payload: dict) -> None:
+    if payload.get("schema") != TRAJECTORY_SCHEMA:
+        raise ValueError(
+            f"trajectory must use {TRAJECTORY_SCHEMA}, got "
+            f"{payload.get('schema')!r}"
+        )
+    if payload.get("commands_sent") is not False:
+        raise ValueError("planner artifact must be simulation-only")
+    policy = payload.get("closure_policy")
+    if not isinstance(policy, dict):
+        raise ValueError("trajectory lacks a closure_policy")
+    if policy.get("demonstration_used") is not False:
+        raise ValueError("trajectory closure must be demo-free")
+    if policy.get("mode") != "close_until_obstructed":
+        raise ValueError("unsupported physical closure policy")
+    if "closure_demonstration" in payload:
+        raise ValueError("demonstration-derived closure is forbidden")
+    knots = payload.get("knots")
+    if not isinstance(knots, list) or len(knots) < 2:
+        raise ValueError("trajectory needs at least two knots")
+    stages = [str(knot.get("stage")) for knot in knots]
+    required = (
+        "home",
+        "depart_up",
+        "hover_xy",
+        "descend",
+        "insert",
+        "preclose_observe",
+        "close",
+    )
+    missing = [stage for stage in required if stage not in stages]
+    if missing:
+        raise ValueError(f"trajectory is missing required stages: {missing}")
+    if "verification_lift" not in stages:
+        raise ValueError("trajectory lacks a straight verification lift")
+    close_index = stages.index("close")
+    lift_indices = [
+        index for index, stage in enumerate(stages)
+        if stage == "verification_lift"
+    ]
+    if min(lift_indices) <= close_index:
+        raise ValueError("verification lift must follow closure")
+    lift_q = [
+        np.asarray(knots[index]["right_q_physical_rad"], dtype=float)
+        for index in lift_indices
+    ]
+    if any(q.shape != (6,) or not np.all(np.isfinite(q)) for q in lift_q):
+        raise ValueError("verification lift contains invalid joint targets")
+
+
+def _plan(args) -> tuple[dict, Path]:
+    report = search(
+        SimpleNamespace(
+            model=args.model,
+            object_scene=args.object_scene,
+            output_dir=args.output_dir,
+            width=args.width,
+            height=args.height,
+            fps=args.fps,
+        )
+    )
+    if report.get("accepted") is not True:
+        raise RuntimeError("MuJoCo did not find a physically verified grasp")
+    trajectory_path = (
+        Path(args.output_dir).resolve()
+        / "best_lid_grasp_trajectory.json"
+    )
+    return report, trajectory_path
+
+
+def _close_rpc(rpc) -> None:
+    if rpc is None:
+        return
+    socket = getattr(rpc, "socket", None)
+    context = getattr(rpc, "context", None)
+    if socket is not None:
+        socket.close(linger=0)
+    if context is not None:
+        context.term()
+
+
+def execute_trajectory(
+    trajectory: dict,
+    *,
+    production_model: str | Path,
+    torque_config: dict,
+    rpc,
+    right_visual_goal_monitor=None,
+) -> dict:
+    validate_demo_free_trajectory(trajectory)
+    samples = sample_joint_knots(trajectory["knots"])
+    fk = ProductionRightFK(production_model)
+    initial_open_ratio = float(
+        np.asarray(rpc.get_right_gripper_exact(), dtype=float).reshape(-1)[0]
+    )
+    streamer = TeleopTrajectoryStreamer(
+        rpc,
+        fk,
+        torque_limit_nm=torque_config["thresholds"]["right"],
+        consecutive_torque_samples=int(
+            torque_config.get("consecutive_samples", 5)
+        ),
+        enforce_torque_stop=torque_stop_enabled_from_config(torque_config),
+    )
+    visual_gate = {}
+
+    def stage_gate(stage: str) -> None:
+        if stage != "close" or right_visual_goal_monitor is None:
+            return
+        visual_gate.update(
+            right_visual_goal_monitor.require_close_allowed(
+                maximum_age_s=3.0
+            )
+        )
+
+    execution = streamer.execute(samples, stage_gate=stage_gate)
+    final_open_ratio = execution["final_right_gripper_open_ratio"]
+    obstruction_threshold = max(0.01, 0.02 * initial_open_ratio)
+    execution.update(
+        {
+            "closure_policy": trajectory["closure_policy"],
+            "initial_right_gripper_open_ratio": initial_open_ratio,
+            "obstruction_threshold_open_ratio": obstruction_threshold,
+            "gripper_obstruction_detected": bool(
+                final_open_ratio is not None
+                and final_open_ratio > obstruction_threshold
+            ),
+            "success_requires_visual_target_follow_confirmation": True,
+            "right_visual_goal_gate": visual_gate or None,
+        }
+    )
+    return execution
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model")
+    parser.add_argument("--object-scene")
+    parser.add_argument("--trajectory")
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--production-model",
+        default="robot/cone-e-description/robot-welded-base-and-lift.mjcf",
+    )
+    parser.add_argument(
+        "--torque-config",
+        default="src/configs/pasteur_lid_torque.json",
+    )
+    parser.add_argument(
+        "--right-visual-goal-selection",
+        default="src/configs/pasteur_grasp_window_selection.json",
+    )
+    parser.add_argument(
+        "--task-config",
+        default="src/configs/pasteur_lid_sam_task.json",
+    )
+    parser.add_argument(
+        "--semantic-scene",
+        help=(
+            "operator-confirmed SAM-first semantic scene used to lock the "
+            "target instance before wrist visual search"
+        ),
+    )
+    parser.add_argument(
+        "--sam-endpoint",
+        default="tcp://127.0.0.1:15563",
+    )
+    parser.add_argument(
+        "--disable-right-visual-goal",
+        action="store_true",
+        help="diagnostic only: execute without the right-wrist close gate",
+    )
+    parser.add_argument("--rpc-host", default="localhost")
+    parser.add_argument("--rpc-port", type=int, default=8081)
+    parser.add_argument("--width", type=int, default=720)
+    parser.add_argument("--height", type=int, default=540)
+    parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="send the accepted plan to the physical right arm",
+    )
+    args = parser.parse_args(argv)
+    if args.trajectory:
+        if args.model or args.object_scene:
+            parser.error(
+                "--trajectory cannot be combined with --model/--object-scene"
+            )
+        trajectory_path = Path(args.trajectory).resolve()
+        planning_report = None
+    else:
+        if not args.model or not args.object_scene:
+            parser.error(
+                "provide --trajectory or both --model and --object-scene"
+            )
+        planning_report, trajectory_path = _plan(args)
+    trajectory = _load_json(trajectory_path)
+    validate_demo_free_trajectory(trajectory)
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    result = {
+        "schema": RUN_SCHEMA,
+        "created_at_s": time.time(),
+        "trajectory": str(trajectory_path),
+        "trajectory_schema": trajectory["schema"],
+        "demonstration_used": False,
+        "planning_report": planning_report,
+        "hardware_execution_requested": bool(args.execute),
+        "hardware_execution_started": False,
+        "commands_sent": False,
+        "execution": None,
+        "failure": None,
+    }
+    rpc = None
+    right_visual_goal_monitor = None
+    execution_error = None
+    if args.execute:
+        try:
+            if not args.disable_right_visual_goal:
+                from rollout.right_visual_goal_monitor import (
+                    RightVisualGoalMonitor,
+                )
+
+                if not args.semantic_scene:
+                    raise ValueError(
+                        "--execute requires --semantic-scene so the wrist "
+                        "monitor cannot relabel a nearby dish as the lid"
+                    )
+                task = _load_json(args.task_config)
+                identity = select_unique_scene_target(
+                    _load_json(args.semantic_scene),
+                    semantic_role=task["target"]["semantic_role"],
+                )
+                result["locked_target_identity"] = {
+                    "semantic_role": identity.semantic_role,
+                    "instance_id": identity.instance_id,
+                    "semantic_name": identity.semantic_name,
+                }
+                right_visual_goal_monitor = RightVisualGoalMonitor.from_files(
+                    sam_endpoint=args.sam_endpoint,
+                    output_dir=output_dir / "right_visual_goal",
+                    selection_path=args.right_visual_goal_selection,
+                    task_path=args.task_config,
+                    locked_instance_id=identity.instance_id,
+                )
+                right_visual_goal_monitor.start()
+            rpc = RPCClient(
+                args.rpc_host,
+                args.rpc_port,
+                timeout_ms=10000,
+            )
+            result["hardware_execution_started"] = True
+            # execute_trajectory prepares the physical controller before its
+            # first sampled waypoint (measured-pose latch, gains, MIT mode).
+            # From this point onward a failure journal must conservatively
+            # state that hardware commands were sent, including a visual-gate
+            # rejection after the open approach.
+            result["commands_sent"] = True
+            result["execution"] = execute_trajectory(
+                trajectory,
+                production_model=args.production_model,
+                torque_config=_load_json(args.torque_config),
+                rpc=rpc,
+                right_visual_goal_monitor=right_visual_goal_monitor,
+            )
+        except BaseException as error:
+            execution_error = error
+            result["failure"] = {
+                "type": type(error).__name__,
+                "message": str(error),
+                "traceback": traceback.format_exc(),
+            }
+        finally:
+            try:
+                if right_visual_goal_monitor is not None:
+                    right_visual_goal_monitor.stop()
+            except BaseException as cleanup_error:
+                if result["failure"] is None:
+                    execution_error = cleanup_error
+                    result["failure"] = {
+                        "type": type(cleanup_error).__name__,
+                        "message": str(cleanup_error),
+                        "traceback": traceback.format_exc(),
+                    }
+                else:
+                    result["failure"]["monitor_cleanup_error"] = repr(
+                        cleanup_error
+                    )
+            finally:
+                _close_rpc(rpc)
+    report_path = output_dir / "autonomous_shape_lid_grasp_run.json"
+    report_path.write_text(
+        json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False)
+        + "\n"
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
+    if execution_error is not None:
+        raise execution_error
+
+
+if __name__ == "__main__":
+    main()

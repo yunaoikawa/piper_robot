@@ -34,8 +34,8 @@ from robot.arm.home import (
 )
 
 
-SCHEMA = "piper_robot.simulated_lid_grasp_search/v1"
-TRAJECTORY_SCHEMA = "piper_robot.simulated_lid_grasp_trajectory/v1"
+SCHEMA = "piper_robot.simulated_lid_grasp_search/v2"
+TRAJECTORY_SCHEMA = "piper_robot.simulated_lid_grasp_trajectory/v2"
 # Grasp midpoint measured from the two inner fingertip clusters in the exact
 # pinned `gripper_body.stl` used by the reviewed semantic scene.  The older
 # [-0.0288, -0.0183, 0.058] site belongs to the differently nested upstream
@@ -61,6 +61,15 @@ VERTICAL_LIFT_WAYPOINT_DURATION_S = 0.25
 MINIMUM_PAD_SIDE_CONTACT_ALIGNMENT = math.cos(math.radians(55.0))
 CLOSE_RAMP_DURATION_S = 2.0
 CLOSE_SETTLE_DURATION_S = 15.0
+# The GPU segmenter runs asynchronously to the 30 Hz command stream.  Hold
+# the fully inserted, still-open grasp pose long enough for a fresh wrist
+# frame to complete inference before the close-stage gate is evaluated.
+PRECLOSE_VISUAL_SETTLE_DURATION_S = 3.5
+# Keep the simulation and physical 30 Hz streamer on the same conservative
+# joint-time parameterization.  Previously simulation silently stretched
+# large joint changes while the exported hardware knots retained their short
+# nominal durations, so a simulated path could outrun the physical arm.
+MAXIMUM_PLANNED_JOINT_SPEED_RAD_S = 0.4
 PAD_CONTACT_HALF_THICKNESS_M = 0.0025
 BILATERAL_PRECONTACT_DISTANCE_M = 8.0 * PAD_CONTACT_HALF_THICKNESS_M
 BILATERAL_CONTACT_PRELOAD_M = (
@@ -89,62 +98,24 @@ def _object_position(item: dict) -> np.ndarray:
     return pose[:3, 3].copy()
 
 
-def _validate_open_ratio(open_ratio: float) -> float:
-    open_ratio = float(open_ratio)
-    if not math.isfinite(open_ratio) or not 0.0 <= open_ratio <= 1.0:
-        raise ValueError("demonstrated gripper open ratio must be in [0, 1]")
-    return open_ratio
+def geometry_closure_policy() -> dict:
+    """Return the demo-free closure policy shared by simulation and hardware.
 
+    The physical Dynamixel command is a normalized actuator target, not a
+    calibrated jaw width.  Commanding fully closed lets the object itself stop
+    the fingers; the measured non-zero final opening is then evidence of an
+    obstruction between them.  MuJoCo retains its separate metric pad-gap
+    target because that proxy linkage is expressed in metres.
+    """
 
-def load_demonstrated_closure(
-    replay_config_path: str | Path,
-) -> dict:
-    """Load the stationary, measured closed grasp used as jaw provenance."""
-
-    replay_config_path = Path(replay_config_path).resolve()
-    profile = json.loads(replay_config_path.read_text())
-    matches = [
-        item
-        for item in profile.get("measured_keyframes", ())
-        if item.get("stage") == "closed_nonempty"
-    ]
-    if len(matches) != 1:
-        raise ValueError(
-            "replay profile must contain exactly one closed_nonempty keyframe"
-        )
-    capture = Path(matches[0]["capture"])
-    if not capture.is_absolute():
-        capture = Path(__file__).resolve().parents[1] / capture
-    manifest_path = (capture / "manifest.json").resolve()
-    manifest = json.loads(manifest_path.read_text())
-    robot_state = manifest.get("robot_state", {})
-    if robot_state.get("commands_sent") is not False:
-        raise ValueError("demonstrated closure must be observation-only")
-    if robot_state.get("stability", {}).get("stationary") is not True:
-        raise ValueError("demonstrated closure must be stationary")
-    ratio = _validate_open_ratio(
-        robot_state["after"]["right_gripper_open_ratio"]
-    )
-    right_q_physical = np.asarray(
-        robot_state["after"]["right_joint_positions_rad"], dtype=float
-    )
-    if right_q_physical.shape != (6,) or not np.all(
-        np.isfinite(right_q_physical)
-    ):
-        raise ValueError("demonstrated right q must contain six finite joints")
     return {
-        "replay_config": str(replay_config_path),
-        "keyframe_name": matches[0]["name"],
-        "capture": str(capture.resolve()),
-        "manifest": str(manifest_path),
-        "session_id": manifest.get("session_id"),
-        "right_gripper_open_ratio": ratio,
-        "right_q_physical_rad": right_q_physical.tolist(),
+        "mode": "close_until_obstructed",
+        "demonstration_used": False,
+        "physical_gripper_target_open_ratio": 0.0,
         "proxy_target_half_gap_m": CLOSED_TARGET_HALF_GAP_M,
-        "mapping": (
-            "measured ratio is preserved for physical replay; proxy jaws use "
-            "a separate contact-seeking target because linkage width is not "
-            "calibrated"
+        "success_observation": (
+            "measured gripper remains non-zero after a fully-closed command "
+            "and the lid follows the vertical lift"
         ),
     }
 
@@ -529,6 +500,26 @@ def build_articulated_grasp_model(
     if lid_body is None:
         raise ValueError("reviewed model lacks the target lid body")
     body_name = str(lid_body.get("name"))
+    lid_pose = np.asarray(lid["pose_scene"], dtype=float)
+    if lid_pose.shape != (4, 4) or not np.all(np.isfinite(lid_pose)):
+        raise ValueError("target lid pose_scene must be a finite 4x4 transform")
+    lid_body.set("pos", _numbers(lid_pose[:3, 3]))
+    for orientation_attribute in ("axisangle", "euler", "xyaxes", "zaxis"):
+        lid_body.attrib.pop(orientation_attribute, None)
+    lid_quaternion_xyzw = Rotation.from_matrix(
+        lid_pose[:3, :3]
+    ).as_quat()
+    lid_body.set(
+        "quat",
+        _numbers(
+            [
+                lid_quaternion_xyzw[3],
+                lid_quaternion_xyzw[0],
+                lid_quaternion_xyzw[1],
+                lid_quaternion_xyzw[2],
+            ]
+        ),
+    )
     for joint in list(lid_body.findall("joint")):
         lid_body.remove(joint)
     ET.SubElement(lid_body, "freejoint", {"name": "grasp_search_lid_free"})
@@ -808,8 +799,24 @@ class GraspKinematics:
         *,
         maximum_position_error_m: float = 0.004,
         maximum_rotation_error_deg: float = 12.0,
+        maximum_joint_delta_rad: float | None = None,
     ) -> tuple[np.ndarray, dict]:
         seed = np.clip(np.asarray(seed, dtype=float), self.lower, self.upper)
+        lower = self.lower + 1e-6
+        upper = self.upper - 1e-6
+        if maximum_joint_delta_rad is not None:
+            maximum_joint_delta = float(maximum_joint_delta_rad)
+            if (
+                not np.isfinite(maximum_joint_delta)
+                or maximum_joint_delta <= 0.0
+            ):
+                raise ValueError(
+                    "maximum_joint_delta_rad must be positive"
+                )
+            lower = np.maximum(lower, seed - maximum_joint_delta)
+            upper = np.minimum(upper, seed + maximum_joint_delta)
+            if np.any(lower >= upper):
+                raise ValueError("local IK bounds are empty")
 
         def residual(q):
             position, rotation = self.pose(q)
@@ -827,7 +834,7 @@ class GraspKinematics:
         result = least_squares(
             residual,
             seed,
-            bounds=(self.lower + 1e-6, self.upper - 1e-6),
+            bounds=(lower, upper),
             xtol=1e-10,
             ftol=1e-10,
             gtol=1e-10,
@@ -849,6 +856,9 @@ class GraspKinematics:
             "accepted": accepted,
             "position_error_m": position_error,
             "rotation_error_deg": math.degrees(rotation_error),
+            "maximum_joint_delta_rad": float(
+                np.max(np.abs(result.x - seed))
+            ),
             "optimizer_status": int(result.status),
             "optimizer_cost": float(result.cost),
         }
@@ -873,37 +883,35 @@ def _rotation_for_rim(outward_xy: np.ndarray, pitch_deg: float) -> np.ndarray:
     return pitch @ rotation
 
 
-def _align_demonstrated_rotation_to_rim(
-    demonstrated_rotation: np.ndarray,
-    outward_xy: np.ndarray,
-) -> np.ndarray:
-    """Yaw-transfer a measured reachable wrist pose to a new rim tangent."""
-
-    demonstrated_rotation = np.asarray(demonstrated_rotation, dtype=float)
-    jaw_world = demonstrated_rotation @ NYU_JAW_AXIS_LOCAL
-    jaw_xy = jaw_world[:2]
-    if np.linalg.norm(jaw_xy) < 1e-6:
-        raise ValueError("demonstrated jaw axis is vertical")
-    outward = np.asarray(outward_xy, dtype=float)
-    outward /= np.linalg.norm(outward)
-    tangent = np.asarray([-outward[1], outward[0]])
-    yaw_delta = math.atan2(tangent[1], tangent[0]) - math.atan2(
-        jaw_xy[1], jaw_xy[0]
-    )
-    return Rotation.from_euler("z", yaw_delta).as_matrix() @ demonstrated_rotation
-
-
 def _minimum_jerk(value: float) -> float:
     value = float(np.clip(value, 0.0, 1.0))
     return 10 * value**3 - 15 * value**4 + 6 * value**5
 
 
+def _effective_trajectory_knots(knots: list[dict]) -> list[dict]:
+    if not knots:
+        return []
+    result = [{**knots[0]}]
+    for first, second in zip(knots, knots[1:]):
+        delta = float(np.max(np.abs(second["q_model"] - first["q_model"])))
+        nominal = float(second["minimum_duration_s"])
+        duration = max(
+            nominal,
+            delta / MAXIMUM_PLANNED_JOINT_SPEED_RAD_S,
+        )
+        item = {**second, "minimum_duration_s": duration}
+        if duration > nominal + 1e-12:
+            item["nominal_minimum_duration_s"] = nominal
+        result.append(item)
+    return result
+
+
 def _trajectory_samples(knots: list[dict], hz: float = 100.0) -> list[dict]:
+    knots = _effective_trajectory_knots(knots)
     samples = []
     cursor = 0.0
     for first, second in zip(knots, knots[1:]):
-        delta = float(np.max(np.abs(second["q_model"] - first["q_model"])))
-        duration = max(float(second["minimum_duration_s"]), 2.5 * delta)
+        duration = float(second["minimum_duration_s"])
         count = max(2, int(math.ceil(duration * hz)))
         for index in range(1, count + 1):
             fraction = index / count
@@ -1642,12 +1650,10 @@ def search(args) -> dict:
     lid = _object_by_role(scene, "target_lid")
     lid_position = _object_position(lid)
     radius = float(lid["geometry"]["radius_m"])
-    closure_demonstration = load_demonstrated_closure(
-        args.demonstration_config
-    )
+    closure_policy = geometry_closure_policy()
     closed_target_half_gap_m = CLOSED_TARGET_HALF_GAP_M
-    demonstrated_closed_open_ratio = float(
-        closure_demonstration["right_gripper_open_ratio"]
+    physical_closed_open_ratio = float(
+        closure_policy["physical_gripper_target_open_ratio"]
     )
     derived_model = build_articulated_grasp_model(
         model_path=args.model,
@@ -1663,10 +1669,17 @@ def search(args) -> dict:
     base_angle = math.atan2(outward[1], outward[0])
     candidates = []
     candidate_id = 0
-    # Search both the demonstrated near-radial approach and deeper insertions.
+    requested_candidate_id = getattr(args, "candidate_id", None)
+    angle_offsets_deg = tuple(
+        float(value)
+        for value in getattr(args, "angle_offsets_deg", (-6, 0, 6))
+    )
+    if not angle_offsets_deg or not np.all(np.isfinite(angle_offsets_deg)):
+        raise ValueError("angle_offsets_deg must contain finite values")
+    # Search both near-radial approaches and deeper insertions.
     # A rim-only pinch can lift while the transparent lid rotates and slides;
     # the positive insets reduce that moment arm without hard-coding pixels.
-    for angle_offset_deg in (-6, 0, 6):
+    for angle_offset_deg in angle_offsets_deg:
         angle = base_angle + math.radians(angle_offset_deg)
         direction = np.asarray([math.cos(angle), math.sin(angle)])
         for radial_inset_m in (
@@ -1678,8 +1691,17 @@ def search(args) -> dict:
             0.005,
             0.006,
         ):
-            for z_offset_m in (-0.002, 0.0, 0.002):
+            # Thin transparent targets are highly sensitive to pad height.
+            # Include two additional millimetre-scale levels above the
+            # symmetric coarse sweep; these are physical offsets relative to
+            # the observed support plane, not image-specific pixel constants.
+            for z_offset_m in (-0.002, 0.0, 0.002, 0.003, 0.004):
                 candidate_id += 1
+                if (
+                    requested_candidate_id is not None
+                    and candidate_id != int(requested_candidate_id)
+                ):
+                    continue
                 rim = lid_position.copy()
                 rim[:2] += (radius - radial_inset_m) * direction
                 rim[2] += z_offset_m
@@ -1836,7 +1858,7 @@ def search(args) -> dict:
                                 "q_model": lift_q.copy(),
                                 "jaw_target_m": closed_target_half_gap_m,
                                 "right_gripper_open_ratio": (
-                                    demonstrated_closed_open_ratio
+                                    physical_closed_open_ratio
                                 ),
                                 "minimum_duration_s": (
                                     VERTICAL_LIFT_WAYPOINT_DURATION_S
@@ -1846,11 +1868,22 @@ def search(args) -> dict:
                 if accepted:
                     knots.append(
                         {
+                            "stage": "preclose_observe",
+                            "q_model": grasp_q.copy(),
+                            "jaw_target_m": OPEN_HALF_GAP_M,
+                            "right_gripper_open_ratio": 1.0,
+                            "minimum_duration_s": (
+                                PRECLOSE_VISUAL_SETTLE_DURATION_S
+                            ),
+                        }
+                    )
+                    knots.append(
+                        {
                             "stage": "close",
                             "q_model": grasp_q.copy(),
                             "jaw_target_m": closed_target_half_gap_m,
                             "right_gripper_open_ratio": (
-                                demonstrated_closed_open_ratio
+                                physical_closed_open_ratio
                             ),
                             "minimum_duration_s": CLOSE_RAMP_DURATION_S,
                         }
@@ -1861,7 +1894,7 @@ def search(args) -> dict:
                             "q_model": grasp_q.copy(),
                             "jaw_target_m": closed_target_half_gap_m,
                             "right_gripper_open_ratio": (
-                                demonstrated_closed_open_ratio
+                                physical_closed_open_ratio
                             ),
                             "minimum_duration_s": CLOSE_SETTLE_DURATION_S,
                         }
@@ -1873,7 +1906,7 @@ def search(args) -> dict:
                             "q_model": lift_q.copy(),
                             "jaw_target_m": closed_target_half_gap_m,
                             "right_gripper_open_ratio": (
-                                demonstrated_closed_open_ratio
+                                physical_closed_open_ratio
                             ),
                             "minimum_duration_s": 1.0,
                         }
@@ -1934,6 +1967,10 @@ def search(args) -> dict:
                     }
                 )
     ranked = sorted(candidates, key=lambda item: item["score"], reverse=True)
+    if not ranked:
+        raise ValueError(
+            f"candidate_id {requested_candidate_id!r} is outside the search"
+        )
     successful = [
         item
         for item in ranked
@@ -1953,6 +1990,7 @@ def search(args) -> dict:
             height=args.height,
             fps=args.fps,
         )
+        effective_knots = _effective_trajectory_knots(best["_knots"])
         trajectory = {
             "schema": TRAJECTORY_SCHEMA,
             "commands_sent": False,
@@ -1962,7 +2000,7 @@ def search(args) -> dict:
             "object_scene_path": str(Path(args.object_scene).resolve()),
             "candidate_id": best["candidate_id"],
             "joint_limit_margin_rad": JOINT_LIMIT_MARGIN_RAD,
-            "closure_demonstration": closure_demonstration,
+            "closure_policy": closure_policy,
             "right_physical_to_model_q_offset_rad": (
                 physical_to_semantic_model_q_offset("right").tolist()
             ),
@@ -1975,7 +2013,7 @@ def search(args) -> dict:
                         - physical_to_semantic_model_q_offset("right")
                     ).tolist(),
                 }
-                for knot in best["_knots"]
+                for knot in effective_knots
             ],
             "simulation_validation": best["simulation"],
         }
@@ -1995,12 +2033,13 @@ def search(args) -> dict:
         "lid_position_scene_m": lid_position.tolist(),
         "lid_radius_m": radius,
         "joint_limit_margin_rad": JOINT_LIMIT_MARGIN_RAD,
-        "closure_demonstration": closure_demonstration,
+        "closure_policy": closure_policy,
         "vertical_lift": {
             "height_m": VERTICAL_LIFT_HEIGHT_M,
             "waypoint_count": VERTICAL_LIFT_WAYPOINT_COUNT,
             "fixed_xy_and_orientation": True,
         },
+        "angle_offsets_deg": list(angle_offsets_deg),
         "candidate_count": len(candidates),
         "ik_accepted_count": sum(item["ik_accepted"] for item in candidates),
         "successful_candidate_count": len(successful),
@@ -2031,11 +2070,29 @@ def main(argv=None):
     parser.add_argument("--model", required=True)
     parser.add_argument("--object-scene", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--demonstration-config", required=True)
     parser.add_argument("--width", type=int, default=720)
     parser.add_argument("--height", type=int, default=540)
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument(
+        "--candidate-id",
+        type=int,
+        default=None,
+        help="evaluate one deterministic candidate; omit for the full sweep",
+    )
+    parser.add_argument(
+        "--angle-offset-deg",
+        dest="angle_offsets_deg",
+        action="append",
+        type=float,
+        default=None,
+        help=(
+            "approach angle offset; repeat to override the default "
+            "-6/0/+6 degree sweep"
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.angle_offsets_deg is None:
+        args.angle_offsets_deg = (-6, 0, 6)
     if args.width <= 0 or args.height <= 0 or args.fps <= 0:
         parser.error("render dimensions and fps must be positive")
     report = search(args)

@@ -1,4 +1,4 @@
-"""Generic right-wrist SAM observer ranked in the demonstrated tool frame."""
+"""Generic right-wrist SAM observer ranked in an accepted visual goal frame."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from rollout.grasp_window import (
     GraspWindowTemplate,
     assess_grasp_window,
 )
+from rollout.sam_segmentation import mask_geometry
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ def choose_tool_relative_target(
     *,
     method,
     previous_center_px=None,
+    minimum_mask_circularity=None,
 ):
     """Choose a SAM candidate without requiring a tag or coloured marker."""
 
@@ -38,6 +40,13 @@ def choose_tool_relative_target(
         mask = np.asarray(candidate.mask, dtype=bool)
         if mask.shape != image.shape[:2] or np.count_nonzero(mask) < 100:
             continue
+        if minimum_mask_circularity is not None:
+            geometry = mask_geometry(mask, min_area_px=100)
+            if (
+                geometry is None
+                or geometry.circularity < float(minimum_mask_circularity)
+            ):
+                continue
         try:
             assessment, _ = assess_grasp_window(
                 image,
@@ -56,7 +65,7 @@ def choose_tool_relative_target(
                 / diagonal
             )
         # Every term is dimensionless. Near the final grasp, matching the
-        # demonstrated tool-relative geometry outweighs SAM's raw score.
+        # accepted tool-relative visual goal outweighs SAM's raw score.
         objective = (
             assessment.normalized_center_error
             + assessment.normalized_quantile_error
@@ -90,6 +99,7 @@ class RightTargetObserver:
         prompts,
         grasp_window_template,
         grasp_window_method,
+        minimum_mask_circularity=None,
     ):
         # Reuse only the proven camera lifecycle and freshness barrier. Target
         # selection and artifacts below are marker-independent.
@@ -103,6 +113,11 @@ class RightTargetObserver:
             raise ValueError("at least one target SAM prompt is required")
         self.template = grasp_window_template
         self.method = grasp_window_method
+        self.minimum_mask_circularity = (
+            None
+            if minimum_mask_circularity is None
+            else float(minimum_mask_circularity)
+        )
         self.previous_center = None
         self.sequence = 0
         self.last_observation_artifacts = None
@@ -157,6 +172,7 @@ class RightTargetObserver:
                 self.template,
                 method=self.method,
                 previous_center_px=self.previous_center,
+                minimum_mask_circularity=self.minimum_mask_circularity,
             )
             if candidate is None:
                 continue
@@ -252,5 +268,7 @@ class RightTargetObserver:
                     candidate.box_xyxy, dtype=float
                 ).tolist(),
             },
+            "visual_goal_assessment": assessment.to_dict(),
+            "visual_goal_objective": float(selected_objective),
         }
         return geometry, candidate, str(overlay_path), float(timestamp)

@@ -85,6 +85,15 @@ selected = choose_lid_candidate(
 assert selected is not None
 assert selected[0] is correct_candidate
 
+# A close-range cross can become a dense component after camera filtering.
+# It must remain a valid marker as long as it spans both axes.
+dense_cross = np.zeros((120, 160, 3), np.uint8)
+cv2.rectangle(dense_cross, (55, 50), (105, 70), (255, 0, 0), -1)
+cv2.rectangle(dense_cross, (68, 36), (92, 84), (255, 0, 0), -1)
+dense_centers = detect_blue_cross_centers(dense_cross)
+assert dense_centers
+assert np.linalg.norm(dense_centers[0] - [80, 60]) < 1
+
 dark = np.tile(np.arange(2, 18, dtype=np.uint8), (32, 2))
 dark = cv2.cvtColor(dark, cv2.COLOR_GRAY2BGR)
 enhanced = enhance_low_light(dark)

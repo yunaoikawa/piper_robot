@@ -1,10 +1,13 @@
 {
   "schema": "piper_robot.sam_target_task/v2",
   "target": {
+    "semantic_role": "target_lid",
     "semantic_name": "transparent round planar object",
     "sam_prompt": "transparent round petri dish lid with blue cross",
+    "confusable_semantic_roles": ["dish_body"],
     "shape_class": "thin_planar",
     "transparent": true,
+    "minimum_mask_circularity": 0.5,
     "runtime_apriltag_required": false
   },
   "demonstration_reference": {

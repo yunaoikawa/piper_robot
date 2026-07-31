@@ -767,9 +767,34 @@ def detect_blue_cross_centers(image_bgr: np.ndarray) -> tuple[np.ndarray, ...]:
         )
         aspect = width / max(height, 1)
         fill = area / max(width * height, 1)
-        if not 0.55 <= aspect <= 1.8 or not 0.18 <= fill <= 0.78:
+        # At close range camera filtering can merge both arms of the marker
+        # into a dense blue component.  The old 0.78 ceiling rejected the
+        # actual lid cross (observed fill=0.805) and left unrelated blue
+        # stickers as the only semantic anchors.  Dense *round* blue blobs are
+        # still rejected by the contour-circularity clause below.
+        if not 0.55 <= aspect <= 1.8 or not 0.18 <= fill <= 0.90:
             continue
         component = labels[y : y + height, x : x + width] == label
+        if fill > 0.78:
+            contours, _ = cv2.findContours(
+                component.astype(np.uint8),
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_NONE,
+            )
+            contour = max(contours, key=cv2.contourArea)
+            perimeter = float(cv2.arcLength(contour, True))
+            circularity = (
+                1.0
+                if perimeter <= 0.0
+                else float(
+                    4.0
+                    * np.pi
+                    * cv2.contourArea(contour)
+                    / (perimeter * perimeter)
+                )
+            )
+            if circularity > 0.86:
+                continue
         cx = int(np.clip(round(centers[label][0] - x), 0, width - 1))
         cy = int(np.clip(round(centers[label][1] - y), 0, height - 1))
         band_x = max(1, width // 5)

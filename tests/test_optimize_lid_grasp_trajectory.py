@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import mujoco
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 from src.optimize_lid_grasp_trajectory import (
     CLOSED_TARGET_HALF_GAP_M,
@@ -14,12 +12,13 @@ from src.optimize_lid_grasp_trajectory import (
     OPEN_HALF_GAP_M,
     VERTICAL_LIFT_WAYPOINT_COUNT,
     GraspKinematics,
+    MAXIMUM_PLANNED_JOINT_SPEED_RAD_S,
+    _effective_trajectory_knots,
     _rotation_for_rim,
-    _align_demonstrated_rotation_to_rim,
     _trajectory_samples,
     _vertical_lift_targets,
     build_articulated_grasp_model,
-    load_demonstrated_closure,
+    geometry_closure_policy,
 )
 
 
@@ -94,12 +93,14 @@ def _write_minimal_scene(tmp_path: Path) -> tuple[Path, Path]:
 
 def test_derived_grasp_model_has_dynamic_lid_and_articulated_pads(tmp_path):
     scene_path, _ = _write_minimal_scene(tmp_path)
+    target_pose = np.eye(4)
+    target_pose[:3, 3] = [0.12, -0.08, 0.03]
     object_scene = {
         "objects": [
             {
                 "role": "target_lid",
                 "body_name": "petri_lid-1",
-                "pose_scene": np.eye(4).tolist(),
+                "pose_scene": target_pose.tolist(),
                 "geometry": {"radius_m": 0.047, "height_m": 0.006},
             }
         ]
@@ -110,6 +111,7 @@ def test_derived_grasp_model_has_dynamic_lid_and_articulated_pads(tmp_path):
         output_path=tmp_path / "derived.mjcf",
     )
     model = mujoco.MjModel.from_xml_path(str(output))
+    assert np.allclose(model.body("petri_lid-1").pos, target_pose[:3, 3])
     assert model.joint("grasp_search_lid_free").type[0] == mujoco.mjtJoint.mjJNT_FREE
     assert model.joint("right/grasp_search_upper_joint").limited[0]
     assert model.joint("right/grasp_search_lower_joint").limited[0]
@@ -192,54 +194,37 @@ def test_vertical_lift_targets_hold_xy_and_increase_z():
     assert np.isclose(targets[-1][2], 0.34)
 
 
-def test_demonstrated_rotation_transfer_aligns_jaw_with_rim_tangent():
-    demonstrated = Rotation.from_euler("xyz", [0.2, -0.1, 0.3]).as_matrix()
-    outward = np.asarray([0.6, -0.8])
-    aligned = _align_demonstrated_rotation_to_rim(demonstrated, outward)
-    jaw_xy = (aligned @ NYU_JAW_AXIS_LOCAL)[:2]
-    jaw_xy /= np.linalg.norm(jaw_xy)
-    tangent = np.asarray([-outward[1], outward[0]])
-    tangent /= np.linalg.norm(tangent)
-    assert np.allclose(jaw_xy, tangent, atol=1e-12)
+def test_exported_knots_use_same_joint_speed_timing_as_simulation():
+    q0 = np.zeros(6)
+    q1 = q0.copy()
+    q1[3] = 1.0
+    effective = _effective_trajectory_knots(
+        [
+            {
+                "stage": "start",
+                "q_model": q0,
+                "minimum_duration_s": 0.1,
+            },
+            {
+                "stage": "move",
+                "q_model": q1,
+                "minimum_duration_s": 0.2,
+            },
+        ]
+    )
+    assert np.isclose(
+        effective[1]["minimum_duration_s"],
+        1.0 / MAXIMUM_PLANNED_JOINT_SPEED_RAD_S,
+    )
+    assert effective[1]["nominal_minimum_duration_s"] == 0.2
 
 
-def test_demonstrated_closure_is_loaded_from_stationary_keyframe(tmp_path):
-    capture = tmp_path / "capture"
-    capture.mkdir()
-    (capture / "manifest.json").write_text(
-        json.dumps(
-            {
-                "session_id": "closed-demo",
-                "robot_state": {
-                    "commands_sent": False,
-                    "stability": {"stationary": True},
-                    "after": {
-                        "right_gripper_open_ratio": 0.5888571428571429,
-                        "right_joint_positions_rad": [0.0] * 6,
-                    },
-                },
-            }
-        )
-    )
-    profile = tmp_path / "replay.json"
-    profile.write_text(
-        json.dumps(
-            {
-                "measured_keyframes": [
-                    {
-                        "name": "verified_closed_before_lift",
-                        "stage": "closed_nonempty",
-                        "capture": str(capture),
-                    }
-                ]
-            }
-        )
-    )
-    record = load_demonstrated_closure(profile)
-    assert record["session_id"] == "closed-demo"
-    assert np.isclose(record["right_gripper_open_ratio"], 0.5888571428571429)
-    assert record["proxy_target_half_gap_m"] == CLOSED_TARGET_HALF_GAP_M
-    assert "physical replay" in record["mapping"]
+def test_closure_policy_is_geometry_only_and_closes_until_obstructed():
+    policy = geometry_closure_policy()
+    assert policy["mode"] == "close_until_obstructed"
+    assert policy["demonstration_used"] is False
+    assert policy["physical_gripper_target_open_ratio"] == 0.0
+    assert policy["proxy_target_half_gap_m"] == CLOSED_TARGET_HALF_GAP_M
 
 
 def test_grasp_search_source_has_no_robot_control_imports():
@@ -252,5 +237,7 @@ def test_grasp_search_source_has_no_robot_control_imports():
         "import robot.arm.motion",
         "send_joint",
         "claim_motion_execution",
+        "demonstration_config",
+        "load_demonstrated_closure",
     )
     assert not any(value in source for value in forbidden)
