@@ -120,6 +120,21 @@ captureでは`accepted_masks`を省き、`--sam-endpoint tcp://HOST:PORT`を指�
 - `current_scene/current_object_report.json`
 - `current_scene/current_objects_overlay.png`
 
+## 現在の蓋に対する物理把持探索
+
+`simulated_grasp_search.enabled=true`では、現在対象を反映した直後に
+`src/optimize_lid_grasp_trajectory.py`を実行します。承認済みNYU gripperの外観と
+姿勢は基準モデルに残し、派生したsimulation-only MJCFでのみ左右可動padと
+lid free jointを追加します。探索順はhome、上空XY、降下、水平挿入、閉じる、
+verification lift、holdです。
+
+候補は、hold中の両pad接触、物体による閉じ残り、20 mm以上の持上げ、
+lift/hold中のlid/grasp相対距離が物体半径の1.5倍以下を全て満たす場合だけ
+成功です。出力は
+`grasp_search/`の動画、最終画像、全候補report、物理検証済み最良軌道JSONです。
+これは把持幾何のsimulation検証であり、元sceneのESDF接触やcamera-to-robot
+authorityを上書きせず、実機motion authorityも付与しません。
+
 ## 記録軌道の意味
 
 連続teleop関節ログは保存されていません。したがって虚偽の「元動画と同一軌道」

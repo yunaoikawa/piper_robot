@@ -32,6 +32,13 @@ importせず、static sceneやrobot baseを再fitしません。collision gate�
 display-only fallbackを明示したprofileでは、モデルと動画は生成しますが
 `collision_ready=false`、`motion_authorized=false`を保持します。
 
+同じcurrent-scene profileは、更新したlid位置に対してrim grasp候補も自動探索
+します。固定表示だったNYU gripperを元モデル内で改変せず、派生MJCFだけに
+可動padとdynamic lidを追加して接触物理を計算します。スマホ入口には成功動画、
+最終frame、候補別report、model/physical双方のjoint値を持つ最良軌道JSONが
+追加されます。全候補失敗時はstageを非0で停止し、見た目だけの追従動画を成功
+として扱いません。
+
 ## 最短の再実行
 
 すでに `multiview_report.json` がある場合:

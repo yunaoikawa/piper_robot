@@ -69,6 +69,14 @@ accepted model, never image-left/right; ambiguous assignments fail closed.
 Accepted-mask replay is allowed for exact regression. For a new capture, omit
 accepted masks and provide `--sam-endpoint`.
 
+When that profile enables `simulated_grasp_search`, the pipeline must also run
+`src/optimize_lid_grasp_trajectory.py`. Do not accept a render-only policy that
+teleports the lid to the end effector. Preserve the reviewed fixed NYU visual
+in the source model, derive a simulation-only articulated pad model, make only
+the target lid free, and require bilateral pad contact, non-empty closure, at
+least 20 mm of lift, and bounded target/tool drift through the hold. Keep this
+result separate from source-scene collision and hardware motion authority.
+
 ## Tagless multiview and robot calibration
 
 For a completed `piper_robot.multiview_semantic_scene/v1` report, run semantic

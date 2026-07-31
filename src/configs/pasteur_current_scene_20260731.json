@@ -72,6 +72,12 @@
       }
     }
   },
+  "simulated_grasp_search": {
+    "enabled": true,
+    "width": 640,
+    "height": 480,
+    "fps": 20
+  },
   "recorded_replay_display_only_on_collision": true,
   "render": {
     "width": 640,

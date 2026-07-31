@@ -241,6 +241,23 @@ def _write_mobile_index(output: Path, pipeline: dict) -> Path:
         if pipeline["summary"].get("current_object_refresh_accepted")
         else ""
     )
+    grasp = pipeline["summary"].get("simulated_grasp")
+    grasp_block = ""
+    if grasp is not None:
+        grasp_block = f"""
+<div class="card"><b class="{'ok' if grasp['accepted'] else 'warn'}">
+物理把持探索: {'成功' if grasp['accepted'] else '未成功'}</b><br>
+成功候補 {grasp['successful_candidate_count']} /
+{grasp['candidate_count']}、持上げ {1000.0 * grasp['lid_lift_m']:.1f} mm</div>
+<video controls playsinline preload="metadata"
+ poster="grasp_search/best_lid_grasp_final.png">
+<source src="grasp_search/best_lid_grasp.mp4" type="video/mp4"></video>
+<small>free jointの蓋、可動爪、両側接触、閉じ残り、持上げ追従を
+MuJoCo物理で検証。実機コマンド送信なし。</small>
+<a href="grasp_search/grasp_search_report.json">
+<b>把持候補の全評価</b></a>
+<a href="grasp_search/best_lid_grasp_trajectory.json">
+<b>最良把持軌道JSON</b></a>"""
     page = f"""<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -259,6 +276,7 @@ small{{color:#a8b4c5}}code{{overflow-wrap:anywhere}}
 {'衝突なし' if moving_clear else '未承認'}</b><br>
 シーン全体: <b class="{'ok' if global_clear else 'warn'}">
 {'衝突なし' if global_clear else '静止左腕側に未解消接触あり'}</b></div>
+{grasp_block}
 <video controls playsinline preload="metadata"
  poster="render/recorded_replay_start.png">
 <source src="render/recorded_replay.mp4" type="video/mp4"></video>
@@ -547,6 +565,7 @@ def run(
     replay_model = collision_model
     replay_object_scene = object_scene
     current_refresh_report = None
+    grasp_search_report = None
     refresh_config = config.get("current_object_refresh")
     if refresh_config:
         current_dir = output / "current_scene"
@@ -610,6 +629,65 @@ def run(
             raise ValueError("current semantic object refresh gates failed")
         replay_model = current_model
         replay_object_scene = current_object_scene
+
+    grasp_config = config.get("simulated_grasp_search", {})
+    if grasp_config.get("enabled", False):
+        grasp_dir = output / "grasp_search"
+        grasp_report_path = grasp_dir / "grasp_search_report.json"
+        grasp_trajectory_path = (
+            grasp_dir / "best_lid_grasp_trajectory.json"
+        )
+        grasp_video_path = grasp_dir / "best_lid_grasp.mp4"
+        grasp_final_path = grasp_dir / "best_lid_grasp_final.png"
+        grasp_model_path = grasp_dir / "grasp_physics_scene.mjcf"
+        grasp_command = [
+            python,
+            str(ROOT / "src/optimize_lid_grasp_trajectory.py"),
+            "--model",
+            str(replay_model),
+            "--object-scene",
+            str(replay_object_scene),
+            "--output-dir",
+            str(grasp_dir),
+            "--width",
+            str(grasp_config.get("width", 640)),
+            "--height",
+            str(grasp_config.get("height", 480)),
+            "--fps",
+            str(grasp_config.get("fps", 20)),
+        ]
+        grasp_assets = ROOT / "robot/piper-mujoco/mjcf/meshes/piper"
+        stages.append(
+            _run_stage(
+                name="simulated_lid_grasp_search",
+                command=grasp_command,
+                inputs=[
+                    replay_model,
+                    replay_object_scene,
+                    ROOT / "src/optimize_lid_grasp_trajectory.py",
+                    grasp_assets / "gripper_housing.stl",
+                    grasp_assets / "gripper_upper.stl",
+                    grasp_assets / "gripper_lower.stl",
+                ],
+                outputs=[
+                    grasp_report_path,
+                    grasp_trajectory_path,
+                    grasp_video_path,
+                    grasp_final_path,
+                    grasp_model_path,
+                ],
+                output_root=output,
+                force=force,
+                environment={"MUJOCO_GL": "egl"},
+            )
+        )
+        grasp_search_report = json.loads(grasp_report_path.read_text())
+        if not (
+            grasp_search_report.get("accepted")
+            and grasp_search_report.get("commands_sent") is False
+            and grasp_search_report.get("hardware_motion_authorized") is False
+        ):
+            raise ValueError("simulated lid grasp search gates failed")
 
     trajectory_dir = output / "trajectory"
     trajectory_path = trajectory_dir / "trajectory.json"
@@ -807,6 +885,32 @@ def run(
             None
             if current_refresh_report is None
             else current_refresh_report["accepted"]
+        ),
+        "simulated_grasp": (
+            None
+            if grasp_search_report is None
+            else {
+                "accepted": grasp_search_report["accepted"],
+                "candidate_count": grasp_search_report["candidate_count"],
+                "successful_candidate_count": grasp_search_report[
+                    "successful_candidate_count"
+                ],
+                "lid_lift_m": grasp_search_report["best_candidate"][
+                    "simulation"
+                ]["lid_lift_m"],
+                "upper_pad_contact": grasp_search_report["best_candidate"][
+                    "simulation"
+                ]["upper_pad_contact"],
+                "lower_pad_contact": grasp_search_report["best_candidate"][
+                    "simulation"
+                ]["lower_pad_contact"],
+                "hold_bilateral_pad_contact": grasp_search_report[
+                    "best_candidate"
+                ]["simulation"]["hold_bilateral_pad_contact"],
+                "closure_obstructed": grasp_search_report["best_candidate"][
+                    "simulation"
+                ]["closure_obstructed"],
+            }
         ),
     }
     report = {
