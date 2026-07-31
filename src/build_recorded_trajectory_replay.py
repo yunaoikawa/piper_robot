@@ -36,7 +36,7 @@ def main(argv=None) -> None:
         ),
         physical_right_model_branch=config.get(
             "physical_right_model_branch",
-            "left",
+            "right",
         ),
         planning_seed=int(config.get("planning_seed", 22)),
         planning_seed_candidates=config.get("planning_seed_candidates"),

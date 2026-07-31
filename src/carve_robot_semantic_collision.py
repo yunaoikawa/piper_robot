@@ -66,7 +66,7 @@ def main(argv=None) -> None:
     parser.add_argument(
         "--physical-right-model-branch",
         choices=("left", "right"),
-        default="left",
+        default="right",
     )
     parser.add_argument(
         "--maximum-removed-fraction",

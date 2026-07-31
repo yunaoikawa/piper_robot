@@ -61,7 +61,8 @@ def _file_sha256(path: Path) -> str:
 
 def _validate_physical_arm_identity(
     *,
-    calibration_mapping: dict,
+    production_calibration_mapping: dict,
+    semantic_mapping: dict,
     carving: dict,
     target_profile: dict,
     replay_profile: dict,
@@ -79,22 +80,18 @@ def _validate_physical_arm_identity(
         raise ValueError(
             f"expected right-wrist evidence, got physical arm {physical_arm!r}"
         )
-    calibration_branch = str(calibration_mapping[physical_arm]).lower()
-    matching_branches = [
-        branch
-        for branch in ("left", "right")
-        if calibration_branch == branch
-        or calibration_branch.startswith(f"{branch}_")
-        or calibration_branch.startswith(f"{branch}/")
-    ]
-    if len(matching_branches) != 1:
+    if set(production_calibration_mapping) != {"left", "right"}:
         raise ValueError(
-            "cannot resolve physical-right model branch from robot calibration "
-            f"mapping {calibration_branch!r}"
+            "production calibration mapping must contain physical left/right"
         )
-    authoritative_branch = matching_branches[0]
+    if semantic_mapping != {"left": "left", "right": "right"}:
+        raise ValueError(
+            "semantic Piper branches must preserve physical identity; got "
+            f"{semantic_mapping!r}"
+        )
+    authoritative_branch = semantic_mapping[physical_arm]
     branches = {
-        "robot_calibration": authoritative_branch,
+        "semantic_robot": authoritative_branch,
         "wrist_target": target_branch,
         "collision_carving": carving_branch,
         "trajectory_replay": replay_branch,
@@ -131,14 +128,15 @@ def _validate_physical_arm_identity(
         "accepted": True,
         "physical_arm": physical_arm,
         "model_branch": target_branch,
-        "calibration_mapping": calibration_mapping,
+        "production_calibration_mapping": production_calibration_mapping,
+        "semantic_mapping": semantic_mapping,
         "target_capture_labels": target_capture_labels,
         "replay_capture_labels": replay_capture_labels,
         "stages": branches,
         "policy": (
-            "robot calibration is the model-branch authority; right-wrist "
-            "RGB-D and right controller joints must remain mapped to that "
-            "branch through target calibration, collision carving, and replay"
+            "production calibration and semantic planning use separate branch "
+            "namespaces; right-wrist RGB-D and right controller joints remain "
+            "on semantic right through target, carving, and replay"
         ),
     }
 
@@ -367,12 +365,27 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         str(alignment_config.get("tag_size_m", 0.06)),
         "--support-plane-z-m",
         str(alignment_config["support_plane_z_m"]),
+        "--semantic-exclusion-margin-m",
+        str(alignment_config.get("semantic_exclusion_margin_m", 0.02)),
+        "--maximum-independent-base-translation-m",
+        str(
+            alignment_config.get(
+                "maximum_independent_base_translation_m",
+                semantic_profile_data.get(
+                    "robot_alignment_refinement",
+                    {},
+                ).get("maximum_translation_m", 0.15),
+            )
+        ),
+        "--minimum-base-nearest-ratio",
+        str(alignment_config.get("minimum_base_nearest_ratio", 2.0)),
     ]
     if alignment_config.get("baseline_is_home", True):
         alignment_command.append("--baseline-is-home")
     # Expanded explicitly for clear provenance and deterministic directory hash.
     alignment_inputs = [
         ROOT / "src/refine_scene_robot_alignment.py",
+        ROOT / "rollout/scene_registration.py",
         _resolve(alignment_config["reference_report"]),
         _resolve(alignment_config["reference_capture"]),
         _resolve(alignment_config["current_capture"]),
@@ -414,8 +427,13 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         for item in replay_profile["measured_keyframes"]
     ]
     arm_identity = _validate_physical_arm_identity(
-        calibration_mapping=semantic_profile_data["robot_calibration"][
-            "physical_to_model_branch"
+        production_calibration_mapping=semantic_profile_data[
+            "robot_calibration"
+        ][
+            "physical_to_production_branch"
+        ],
+        semantic_mapping=semantic_profile_data["semantic_robot"][
+            "physical_to_semantic_branch"
         ],
         carving=carving,
         target_profile=target_profile,
@@ -440,7 +458,7 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         "--verified-keyframes-config",
         str(replay_config),
         "--physical-right-model-branch",
-        carving.get("physical_right_model_branch", "left"),
+        carving.get("physical_right_model_branch", "right"),
         "--robot-clearance-margin-m",
         str(carving.get("robot_clearance_margin_m", 0.03)),
         "--maximum-removed-fraction",

@@ -21,7 +21,10 @@ from robot.arm.home import physical_home_q
 from rollout.scene_registration import (
     apply_independent_base_translations_to_mjcf,
     apply_shared_planar_transform_to_mjcf,
+    assign_components_by_joint_excitation,
     assign_independent_base_translations,
+    assign_named_base_translations,
+    assign_visible_base_translations,
     backproject_depth,
     bridge_camera_from_fixed_tag,
     component_base_centers,
@@ -29,6 +32,7 @@ from rollout.scene_registration import (
     fit_shared_planar_robot_transform,
     intersect_pixel_with_horizontal_plane,
     persistent_depth_component_centers,
+    reject_base_candidates_inside_semantic_objects,
     rigid_transform_consensus,
     scaled_camera_matrix,
     tag_pose_camera,
@@ -157,7 +161,7 @@ def _derived_scene(
 
 
 def _pin_canonical_physical_home(positioned_model: Path) -> None:
-    """Pin semantic model-left/right to physical right/left home q."""
+    """Pin semantic model-left/right to physical left/right home q."""
 
     tree = ET.parse(positioned_model)
     root = tree.getroot()
@@ -165,14 +169,47 @@ def _pin_canonical_physical_home(positioned_model: Path) -> None:
     if keyframe is None:
         raise ValueError("positioned Piper model lacks keyframe home")
     values = np.r_[
-        physical_home_q("right"),
         physical_home_q("left"),
+        physical_home_q("right"),
     ]
     serialized = " ".join(f"{value:.10g}" for value in values)
     keyframe.set("qpos", serialized)
     if keyframe.get("ctrl") is not None:
         keyframe.set("ctrl", serialized)
     tree.write(positioned_model, encoding="unicode")
+
+
+def _view_qpos(manifest: dict) -> dict[str, dict[str, np.ndarray]]:
+    result = {}
+    for view in manifest["views"]:
+        state = view.get("robot_state", {}).get("after", {})
+        result[view["name"]] = {
+            arm: np.asarray(
+                state[f"{arm}_joint_positions_rad"],
+                dtype=float,
+            )
+            for arm in ("left", "right")
+        }
+    return result
+
+
+def _project_scene_points(
+    points_scene: list[np.ndarray],
+    scene_from_camera: np.ndarray,
+    camera_matrix: np.ndarray,
+) -> list[np.ndarray]:
+    camera_from_scene = np.linalg.inv(scene_from_camera)
+    points_camera = transform_points(
+        np.asarray(points_scene, dtype=float),
+        camera_from_scene,
+    )
+    if np.any(points_camera[:, 2] <= 0):
+        raise ValueError("persistent robot base projects behind the camera")
+    homogeneous = points_camera @ np.asarray(camera_matrix, dtype=float).T
+    return [
+        value[:2] / value[2]
+        for value in homogeneous
+    ]
 
 
 def _write_depth_mask_montage(
@@ -215,6 +252,82 @@ def _write_depth_mask_montage(
         canvas[row * 480:(row + 1) * 480,
                column * 360:(column + 1) * 360] = tile
     cv2.imwrite(str(output), canvas)
+
+
+def _write_arm_identity_overlay(
+    image_path: Path,
+    projected_centers: list[np.ndarray],
+    arm_identity: dict,
+    output_path: Path,
+    *,
+    retained_centers_px: dict[str, np.ndarray] | None = None,
+    rejected_centers_px: list[tuple[np.ndarray, str]] | None = None,
+) -> None:
+    image = cv2.imread(str(image_path))
+    if image is None:
+        raise FileNotFoundError(image_path)
+    colors = {"left": (255, 0, 255), "right": (255, 255, 0)}
+    radius = max(12, int(round(min(image.shape[:2]) * 0.035)))
+    for arm, index in arm_identity[
+        "physical_arm_to_component_index"
+    ].items():
+        center = tuple(
+            np.rint(projected_centers[index]).astype(int).tolist()
+        )
+        cv2.circle(image, center, radius, colors[arm], 6, cv2.LINE_AA)
+        cv2.putText(
+            image,
+            f"physical {arm.upper()} = semantic {arm}/",
+            (max(10, center[0] - radius), max(35, center[1] - radius - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            colors[arm],
+            3,
+            cv2.LINE_AA,
+        )
+    for arm, value in (retained_centers_px or {}).items():
+        center = tuple(np.rint(value).astype(int).tolist())
+        cv2.drawMarker(
+            image,
+            center,
+            colors[arm],
+            cv2.MARKER_TILTED_CROSS,
+            radius * 2,
+            6,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            image,
+            f"physical {arm.upper()}: retained reviewed base",
+            (max(10, center[0] - radius), max(35, center[1] - radius - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            colors[arm],
+            3,
+            cv2.LINE_AA,
+        )
+    for value, label in rejected_centers_px or []:
+        center = tuple(np.rint(value).astype(int).tolist())
+        cv2.drawMarker(
+            image,
+            center,
+            (0, 0, 255),
+            cv2.MARKER_TILTED_CROSS,
+            radius * 2,
+            7,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            image,
+            f"REJECTED: {label}",
+            (max(10, center[0] - radius), max(35, center[1] - radius - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 0, 255),
+            3,
+            cv2.LINE_AA,
+        )
+    cv2.imwrite(str(output_path), image)
 
 
 def build(args) -> dict:
@@ -469,7 +582,7 @@ def build(args) -> dict:
         and camera_registration_accepted
     )
     train_names = [view["name"] for view in manifest["views"][:-1]]
-    persistent_centers, persistent_components = (
+    raw_persistent_centers, persistent_components = (
         persistent_depth_component_centers(
             [
                 depth_robot_points_by_view[name]
@@ -486,12 +599,131 @@ def build(args) -> dict:
             maximum_base_plane_gap_m=args.maximum_base_plane_gap_m,
         )
     )
+    persistent_centers, semantic_exclusion = (
+        reject_base_candidates_inside_semantic_objects(
+            raw_persistent_centers,
+            scene["objects"],
+            margin_m=args.semantic_exclusion_margin_m,
+        )
+    )
     persistent_fit = None
+    arm_identity = None
+    arm_identity_overlay = None
     persistent_holdout_errors = []
-    if len(persistent_centers) == 2:
-        persistent_fit = assign_independent_base_translations(
-            initial_bases,
+    if persistent_centers:
+        baseline_name = manifest["views"][0]["name"]
+        baseline_frame = frame_dirs[baseline_name]
+        baseline_meta = json.loads(
+            (baseline_frame / "meta.json").read_text()
+        )
+        projected_centers = _project_scene_points(
             persistent_centers,
+            scene_from_camera_by_view[baseline_name],
+            _matrix(baseline_meta),
+        )
+        if len(persistent_centers) == 2:
+            robot_masks = {}
+            for view in manifest["views"]:
+                view_name = view["name"]
+                path = mask_dir / f"{view_name}_robot.png"
+                mask = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+                if mask is None:
+                    raise FileNotFoundError(path)
+                robot_masks[view_name] = mask > 0
+            arm_identity = assign_components_by_joint_excitation(
+                qpos_by_view=_view_qpos(manifest),
+                robot_masks_by_view=robot_masks,
+                component_centers_px=projected_centers,
+                baseline_view=baseline_name,
+                minimum_joint_excitation_rad=(
+                    args.minimum_joint_excitation_rad
+                ),
+                minimum_joint_dominance_ratio=(
+                    args.minimum_joint_dominance_ratio
+                ),
+                motion_radius_fraction=args.motion_radius_fraction,
+                minimum_motion_density=args.minimum_motion_density,
+                minimum_assignment_ratio=args.minimum_assignment_ratio,
+            )
+            physical_centers = {
+                f"{arm}/base_link": persistent_centers[index]
+                for arm, index in arm_identity[
+                    "physical_arm_to_component_index"
+                ].items()
+            }
+            persistent_fit = assign_named_base_translations(
+                initial_bases,
+                physical_centers,
+            )
+            excessive = {
+                name: float(np.linalg.norm(value))
+                for name, value in persistent_fit[
+                    "translations_xy_m"
+                ].items()
+                if np.linalg.norm(value)
+                > args.maximum_independent_base_translation_m
+            }
+            if excessive:
+                raise ValueError(
+                    "semantic base assignment requires excessive "
+                    f"translation: {excessive}"
+                )
+        else:
+            persistent_fit = assign_visible_base_translations(
+                initial_bases,
+                persistent_centers,
+                maximum_translation_m=(
+                    args.maximum_independent_base_translation_m
+                ),
+                minimum_nearest_ratio=args.minimum_base_nearest_ratio,
+            )
+            observed_name = persistent_fit["observed_bases"][0]
+            observed_arm = observed_name.split("/", 1)[0]
+            arm_identity = {
+                "accepted": True,
+                "baseline_view": baseline_name,
+                "physical_arm_to_component_index": {
+                    observed_arm: 0,
+                },
+                "policy": (
+                    "single semantically clean component assigned only when "
+                    "close and unambiguous relative to reviewed base; "
+                    "unobserved base retained"
+                ),
+                "evidence": persistent_fit["evidence"],
+            }
+        arm_identity_overlay = output / "arm_identity_overlay.png"
+        retained_centers_px = {}
+        for name in persistent_fit.get("retained_unobserved_bases", []):
+            arm = name.split("/", 1)[0]
+            retained_centers_px[arm] = _project_scene_points(
+                [initial_bases[name]],
+                scene_from_camera_by_view[baseline_name],
+                _matrix(baseline_meta),
+            )[0]
+        rejected_centers_px = []
+        for record in semantic_exclusion:
+            if record["accepted"]:
+                continue
+            projected = _project_scene_points(
+                [np.asarray(record["center_xyz_m"], dtype=float)],
+                scene_from_camera_by_view[baseline_name],
+                _matrix(baseline_meta),
+            )[0]
+            labels = sorted(
+                {
+                    item["semantic_name"]
+                    for item in record["overlapping_semantic_objects"]
+                }
+            )
+            rejected_centers_px.append((projected, "+".join(labels)))
+        _write_arm_identity_overlay(
+            baseline_frame / "rgb.png",
+            projected_centers,
+            arm_identity,
+            arm_identity_overlay,
+            retained_centers_px=retained_centers_px,
+            rejected_centers_px=rejected_centers_px,
         )
         holdout_points = depth_robot_points_by_view[holdout_name]
         for center in persistent_centers:
@@ -663,7 +895,7 @@ def build(args) -> dict:
         "home_pose_provenance": {
             "accepted": home_pose_provenance_accepted,
             "source": (
-                "repository_physical_home_q_with_physical_right_to_model_left"
+                "repository_physical_home_q_with_semantic_identity_mapping"
                 if args.baseline_is_home
                 else None
             ),
@@ -671,8 +903,8 @@ def build(args) -> dict:
             "physical_right_q_rad": physical_home_q("right").tolist(),
             "physical_left_q_rad": physical_home_q("left").tolist(),
             "model_qpos_order": [
-                "physical_right_on_model_left",
-                "physical_left_on_model_right",
+                "physical_left_on_semantic_left",
+                "physical_right_on_semantic_right",
             ],
         },
         "fixed_tag_reference": {
@@ -706,10 +938,12 @@ def build(args) -> dict:
             "holdout_view": holdout_name,
             "holdout_nearest_point_errors_m": persistent_holdout_errors,
             "components": persistent_components,
+            "semantic_object_exclusion": semantic_exclusion,
+            "arm_identity": arm_identity,
             "microscope_rejection": (
-                "Split SAM candidates at depth discontinuities and retain "
-                "only components closer than the temporal far-depth "
-                "envelope."
+                "Depth-layer filtering followed by explicit rejection of "
+                "persistent robot candidates inside known non-robot "
+                "semantic volumes."
             ),
             "yaw_modified": False,
         },
@@ -756,6 +990,22 @@ def build(args) -> dict:
                 args.maximum_persistent_holdout_error_m
             ),
             "maximum_base_plane_gap_m": args.maximum_base_plane_gap_m,
+            "minimum_joint_excitation_rad": (
+                args.minimum_joint_excitation_rad
+            ),
+            "minimum_joint_dominance_ratio": (
+                args.minimum_joint_dominance_ratio
+            ),
+            "motion_radius_fraction": args.motion_radius_fraction,
+            "minimum_motion_density": args.minimum_motion_density,
+            "minimum_assignment_ratio": args.minimum_assignment_ratio,
+            "semantic_exclusion_margin_m": (
+                args.semantic_exclusion_margin_m
+            ),
+            "maximum_independent_base_translation_m": (
+                args.maximum_independent_base_translation_m
+            ),
+            "minimum_base_nearest_ratio": args.minimum_base_nearest_ratio,
         },
         "artifacts": {
             "scene_model": str(candidate_scene),
@@ -768,6 +1018,11 @@ def build(args) -> dict:
             ),
             "depth_layer_robot_masks": str(depth_mask_output),
             "depth_layer_robot_montage": str(depth_montage_path),
+            "arm_identity_overlay": (
+                None
+                if arm_identity_overlay is None
+                else str(arm_identity_overlay)
+            ),
         },
     }
     (output / "alignment_report.json").write_text(
@@ -852,6 +1107,46 @@ def main(argv=None):
         "--maximum-base-plane-gap-m",
         type=float,
         default=0.15,
+    )
+    parser.add_argument(
+        "--minimum-joint-excitation-rad",
+        type=float,
+        default=0.1,
+    )
+    parser.add_argument(
+        "--minimum-joint-dominance-ratio",
+        type=float,
+        default=1.5,
+    )
+    parser.add_argument(
+        "--motion-radius-fraction",
+        type=float,
+        default=0.25,
+    )
+    parser.add_argument(
+        "--minimum-motion-density",
+        type=float,
+        default=0.01,
+    )
+    parser.add_argument(
+        "--minimum-assignment-ratio",
+        type=float,
+        default=1.25,
+    )
+    parser.add_argument(
+        "--semantic-exclusion-margin-m",
+        type=float,
+        default=0.02,
+    )
+    parser.add_argument(
+        "--maximum-independent-base-translation-m",
+        type=float,
+        default=0.15,
+    )
+    parser.add_argument(
+        "--minimum-base-nearest-ratio",
+        type=float,
+        default=2.0,
     )
     parser.add_argument("--base-height-band-m", type=float, default=0.18)
     parser.add_argument("--maximum-anchor-distance-m", type=float, default=0.30)

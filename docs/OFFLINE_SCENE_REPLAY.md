@@ -31,18 +31,29 @@ mask、前stage出力をSHA-256に入れます。同じ入力で再実行する�
 
 ## 座標と左右の不変条件
 
-- physical right arm = 現行ConeE由来MuJoCoの歴史的名称 `left/`
-- physical left arm = 現行ConeE由来MuJoCoの歴史的名称 `right/`
-- `left/`は物理左手を意味しない。右camera、右controller関節、対象fit、
-  collision carving、trajectoryの明示mappingが全て一致しない場合は停止する
+- production ConeE MJCFだけは歴史的にphysical right = `left_arm_*`、
+  physical left = `right_arm_*`
+- semantic planning MJCFはphysical right = `right/`、physical left = `left/`
+- production branch名をprefix除去してsemantic branch名に変換してはいけない
+- 右camera、右controller関節、対象fit、collision carving、trajectoryが
+  semantic `right/`で一致しない場合は停止する
 - joint値はcontrollerの物理Piper値をそのまま使い、古いMJCF home offsetを
   加えない
 - homeは `robot.arm.home.physical_home_q()` を唯一の権威とする
 - head cameraでbaseを合わせ、wrist cameraで動的対象を合わせる
 - 画像左右、SAM instance番号、固定pixel ROIから物理armや対象を決めない
 
-位置合わせstageは派生`positioned_robot.mjcf`のhome keyを毎回canonical値へ
-固定します。この不変条件はrenderer、planner、testでも確認します。
+位置合わせstageは派生`positioned_robot.mjcf`のhome keyを毎回
+physical left、physical rightの順でcanonical値へ固定します。2つのpersistent
+baseは古い初期位置との近さでは割り当てず、同期qposで片腕だけが大きく動いた
+viewと固定cameraのSAM差分を使って同定します。view名や画像左右は使いません。
+この不変条件はrenderer、planner、testでも確認します。
+
+ただしpersistentなSAM robot領域を、そのままbaseとは扱いません。3D中心が
+顕微鏡など既知のnon-robot semantic volume内にある候補は除外します。片方だけ
+確実に観測できた場合、そのbaseだけを更新し、未観測baseはreview済み位置に
+保持します。未観測baseを誤検出物へ移動せず、reportには保持した事実を
+明記します。
 
 ## 最新の透明対象
 
@@ -85,7 +96,7 @@ pixel数の固定閾値やROIは使いません。面積、距離、形状は画
 2. 衝突する場合は複数の決定的seedでbidirectional RRT-Connect
 3. shortcut後のjoint path長が最短の候補を採用
 4. 各edgeをquintic minimum-jerkで時間化
-5. 全sampleでmoving physical-right/model-leftのMuJoCo contactを再確認
+5. 全sampleでmoving physical-right/semantic-rightのMuJoCo contactを再確認
 6. 4つのendpointが入力値と誤差0であることを確認
 
 `trajectory/trajectory.json` は時刻、物理q、model q、前sampleとの差分、
@@ -102,9 +113,10 @@ arm表面が混入します。carvingは次をすべて満たすvoxelだけを�
 - 削除割合がconfig上限以下
 
 観測visual mesh、支持面、box template、allowlist外の物体は変更しません。
-今回の出力はmoving physical-right armの軌道接触0です。一方、静止physical-left側には
-残存接触があるため、`global_scene_home_clear=false`、
-`hardware_motion_authorized=false`のままです。
+moving physical-right armの接触が残る場合は、支持面や対象物を削って通しては
+いけません。出力をdisplay-onlyに保ち、base pose、end-effector collision、
+支持面、動的対象の順に再較正します。静止側を含むglobal sceneに接触があれば
+`global_scene_home_clear=false`、`hardware_motion_authorized=false`です。
 
 ## 出力とスマホ表示
 

@@ -1009,7 +1009,7 @@ def calibrate_from_config(
     kinematic_bridge = fit_controller_cad_bridge(
         observations,
         model_path=bridge_model,
-        model_branch=bridge_config.get("model_branch", "left"),
+        model_branch=bridge_config["model_branch"],
         profile=bridge_config,
     )
     object_config = config["object_scene"]
@@ -1018,7 +1018,7 @@ def calibrate_from_config(
         calibration,
         kinematic_bridge,
         model_path=bridge_model,
-        model_branch=bridge_config.get("model_branch", "left"),
+        model_branch=bridge_config["model_branch"],
         radius_m=float(object_config["radius_m"]),
         profile=config.get("target_geometry_gate", {}),
     )

@@ -187,8 +187,17 @@ pipelineの `--calibration-report` に渡します。
 校正にはprofileの `robot_calibration.model` で指定したproduction MJCFを使い、
 scene用の近似robotへfallbackしません。左右Piperは独立したbase transformを持ち、
 画面上の左右ではなく、SAM instanceの時間追跡と左右別qpos変化から対応付けます。
-ConeEのcontroller/model branch入れ替えは
-`physical_to_model_branch` に明記します。
+ConeE production MJCFのcontroller/branch入れ替えは
+`robot_calibration.physical_to_production_branch` に明記します。一方、scene用
+semantic MJCFは `semantic_robot.physical_to_semantic_branch` で物理左右を保持
+します。productionの `left_arm_*` をprefix除去してsemantic `left/` と解釈する
+ことは禁止です。
+
+fixed-head refinementではpersistentなrobot-mask componentもsemantic sceneと
+照合します。3D中心が既知の顕微鏡などnon-robot物体の完成体積内にあれば、腕の
+遮蔽でdepth差分が出ていてもbase候補から除外します。片側しか確実に見えない
+場合は、そのbaseだけを更新し、もう片側はreview済み位置のまま
+`unobserved` としてreportに残します。
 
 RGB、depth、mask、内部パラメータはcapture時の同一sensor座標のまま計算します。
 スマホやaudit画像を見やすく回転する場合も表示専用とし、校正入力の一部だけを

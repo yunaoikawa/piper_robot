@@ -113,9 +113,9 @@ def _qpos_diversity(
 def _cad_geometry(
     model_path: Path,
     qpos: list[float],
-    physical_to_model: dict[str, str] | None = None,
+    physical_to_production: dict[str, str] | None = None,
 ) -> tuple[np.ndarray, dict, dict[str, np.ndarray]]:
-    """Return CAD vertices using the same physical/model mapping as ConeE.
+    """Return CAD vertices in physical-arm-local production frames.
 
     ConeE deliberately drives the model's ``right_arm_*`` branch from the
     physical left controller and its ``left_arm_*`` branch from the physical
@@ -129,11 +129,11 @@ def _cad_geometry(
     if model.nq != 12:
         raise ValueError(f"expected 12 robot qpos, model has nq={model.nq}")
     qpos = np.asarray(qpos, dtype=float)
-    physical_to_model = physical_to_model or {
+    physical_to_production = physical_to_production or {
         "left": "right_arm_",
         "right": "left_arm_",
     }
-    for physical_arm, model_prefix in physical_to_model.items():
+    for physical_arm, model_prefix in physical_to_production.items():
         values = qpos[:6] if physical_arm == "left" else qpos[6:]
         for index, value in enumerate(values, start=1):
             joint = model.joint(f"{model_prefix}joint{index}")
@@ -146,7 +146,7 @@ def _cad_geometry(
     ]
     geoms = {"left": [], "right": []}
     base_from_model = {}
-    for physical_arm, model_prefix in physical_to_model.items():
+    for physical_arm, model_prefix in physical_to_production.items():
         body_id = model.body(f"{model_prefix}link0").id
         model_from_base = np.eye(4)
         model_from_base[:3, :3] = np.asarray(
@@ -157,7 +157,7 @@ def _cad_geometry(
         )
         base_from_model[physical_arm] = np.linalg.inv(model_from_base)
     anchors = {}
-    for physical_arm, model_prefix in physical_to_model.items():
+    for physical_arm, model_prefix in physical_to_production.items():
         site_id = model.site(f"{model_prefix}ee").id
         model_from_site = np.eye(4)
         model_from_site[:3, :3] = np.asarray(
@@ -178,7 +178,7 @@ def _cad_geometry(
         physical_arm = next(
             (
                 arm
-                for arm, prefix in physical_to_model.items()
+                for arm, prefix in physical_to_production.items()
                 if body_name.startswith(prefix)
             ),
             None,
@@ -1086,18 +1086,16 @@ def build(args) -> dict:
             "the production robot model rather than a scene approximation"
         )
     calibration_model = Path(calibration_profile["model"]).resolve()
-    physical_to_model = dict(
-        calibration_profile.get(
-            "physical_to_model_branch",
-            {"left": "right_arm_", "right": "left_arm_"},
-        )
+    physical_to_production = dict(
+        calibration_profile.get("physical_to_production_branch", {})
     )
-    if set(physical_to_model) != {"left", "right"}:
+    if set(physical_to_production) != {"left", "right"}:
         raise ValueError(
-            "robot_calibration.physical_to_model_branch must map left and right"
+            "robot_calibration.physical_to_production_branch must explicitly "
+            "map physical left and right into the production MJCF namespace"
         )
     cad = [
-        _cad_geometry(calibration_model, qpos, physical_to_model)
+        _cad_geometry(calibration_model, qpos, physical_to_production)
         for qpos in qposes
     ]
 
@@ -1461,7 +1459,7 @@ def build(args) -> dict:
                 ),
             },
             "calibration_robot_model": str(calibration_model),
-            "physical_to_model_branch": physical_to_model,
+            "physical_to_production_branch": physical_to_production,
         },
         "artifacts": {
             "audit_directory": str(audit_dir),

@@ -12,12 +12,15 @@
     "support_plane_z_m": -0.5660460087444851,
     "tag_id": 3,
     "tag_size_m": 0.06,
-    "baseline_is_home": true
+    "baseline_is_home": true,
+    "semantic_exclusion_margin_m": 0.02,
+    "maximum_independent_base_translation_m": 0.15,
+    "minimum_base_nearest_ratio": 2.0
   },
   "collision_carving": {
     "allowed_body_prefixes": ["microscope-1-cell-"],
-    "robot_body_prefixes": ["left/"],
-    "physical_right_model_branch": "left",
+    "robot_body_prefixes": ["right/"],
+    "physical_right_model_branch": "right",
     "robot_clearance_margin_m": 0.03,
     "maximum_removed_fraction": 0.5
   },

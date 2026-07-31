@@ -8,7 +8,8 @@ import pytest
 from robot.arm.home import (
     PHYSICAL_LEFT_HOME_Q,
     PHYSICAL_RIGHT_HOME_Q,
-    mujoco_home_qpos,
+    production_mujoco_home_qpos,
+    semantic_mujoco_home_qpos,
 )
 from rollout.home_lid_trajectory import (
     load_object_scene,
@@ -31,30 +32,34 @@ ROBOT_MODEL = (
 )
 
 
-def test_hardware_home_order_is_physical_right_then_left():
-    expected = np.concatenate(
-        [PHYSICAL_RIGHT_HOME_Q, PHYSICAL_LEFT_HOME_Q]
+def test_home_orders_are_explicit_for_production_and_semantic_models():
+    np.testing.assert_allclose(
+        production_mujoco_home_qpos(),
+        np.concatenate([PHYSICAL_RIGHT_HOME_Q, PHYSICAL_LEFT_HOME_Q]),
     )
-    np.testing.assert_allclose(mujoco_home_qpos(), expected)
+    np.testing.assert_allclose(
+        semantic_mujoco_home_qpos(),
+        np.concatenate([PHYSICAL_LEFT_HOME_Q, PHYSICAL_RIGHT_HOME_Q]),
+    )
 
     model = mujoco.MjModel.from_xml_path(str(ROBOT_MODEL))
     assert model.key("home").qpos.shape[0] >= 12
 
 
-def test_semantic_model_maps_physical_right_to_model_left():
+def test_semantic_model_preserves_physical_arm_identity():
     model = mujoco.MjModel.from_xml_path(str(ROBOT_MODEL))
     mapping = _arm_mapping(model)
     expected_right = [
-        int(model.joint(f"left/joint{index}").qposadr[0])
+        int(model.joint(f"right/joint{index}").qposadr[0])
         for index in range(1, 7)
     ]
     expected_left = [
-        int(model.joint(f"right/joint{index}").qposadr[0])
+        int(model.joint(f"left/joint{index}").qposadr[0])
         for index in range(1, 7)
     ]
     assert mapping["right_ids"] == expected_right
     assert mapping["left_ids"] == expected_left
-    assert mapping["ee"] == "left/ee"
+    assert mapping["ee"] == "right/ee"
 
 
 def test_legacy_uncarved_scene_is_not_silently_accepted_for_motion():

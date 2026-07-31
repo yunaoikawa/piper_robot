@@ -48,6 +48,10 @@ PYTHONPATH=. python src/capture_record3d_multiview.py \
   --view pose_4_holdout
 ```
 
+`pose_1_left` 等の文字列は撮影順を示すoperator labelに過ぎず、左右の根拠には
+しません。保存された左右別qpos変化と固定camera上のSAM mask変化が唯一の
+identity根拠です。view名と実際に動かした腕が逆でも較正結果は変わりません。
+
 In a second terminal:
 
 ```bash

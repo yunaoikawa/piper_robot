@@ -101,20 +101,18 @@ class HomeSceneValidator:
             inspected, mujoco.mjtObj.mjOBJ_JOINT, "left/joint1"
         )
         if semantic_joint >= 0:
-            # Production semantic convention is intentionally crossed:
-            # physical right -> model-left, physical left -> model-right.
-            # Piper joint coordinates themselves are direct and have no
-            # representation-specific offset.
-            right_names = [f"left/joint{index}" for index in range(1, 7)]
-            left_names = [f"right/joint{index}" for index in range(1, 7)]
+            # The semantic planning model preserves physical identity.
+            # Historical ConeE left_arm_/right_arm_ names do not apply here.
+            right_names = [f"right/joint{index}" for index in range(1, 7)]
+            left_names = [f"left/joint{index}" for index in range(1, 7)]
             link_capsules = [
-                ("left/base_link", "left/link1", 0.058),
-                ("left/link1", "left/link2", 0.052),
-                ("left/link2", "left/link3", 0.055),
-                ("left/link3", "left/link4", 0.050),
-                ("left/link4", "left/link5", 0.044),
-                ("left/link5", "left/link6", 0.042),
-                ("left/link6", "left/gripper_base", 0.035),
+                ("right/base_link", "right/link1", 0.058),
+                ("right/link1", "right/link2", 0.052),
+                ("right/link2", "right/link3", 0.055),
+                ("right/link3", "right/link4", 0.050),
+                ("right/link4", "right/link5", 0.044),
+                ("right/link5", "right/link6", 0.042),
+                ("right/link6", "right/gripper_base", 0.035),
             ]
             self.mujoco = MuJoCoIKValidator(
                 model_path,
@@ -123,12 +121,12 @@ class HomeSceneValidator:
                 maximum_joint_step_rad=0.20,
                 joint_names=right_names,
                 left_joint_names=left_names,
-                ee_frame="left/ee",
+                ee_frame="right/ee",
                 right_q_offset=np.zeros(6),
                 left_q_offset=np.zeros(6),
-                contact_body_prefix="left/",
+                contact_body_prefix="right/",
                 link_capsules=link_capsules,
-                attached_spheres=[("left/gripper_base", 0.055)],
+                attached_spheres=[("right/gripper_base", 0.055)],
             )
             self.model_variant = "sam_reconstruction_upright_nyu"
         else:

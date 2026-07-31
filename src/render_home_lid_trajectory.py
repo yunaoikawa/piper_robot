@@ -18,7 +18,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from robot.arm.home import mujoco_home_qpos, physical_home_q
+from robot.arm.home import (
+    physical_home_q,
+    production_mujoco_home_qpos,
+    semantic_mujoco_home_qpos,
+)
 from rollout.home_lid_trajectory import SCHEMA
 
 
@@ -74,11 +78,11 @@ def _arm_mapping(model):
         model, mujoco.mjtObj.mjOBJ_JOINT, "left/joint1"
     ) >= 0:
         right_ids = [
-            int(model.joint(f"left/joint{index}").qposadr[0])
+            int(model.joint(f"right/joint{index}").qposadr[0])
             for index in range(1, 7)
         ]
         left_ids = [
-            int(model.joint(f"right/joint{index}").qposadr[0])
+            int(model.joint(f"left/joint{index}").qposadr[0])
             for index in range(1, 7)
         ]
         return {
@@ -86,9 +90,9 @@ def _arm_mapping(model):
             "key": "home",
             "right_ids": right_ids,
             "left_ids": left_ids,
-            "ee": "left/ee",
-            "right_body_prefix": "left/",
-            "left_body_prefix": "right/",
+            "ee": "right/ee",
+            "right_body_prefix": "right/",
+            "left_body_prefix": "left/",
         }
     return {
         "variant": "legacy_cone_e",
@@ -149,8 +153,8 @@ def render(args):
     data = mujoco.MjData(model)
     mapping = _arm_mapping(model)
     # Simulation-only colours make the two otherwise dark, overlapping CAD
-    # branches legible on a phone: physical right/model-left moves; physical
-    # left/model-right remains at home.
+    # branches legible on a phone: physical right moves while physical left
+    # remains at home.
     _apply_visibility_policy(model, mapping)
     key_id = int(model.key(mapping["key"]).id)
     mujoco.mj_resetDataKeyframe(model, data, key_id)
@@ -305,7 +309,11 @@ def render(args):
         "first_mujoco_qpos": np.concatenate(
             [right_model_home, left_model_home]
         ).tolist(),
-        "physical_home_q": mujoco_home_qpos().tolist(),
+        "physical_home_q": (
+            semantic_mujoco_home_qpos().tolist()
+            if mapping["variant"] == "sam_reconstruction_upright_nyu"
+            else production_mujoco_home_qpos().tolist()
+        ),
         "left_home_q": left_model_home.tolist(),
         "left_maximum_drift_rad": float(
             np.max(np.abs(left_values - left_model_home))

@@ -6,9 +6,8 @@ MuJoCo model:
 * physical right -> ``left_arm_*``
 * physical left  -> ``right_arm_*``
 
-Keep the physical-arm constants authoritative.  Renderers and planners must
-use :func:`mujoco_home_qpos` instead of copying values or trusting an old MJCF
-keyframe.
+Keep the physical-arm constants authoritative. Production and semantic MJCF
+orders are intentionally exposed through different functions.
 """
 
 from __future__ import annotations
@@ -32,10 +31,19 @@ def physical_home_q(side: str) -> np.ndarray:
     return np.asarray(values, dtype=float).copy()
 
 
-def mujoco_home_qpos() -> np.ndarray:
-    """Return production model qpos order: model-left then model-right."""
+def production_mujoco_home_qpos() -> np.ndarray:
+    """Return ConeE production qpos order: left_arm then right_arm."""
 
     return np.asarray(
         (*PHYSICAL_RIGHT_HOME_Q, *PHYSICAL_LEFT_HOME_Q),
+        dtype=float,
+    )
+
+
+def semantic_mujoco_home_qpos() -> np.ndarray:
+    """Return semantic qpos order: physical left then physical right."""
+
+    return np.asarray(
+        (*PHYSICAL_LEFT_HOME_Q, *PHYSICAL_RIGHT_HOME_Q),
         dtype=float,
     )

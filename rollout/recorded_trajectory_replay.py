@@ -325,7 +325,7 @@ def build_recorded_replay(
     control_hz: float = 30.0,
     maximum_joint_speed_rad_s: float = 0.35,
     minimum_segment_duration_s: float = 0.5,
-    physical_right_model_branch: str = "left",
+    physical_right_model_branch: str = "right",
     planning_seed: int = 22,
     planning_seed_candidates: Iterable[int] | None = None,
     planning_edge_step_rad: float = 0.035,
@@ -368,10 +368,10 @@ def build_recorded_replay(
         static_branch,
     ) = _model_mapping(model, keyframe, physical_right_model_branch)
     mujoco.mj_resetDataKeyframe(model, data, key_id)
-    # Physical arm identity follows the capture/controller label. The current
-    # ConeE-derived MJCF explicitly maps physical-right to its historically
-    # named left/ branch. Joint coordinates use the physical Piper values
-    # directly; the old MJCF zero offsets are not applied.
+    # This semantic model preserves physical identity: physical-right maps to
+    # right/ and physical-left maps to left/. Production ConeE branch names
+    # are intentionally not reused here. Joint coordinates use the physical
+    # Piper values directly; old MJCF zero offsets are not applied.
     model_home_right = home_q.copy()
     model_home_left = physical_home_q("left")
     data.qpos[right_ids] = model_home_right

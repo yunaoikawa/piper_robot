@@ -259,8 +259,9 @@ class MuJoCoIKValidator:
         self.baseline_contacts = self._contact_pairs()
         self.last_q = right_q.copy()
         self.q_waypoints: list[list[float]] = []
-        # Conservative link capsules in the physical-right/model-left branch.
-        # Radii describe the actual Piper links, not a task or image layout.
+        # Conservative link capsules in the physical-right branch of the
+        # historically crossed ConeE production MJCF. Semantic right/left
+        # namespaces are configured explicitly by their caller.
         self.link_capsules = tuple(link_capsules or (
             ("left_arm_link0", "left_arm_link1", 0.058),
             ("left_arm_link1", "left_arm_link2", 0.052),

@@ -344,6 +344,204 @@ def persistent_depth_component_centers(
     return centers, records
 
 
+def reject_base_candidates_inside_semantic_objects(
+    candidate_centers_xyz: list[np.ndarray],
+    semantic_objects: list[dict],
+    *,
+    margin_m: float = 0.02,
+) -> tuple[list[np.ndarray], list[dict]]:
+    """Reject stationary SAM robot candidates inside known non-robot objects.
+
+    A fixed robot base and a static object are both persistent in stopped
+    RGB-D views.  If SAM merges an arm with a microscope, arm occlusion can
+    also make the microscope pass a temporal foreground test.  The semantic
+    scene therefore supplies a second, independent exclusion test: a base
+    candidate may not lie inside a completed non-robot object volume.
+    """
+
+    accepted = []
+    records = []
+    for index, value in enumerate(candidate_centers_xyz):
+        point = np.asarray(value, dtype=float).reshape(3)
+        overlaps = []
+        for item in semantic_objects:
+            if item.get("semantic_name") in {
+                "robot",
+                "measured_static_scene",
+            }:
+                continue
+            if item.get("source") == "multiview_rgbd_background_faces":
+                continue
+            geometry = item.get("geometry", {})
+            if geometry.get("kind") != "box":
+                continue
+            center = np.asarray(
+                geometry.get("center_xyz_m", ()),
+                dtype=float,
+            )
+            size = np.asarray(
+                geometry.get("size_xyz_m", ()),
+                dtype=float,
+            )
+            if center.shape != (3,) or size.shape != (3,):
+                continue
+            yaw = float(geometry.get("yaw_rad", 0.0))
+            cosine, sine = np.cos(yaw), np.sin(yaw)
+            relative = point - center
+            local_xy = np.array(
+                [
+                    cosine * relative[0] + sine * relative[1],
+                    -sine * relative[0] + cosine * relative[1],
+                ]
+            )
+            local = np.r_[local_xy, relative[2]]
+            if np.all(np.abs(local) <= size / 2.0 + margin_m):
+                overlaps.append(
+                    {
+                        "instance_id": item.get("instance_id"),
+                        "semantic_name": item.get("semantic_name"),
+                    }
+                )
+        rejected = bool(overlaps)
+        records.append(
+            {
+                "candidate_index": index,
+                "center_xyz_m": point.tolist(),
+                "accepted": not rejected,
+                "overlapping_semantic_objects": overlaps,
+            }
+        )
+        if not rejected:
+            accepted.append(point)
+    return accepted, records
+
+
+def assign_visible_base_translations(
+    initial_base_xyz: dict[str, np.ndarray],
+    observed_base_xyz: list[np.ndarray],
+    *,
+    maximum_translation_m: float = 0.15,
+    minimum_nearest_ratio: float = 2.0,
+) -> dict:
+    """Assign a partial set of visible bases and retain unobserved bases.
+
+    This is intentionally conservative.  A candidate is accepted only when
+    it is close to one reviewed base and distinctly farther from every other
+    base.  Missing bases receive zero translation instead of being pulled
+    toward a static object that leaked into a SAM robot mask.
+    """
+
+    names = list(initial_base_xyz)
+    observed = [
+        np.asarray(value, dtype=float).reshape(3)
+        for value in observed_base_xyz
+    ]
+    if not names:
+        raise ValueError("at least one initial base is required")
+    if not observed:
+        raise ValueError("at least one visible base candidate is required")
+    if len(observed) > len(names):
+        raise ValueError("more visible candidates than model bases")
+
+    distances = np.asarray(
+        [
+            [
+                np.linalg.norm(
+                    point[:2]
+                    - np.asarray(initial_base_xyz[name], dtype=float)[:2]
+                )
+                for name in names
+            ]
+            for point in observed
+        ],
+        dtype=float,
+    )
+    candidates = []
+    for assigned_name_indices in permutations(range(len(names)), len(observed)):
+        values = [
+            distances[row, name_index]
+            for row, name_index in enumerate(assigned_name_indices)
+        ]
+        candidates.append(
+            (float(sum(values)), assigned_name_indices, values)
+        )
+    score, assigned_name_indices, assigned_distances = min(
+        candidates,
+        key=lambda item: item[0],
+    )
+    assignments = {}
+    evidence = []
+    for row, (name_index, distance) in enumerate(
+        zip(assigned_name_indices, assigned_distances)
+    ):
+        alternatives = [
+            distances[row, other]
+            for other in range(len(names))
+            if other != name_index
+        ]
+        nearest_ratio = (
+            float(min(alternatives) / max(distance, 1e-9))
+            if alternatives
+            else float("inf")
+        )
+        if distance > maximum_translation_m:
+            raise ValueError(
+                f"visible base candidate requires {distance:.3f} m "
+                f"translation, above {maximum_translation_m:.3f} m"
+            )
+        if nearest_ratio < minimum_nearest_ratio:
+            raise ValueError(
+                "visible base candidate is ambiguous between reviewed bases: "
+                f"ratio={nearest_ratio:.3f}"
+            )
+        name = names[name_index]
+        assignments[name] = observed[row]
+        evidence.append(
+            {
+                "candidate_index": row,
+                "base": name,
+                "translation_m": float(distance),
+                "nearest_alternative_ratio": nearest_ratio,
+            }
+        )
+
+    translations = {}
+    resulting_bases = {}
+    for name in names:
+        initial = np.asarray(initial_base_xyz[name], dtype=float)
+        target = assignments.get(name)
+        if target is None:
+            translations[name] = np.zeros(2, dtype=float)
+            resulting_bases[name] = initial.copy()
+        else:
+            translations[name] = target[:2] - initial[:2]
+            resulting_bases[name] = np.r_[target[:2], initial[2]]
+    retained = [name for name in names if name not in assignments]
+    return {
+        "method": "semantic_exclusion_then_partial_reviewed_base_assignment",
+        "assignment": {
+            name: (
+                "observed_candidate"
+                if name in assignments
+                else "retained_reviewed_position"
+            )
+            for name in names
+        },
+        "score_m": score,
+        "yaw_source": "reviewed_upright_model",
+        "translations_xy_m": {
+            name: value.tolist() for name, value in translations.items()
+        },
+        "base_xyz_level_m": {
+            name: value.tolist() for name, value in resulting_bases.items()
+        },
+        "observed_bases": list(assignments),
+        "retained_unobserved_bases": retained,
+        "evidence": evidence,
+        "all_bases_observed": not retained,
+    }
+
+
 def assign_independent_base_translations(
     initial_base_xyz: dict[str, np.ndarray],
     observed_base_xyz: list[np.ndarray],
@@ -382,6 +580,227 @@ def assign_independent_base_translations(
             ]
             for index, name in enumerate(names)
         },
+    }
+
+
+def assign_named_base_translations(
+    initial_base_xyz: dict[str, np.ndarray],
+    observed_base_xyz: dict[str, np.ndarray],
+) -> dict:
+    """Move explicitly identified bases without reassigning them by proximity.
+
+    ``observed_base_xyz`` must use the same semantic body names as the model.
+    This is the safe path after physical arm identity has been established
+    from synchronized joint excitation and image motion.
+    """
+
+    if set(initial_base_xyz) != set(observed_base_xyz):
+        raise ValueError(
+            "initial and observed named bases must contain identical names"
+        )
+    translations = {
+        name: (
+            np.asarray(observed_base_xyz[name], dtype=float)[:2]
+            - np.asarray(initial_base_xyz[name], dtype=float)[:2]
+        )
+        for name in initial_base_xyz
+    }
+    return {
+        "method": (
+            "persistent_depth_named_by_synchronized_joint_excitation"
+        ),
+        "assignment": {
+            name: name for name in initial_base_xyz
+        },
+        "score_m": float(
+            sum(np.linalg.norm(value) for value in translations.values())
+        ),
+        "yaw_source": "reviewed_upright_model",
+        "translations_xy_m": {
+            name: value.tolist() for name, value in translations.items()
+        },
+        "base_xyz_level_m": {
+            name: [
+                float(observed_base_xyz[name][0]),
+                float(observed_base_xyz[name][1]),
+                float(initial_base_xyz[name][2]),
+            ]
+            for name in initial_base_xyz
+        },
+    }
+
+
+def assign_components_by_joint_excitation(
+    *,
+    qpos_by_view: dict[str, dict[str, np.ndarray]],
+    robot_masks_by_view: dict[str, np.ndarray],
+    component_centers_px: list[np.ndarray],
+    baseline_view: str,
+    minimum_joint_excitation_rad: float = 0.1,
+    minimum_joint_dominance_ratio: float = 1.5,
+    motion_radius_fraction: float = 0.25,
+    minimum_motion_density: float = 0.01,
+    minimum_assignment_ratio: float = 1.25,
+) -> dict:
+    """Identify two physical arms from qpos excitation and fixed-camera SAM.
+
+    View names and image-left/image-right are deliberately ignored. For each
+    physical controller arm, the most arm-exclusive stopped view is selected
+    from synchronized qpos. The SAM-mask change around each projected
+    persistent base then assigns that arm to one component.
+    """
+
+    arms = ("left", "right")
+    if baseline_view not in qpos_by_view:
+        raise ValueError("baseline view is missing synchronized qpos")
+    if baseline_view not in robot_masks_by_view:
+        raise ValueError("baseline view is missing a robot mask")
+    if len(component_centers_px) != 2:
+        raise ValueError("exactly two projected base components are required")
+    if set(qpos_by_view) != set(robot_masks_by_view):
+        raise ValueError("qpos and robot masks must contain identical views")
+
+    baseline_q = {
+        arm: np.asarray(qpos_by_view[baseline_view][arm], dtype=float)
+        for arm in arms
+    }
+    baseline_mask = np.asarray(
+        robot_masks_by_view[baseline_view],
+        dtype=bool,
+    )
+    if baseline_mask.ndim != 2:
+        raise ValueError("robot masks must be two-dimensional")
+    shape = baseline_mask.shape
+    for name, mask in robot_masks_by_view.items():
+        if np.asarray(mask).shape != shape:
+            raise ValueError(f"robot mask shape changed in view {name}")
+
+    joint_deltas: dict[str, dict[str, float]] = {}
+    for view_name, qpos in qpos_by_view.items():
+        joint_deltas[view_name] = {
+            arm: float(
+                np.linalg.norm(
+                    np.asarray(qpos[arm], dtype=float) - baseline_q[arm]
+                )
+            )
+            for arm in arms
+        }
+
+    selected_views = {}
+    excitation_evidence = {}
+    epsilon = 1e-9
+    for arm in arms:
+        other = "right" if arm == "left" else "left"
+        candidates = []
+        for view_name, deltas in joint_deltas.items():
+            if view_name == baseline_view:
+                continue
+            dominance = deltas[arm] / max(deltas[other], epsilon)
+            candidates.append(
+                (dominance, deltas[arm], view_name, deltas[other])
+            )
+        if not candidates:
+            raise ValueError(f"no excitation views available for {arm} arm")
+        dominance, delta, view_name, other_delta = max(candidates)
+        if delta < minimum_joint_excitation_rad:
+            raise ValueError(
+                f"{arm} arm excitation {delta:.4f} rad is below threshold"
+            )
+        if dominance < minimum_joint_dominance_ratio:
+            raise ValueError(
+                f"{arm} arm excitation is not exclusive enough: "
+                f"ratio={dominance:.3f}"
+            )
+        selected_views[arm] = view_name
+        excitation_evidence[arm] = {
+            "view": view_name,
+            "joint_delta_norm_rad": delta,
+            "other_arm_joint_delta_norm_rad": other_delta,
+            "dominance_ratio": dominance,
+        }
+
+    height, width = shape
+    radius = float(motion_radius_fraction) * min(height, width)
+    if not (0.0 < radius):
+        raise ValueError("motion radius must be positive")
+    yy, xx = np.ogrid[:height, :width]
+    disks = []
+    for center in component_centers_px:
+        center = np.asarray(center, dtype=float)
+        if center.shape != (2,) or not np.all(np.isfinite(center)):
+            raise ValueError("projected component center is invalid")
+        disks.append(
+            (xx - center[0]) ** 2 + (yy - center[1]) ** 2 <= radius**2
+        )
+
+    densities = {}
+    for arm, view_name in selected_views.items():
+        changed = np.logical_xor(
+            baseline_mask,
+            np.asarray(robot_masks_by_view[view_name], dtype=bool),
+        )
+        densities[arm] = [
+            float(np.mean(changed[disk])) if np.any(disk) else 0.0
+            for disk in disks
+        ]
+
+    # Only two bijections exist. A product strongly penalizes assigning an arm
+    # to a component with no observed motion near its projected base.
+    candidates = [
+        (
+            densities["left"][left_index]
+            * densities["right"][right_index],
+            {"left": left_index, "right": right_index},
+        )
+        for left_index, right_index in ((0, 1), (1, 0))
+    ]
+    product, assignment = max(candidates, key=lambda item: item[0])
+    for arm in arms:
+        selected = densities[arm][assignment[arm]]
+        alternative = densities[arm][1 - assignment[arm]]
+        ratio = selected / max(alternative, epsilon)
+        if selected < minimum_motion_density:
+            raise ValueError(
+                f"{arm} arm SAM motion density {selected:.4f} is too low"
+            )
+        if ratio < minimum_assignment_ratio:
+            raise ValueError(
+                f"{arm} arm component assignment is ambiguous: "
+                f"ratio={ratio:.3f}"
+            )
+        excitation_evidence[arm].update(
+            {
+                "component_index": assignment[arm],
+                "selected_motion_density": selected,
+                "alternative_motion_density": alternative,
+                "assignment_ratio": ratio,
+            }
+        )
+
+    return {
+        "accepted": True,
+        "baseline_view": baseline_view,
+        "physical_arm_to_component_index": assignment,
+        "component_centers_px": [
+            np.asarray(value, dtype=float).tolist()
+            for value in component_centers_px
+        ],
+        "joint_delta_norm_rad_by_view": joint_deltas,
+        "evidence": excitation_evidence,
+        "assignment_product": product,
+        "thresholds": {
+            "minimum_joint_excitation_rad": minimum_joint_excitation_rad,
+            "minimum_joint_dominance_ratio": (
+                minimum_joint_dominance_ratio
+            ),
+            "motion_radius_fraction": motion_radius_fraction,
+            "minimum_motion_density": minimum_motion_density,
+            "minimum_assignment_ratio": minimum_assignment_ratio,
+        },
+        "policy": (
+            "physical controller qpos excitation plus fixed-camera SAM motion; "
+            "view names and image-side heuristics are ignored"
+        ),
     }
 
 

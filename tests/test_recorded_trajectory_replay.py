@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -33,21 +36,22 @@ def test_offline_replay_source_does_not_import_hardware_control():
 
 def _right_arm_identity_inputs():
     return {
-        "calibration_mapping": {
+        "production_calibration_mapping": {
             "left": "right_arm_",
             "right": "left_arm_",
         },
+        "semantic_mapping": {"left": "left", "right": "right"},
         "carving": {
-            "physical_right_model_branch": "left",
-            "robot_body_prefixes": ["left/"],
+            "physical_right_model_branch": "right",
+            "robot_body_prefixes": ["right/"],
         },
         "target_profile": {
             "kinematic_bridge": {
                 "physical_arm": "right",
-                "model_branch": "left",
+                "model_branch": "right",
             }
         },
-        "replay_profile": {"physical_right_model_branch": "left"},
+        "replay_profile": {"physical_right_model_branch": "right"},
         "target_capture_manifests": [
             {"camera_label": "right"},
             {"camera_label": "right"},
@@ -60,14 +64,14 @@ def test_right_wrist_evidence_drives_only_right_model_branch():
     result = _validate_physical_arm_identity(**_right_arm_identity_inputs())
     assert result["accepted"]
     assert result["physical_arm"] == "right"
-    assert result["model_branch"] == "left"
+    assert result["model_branch"] == "right"
 
 
 @pytest.mark.parametrize(
     ("section", "field", "value"),
     [
-        ("carving", "physical_right_model_branch", "right"),
-        ("replay_profile", "physical_right_model_branch", "right"),
+        ("carving", "physical_right_model_branch", "left"),
+        ("replay_profile", "physical_right_model_branch", "left"),
     ],
 )
 def test_offline_replay_rejects_cross_arm_mapping(section, field, value):
@@ -84,8 +88,47 @@ def test_offline_replay_rejects_left_camera_capture():
         _validate_physical_arm_identity(**inputs)
 
 
-def test_offline_replay_uses_robot_calibration_as_branch_authority():
+def test_offline_replay_rejects_swapped_semantic_namespace():
     inputs = _right_arm_identity_inputs()
-    inputs["calibration_mapping"]["right"] = "right_arm_"
-    with pytest.raises(ValueError, match="physical-right branch mismatch"):
+    inputs["semantic_mapping"] = {"left": "right", "right": "left"}
+    with pytest.raises(ValueError, match="preserve physical identity"):
         _validate_physical_arm_identity(**inputs)
+
+
+def test_production_cross_mapping_does_not_change_semantic_identity():
+    inputs = _right_arm_identity_inputs()
+    inputs["production_calibration_mapping"] = {
+        "left": "right_arm_",
+        "right": "left_arm_",
+    }
+    result = _validate_physical_arm_identity(**inputs)
+    assert result["production_calibration_mapping"]["right"] == "left_arm_"
+    assert result["semantic_mapping"]["right"] == "right"
+
+
+def test_pasteur_profiles_keep_production_and_semantic_namespaces_separate():
+    scene = json.loads(
+        Path("src/configs/pasteur_semantic_scene.json").read_text()
+    )
+    replay = json.loads(
+        Path(
+            "src/configs/pasteur_recorded_lid_replay_20260730.json"
+        ).read_text()
+    )
+    wrist = json.loads(
+        Path("src/configs/pasteur_wrist_target_20260730.json").read_text()
+    )
+    offline = json.loads(
+        Path("src/configs/pasteur_offline_replay_20260730.json").read_text()
+    )
+    assert scene["robot_calibration"][
+        "physical_to_production_branch"
+    ] == {"left": "right_arm_", "right": "left_arm_"}
+    assert scene["semantic_robot"][
+        "physical_to_semantic_branch"
+    ] == {"left": "left", "right": "right"}
+    assert replay["physical_right_model_branch"] == "right"
+    assert wrist["kinematic_bridge"]["model_branch"] == "right"
+    assert offline["collision_carving"]["robot_body_prefixes"] == [
+        "right/"
+    ]

@@ -1,7 +1,7 @@
 {
   "schema": "piper_robot.measured_keyframe_replay_profile/v1",
   "home_keyframe": "home",
-  "physical_right_model_branch": "left",
+  "physical_right_model_branch": "right",
   "control_hz": 30.0,
   "maximum_joint_speed_rad_s": 0.35,
   "minimum_segment_duration_s": 0.5,

@@ -6,12 +6,16 @@ from scipy.spatial.transform import Rotation
 from rollout.scene_registration import (
     apply_independent_base_translations_to_mjcf,
     apply_shared_planar_transform_to_mjcf,
+    assign_components_by_joint_excitation,
     assign_independent_base_translations,
+    assign_named_base_translations,
+    assign_visible_base_translations,
     bridge_camera_from_fixed_tag,
     depth_layer_foreground_mask,
     fit_shared_planar_robot_transform,
     intersect_pixel_with_horizontal_plane,
     persistent_depth_component_centers,
+    reject_base_candidates_inside_semantic_objects,
     rigid_transform_consensus,
 )
 
@@ -161,3 +165,157 @@ def test_independent_base_assignment_and_mjcf_translation(tmp_path):
     text = output.read_text()
     assert 'pos="-0.3000000000 0.2000000000 -0.7000000000"' in text
     assert 'euler="0 0 0.3"' in text
+
+
+def test_named_base_assignment_does_not_swap_by_initial_proximity():
+    initial = {
+        "left/base_link": np.array([-0.4, 0.0, -0.7]),
+        "right/base_link": np.array([0.4, 0.0, -0.7]),
+    }
+    observed = {
+        "left/base_link": np.array([0.5, 0.1, -0.5]),
+        "right/base_link": np.array([-0.5, 0.2, -0.5]),
+    }
+    fit = assign_named_base_translations(initial, observed)
+    np.testing.assert_allclose(
+        fit["translations_xy_m"]["left/base_link"],
+        [0.9, 0.1],
+    )
+    np.testing.assert_allclose(
+        fit["translations_xy_m"]["right/base_link"],
+        [-0.9, 0.2],
+    )
+
+
+def test_semantic_object_volume_rejects_microscope_base_false_positive():
+    candidates = [
+        np.array([-0.37, 1.25, -0.57]),
+        np.array([-0.11, 0.57, -0.71]),
+    ]
+    objects = [
+        {
+            "instance_id": "robot",
+            "semantic_name": "robot",
+            "geometry": {
+                "kind": "box",
+                "center_xyz_m": [-0.2, 0.8, -0.5],
+                "size_xyz_m": [1.0, 1.0, 1.0],
+                "yaw_rad": 0.0,
+            },
+        },
+        {
+            "instance_id": "microscope-1",
+            "semantic_name": "microscope",
+            "geometry": {
+                "kind": "box",
+                "center_xyz_m": [-0.341, 1.249, -0.518],
+                "size_xyz_m": [0.55, 0.453, 0.403],
+                "yaw_rad": 0.892,
+            },
+        },
+        {
+            "instance_id": "measured-static-scene",
+            "semantic_name": "measured_static_scene",
+            "source": "multiview_rgbd_background_faces",
+            "geometry": {
+                "kind": "box",
+                "center_xyz_m": [0.0, 0.8, -0.55],
+                "size_xyz_m": [2.0, 2.0, 2.0],
+                "yaw_rad": 0.0,
+            },
+        },
+    ]
+    accepted, records = reject_base_candidates_inside_semantic_objects(
+        candidates,
+        objects,
+    )
+    assert len(accepted) == 1
+    np.testing.assert_allclose(accepted[0], candidates[1])
+    assert records[0]["accepted"] is False
+    assert records[0]["overlapping_semantic_objects"] == [
+        {
+            "instance_id": "microscope-1",
+            "semantic_name": "microscope",
+        }
+    ]
+    assert records[1]["accepted"] is True
+
+
+def test_partial_visible_base_fit_retains_unobserved_left_base():
+    initial = {
+        "left/base_link": np.array([-0.65, 0.71, -0.76]),
+        "right/base_link": np.array([-0.10, 0.56, -0.76]),
+    }
+    fit = assign_visible_base_translations(
+        initial,
+        [np.array([-0.11, 0.57, -0.71])],
+    )
+    assert fit["observed_bases"] == ["right/base_link"]
+    assert fit["retained_unobserved_bases"] == ["left/base_link"]
+    assert fit["all_bases_observed"] is False
+    np.testing.assert_allclose(
+        fit["translations_xy_m"]["left/base_link"],
+        [0.0, 0.0],
+    )
+    np.testing.assert_allclose(
+        fit["translations_xy_m"]["right/base_link"],
+        [-0.01, 0.01],
+    )
+
+
+def test_partial_visible_base_fit_rejects_large_static_object_jump():
+    initial = {
+        "left/base_link": np.array([-0.65, 0.71, -0.76]),
+        "right/base_link": np.array([-0.10, 0.56, -0.76]),
+    }
+    with np.testing.assert_raises_regex(ValueError, "above"):
+        assign_visible_base_translations(
+            initial,
+            [np.array([-0.37, 1.25, -0.57])],
+            maximum_translation_m=0.15,
+        )
+
+
+def test_joint_excitation_assigns_components_without_view_name_heuristics():
+    shape = (100, 80)
+    baseline = np.zeros(shape, dtype=bool)
+    masks = {
+        "arbitrary_baseline": baseline,
+        "misnamed_left": baseline.copy(),
+        "misnamed_right": baseline.copy(),
+    }
+    # Physical right moved around component 1 even though the view name says
+    # left; physical left moved around component 0 in the oppositely named
+    # view.
+    masks["misnamed_left"][15:35, 55:75] = True
+    masks["misnamed_right"][65:90, 5:30] = True
+    qpos = {
+        "arbitrary_baseline": {
+            "left": np.zeros(6),
+            "right": np.zeros(6),
+        },
+        "misnamed_left": {
+            "left": np.full(6, 0.002),
+            "right": np.full(6, 0.2),
+        },
+        "misnamed_right": {
+            "left": np.full(6, 0.3),
+            "right": np.full(6, 0.02),
+        },
+    }
+    result = assign_components_by_joint_excitation(
+        qpos_by_view=qpos,
+        robot_masks_by_view=masks,
+        component_centers_px=[
+            np.array([17.0, 77.0]),
+            np.array([65.0, 25.0]),
+        ],
+        baseline_view="arbitrary_baseline",
+        motion_radius_fraction=0.3,
+    )
+    assert result["physical_arm_to_component_index"] == {
+        "left": 0,
+        "right": 1,
+    }
+    assert result["evidence"]["right"]["view"] == "misnamed_left"
+    assert result["evidence"]["left"]["view"] == "misnamed_right"

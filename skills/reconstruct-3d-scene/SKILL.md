@@ -44,9 +44,8 @@ MUJOCO_GL=egl \
 ```
 
 Do not manually transfer target pixels or joint values. The pipeline must pin
-physical-right to one explicitly configured branch across sensing, carving,
-and replay (the current ConeE-derived model calls it `left/`), fit the latest
-wrist RGB-D target, distinguish
+physical-right to semantic `right/` across sensing, carving, and replay, fit
+the latest wrist RGB-D target, distinguish
 the successful target episode from the latest post-drop episode, pass the
 object-radius geometry gate, preserve exact stopped keyframes, and reconstruct
 only the unrecorded intervals. A clear moving-arm path does not imply global
@@ -113,7 +112,10 @@ Require the production MJCF through `robot_calibration.model`; never fall back
 to a scene approximation for camera calibration. Fit independently mounted
 arms with separate base transforms. Associate SAM instances to physical arms
 through temporal instance continuity plus arm-specific qpos excitation, never
-through image-left/image-right rules. Preserve RGB, depth, masks, and
+through view names or image-left/image-right rules. Keep its historically
+crossed production namespace (`physical left -> right_arm_*`, `physical right
+-> left_arm_*`) separate from the semantic planning namespace (`left ->
+left/`, `right -> right/`). Preserve RGB, depth, masks, and
 intrinsics in one sensor coordinate system. Any gravity-up or phone-friendly
 rotation is display-only.
 
@@ -133,11 +135,14 @@ head camera was fixed while the arms changed pose, follow
 [../../docs/DEPTH_AWARE_SCENE_ALIGNMENT.md](../../docs/DEPTH_AWARE_SCENE_ALIGNMENT.md):
 build a temporal far-depth envelope, split SAM candidates at depth
 discontinuities, retain only components that move in front of the envelope,
-and infer fixed base components from persistent 3D voxels. Validate on a
-withheld view. Fit independently mounted bases independently; preserve the
-reviewed Z, yaw, gripper, and home keyframe. This can refine display
-alignment, but motion still requires explicit home-pose provenance and a
-zero-contact MuJoCo audit.
+and infer fixed base components from persistent 3D voxels. A persistent SAM
+robot component is not automatically a base: reject it when its 3D center
+lies inside a completed non-robot semantic volume such as a microscope. If
+only one base remains observable, update only that unambiguous base and retain
+the other reviewed pose. Never pull an unseen base toward a leaked static
+component. Validate on a withheld view. Preserve the reviewed Z, yaw,
+gripper, and home keyframe. This can refine display alignment, but motion
+still requires explicit home-pose provenance and a zero-contact MuJoCo audit.
 
 ## Required behavior
 

@@ -64,7 +64,7 @@
   "kinematic_bridge": {
     "model": "robot/pasteur-calibrated-scene/scene.mjcf",
     "physical_arm": "right",
-    "model_branch": "left",
+    "model_branch": "right",
     "translation_scale_m": 0.005,
     "rotation_scale_deg": 1.0,
     "maximum_function_evaluations": 5000,
