@@ -15,6 +15,23 @@ MuJoCo軌道、スマホ動画まで再現する入口は
 `src/run_pasteur_offline_replay.py`です。詳細は
 [OFFLINE_SCENE_REPLAY.md](OFFLINE_SCENE_REPLAY.md)を参照してください。
 
+現在採用中のPasteur sceneを基準に、固定headのSAMから皿・蓋だけを更新して
+MuJoCo、軌道、スマホ表示まで再生成する回帰入口は次です。
+
+```bash
+MUJOCO_GL=egl \
+/home/admin/miniforge3/envs/robot-test/bin/python \
+  src/run_pasteur_offline_replay.py \
+  --config src/configs/pasteur_current_scene_20260731.json \
+  --output-dir data/runs/pasteur/current_scene_automatic_20260731
+```
+
+live SAMを使う場合はprofileのaccepted mask replayを外し、
+`--sam-endpoint tcp://HOST:PORT`を追加します。対象更新stageはrobot RPCを
+importせず、static sceneやrobot baseを再fitしません。collision gateが失敗して
+display-only fallbackを明示したprofileでは、モデルと動画は生成しますが
+`collision_ready=false`、`motion_authorized=false`を保持します。
+
 ## 最短の再実行
 
 すでに `multiview_report.json` がある場合:

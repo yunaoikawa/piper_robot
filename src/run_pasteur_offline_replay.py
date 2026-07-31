@@ -235,6 +235,12 @@ def _write_mobile_index(output: Path, pipeline: dict) -> Path:
     shift_mm = 1000.0 * sum(value * value for value in shift) ** 0.5
     moving_clear = pipeline["summary"]["moving_arm_path_clear"]
     global_clear = pipeline["summary"]["global_scene_home_clear"]
+    current_overlay_link = (
+        '<a href="current_scene/current_objects_overlay.png">'
+        "<b>現在head SAMの皿・蓋</b></a>"
+        if pipeline["summary"].get("current_object_refresh_accepted")
+        else ""
+    )
     page = f"""<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -262,6 +268,7 @@ small{{color:#a8b4c5}}code{{overflow-wrap:anywhere}}
 <a href="mobile/semantic_3d.html"><b>SAM意味付き3D（軽量）</b></a>
 <a href="mobile/source_esdf_scene.html"><b>ESDF（軽量）</b></a>
 <a href="render/recorded_replay_final.png"><b>最終姿勢画像</b></a>
+{current_overlay_link}
 <a href="target/overlays/05_latest_target_after_drop.png">
 <b>最新対象のRGB-D検出</b></a>
 <a href="pipeline_report.json"><b>機械可読パイプライン報告</b></a>
@@ -274,7 +281,13 @@ small{{color:#a8b4c5}}code{{overflow-wrap:anywhere}}
     return path
 
 
-def run(config_path: Path, output: Path, *, force: bool) -> dict:
+def run(
+    config_path: Path,
+    output: Path,
+    *,
+    force: bool,
+    sam_endpoint: str | None = None,
+) -> dict:
     started = time.monotonic()
     config_path = config_path.resolve()
     config = json.loads(config_path.read_text())
@@ -464,6 +477,11 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         "--maximum-removed-fraction",
         str(carving.get("maximum_removed_fraction", 0.5)),
     ]
+    allow_rejected_carving = bool(
+        config.get("collision_carving_allow_rejected_display_only", False)
+    )
+    if allow_rejected_carving:
+        carve_command.append("--allow-rejected-display-only")
     for prefix in carving["allowed_body_prefixes"]:
         carve_command.extend(["--allowed-body-prefix", prefix])
     for prefix in carving.get("robot_body_prefixes", ["left/"]):
@@ -485,7 +503,7 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         )
     )
     carve = json.loads(carve_report.read_text())
-    if not carve.get("accepted"):
+    if not carve.get("accepted") and not allow_rejected_carving:
         raise ValueError("semantic collision carving gate failed")
 
     target_dir = output / "target"
@@ -526,28 +544,100 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
     ):
         raise ValueError("wrist RGB-D target gates failed")
 
+    replay_model = collision_model
+    replay_object_scene = object_scene
+    current_refresh_report = None
+    refresh_config = config.get("current_object_refresh")
+    if refresh_config:
+        current_dir = output / "current_scene"
+        current_model = current_dir / "scene.mjcf"
+        current_object_scene = current_dir / "latest_target_scene.json"
+        current_report_path = current_dir / "current_object_report.json"
+        current_overlay = current_dir / "current_objects_overlay.png"
+        refresh_command = [
+            python,
+            str(ROOT / "src/update_current_semantic_objects.py"),
+            "--config",
+            str(config_path),
+            "--model",
+            str(collision_model),
+            "--previous-object-scene",
+            str(object_scene),
+            "--output-dir",
+            str(current_dir),
+        ]
+        effective_sam_endpoint = (
+            sam_endpoint or refresh_config.get("sam_endpoint")
+        )
+        if effective_sam_endpoint:
+            refresh_command.extend(
+                ["--sam-endpoint", str(effective_sam_endpoint)]
+            )
+        refresh_inputs = [
+            collision_model,
+            object_scene,
+            config_path,
+            ROOT / "src/update_current_semantic_objects.py",
+            ROOT / "rollout/sam_segmentation.py",
+            ROOT / "rollout/scene_registration.py",
+            _resolve(refresh_config["current_capture"]),
+            _resolve(refresh_config["reference_report"]),
+            _resolve(refresh_config["reference_capture"]),
+        ]
+        for record in refresh_config.get("accepted_masks", {}).values():
+            refresh_inputs.append(_resolve(record["path"]))
+        stages.append(
+            _run_stage(
+                name="current_semantic_objects",
+                command=refresh_command,
+                inputs=refresh_inputs,
+                outputs=[
+                    current_model,
+                    current_object_scene,
+                    current_report_path,
+                    current_overlay,
+                ],
+                output_root=output,
+                force=force,
+            )
+        )
+        current_refresh_report = json.loads(current_report_path.read_text())
+        if not (
+            current_refresh_report.get("accepted")
+            and current_refresh_report["model_validation"]["accepted"]
+            and current_refresh_report.get("commands_sent") is False
+        ):
+            raise ValueError("current semantic object refresh gates failed")
+        replay_model = current_model
+        replay_object_scene = current_object_scene
+
     trajectory_dir = output / "trajectory"
     trajectory_path = trajectory_dir / "trajectory.json"
+    display_only_on_collision = bool(
+        config.get("recorded_replay_display_only_on_collision", False)
+    )
     trajectory_command = [
         python,
         str(ROOT / "src/build_recorded_trajectory_replay.py"),
         "--config",
         str(replay_config),
         "--model",
-        str(collision_model),
+        str(replay_model),
         "--object-scene",
-        str(object_scene),
+        str(replay_object_scene),
         "--output",
         str(trajectory_path),
     ]
+    if display_only_on_collision:
+        trajectory_command.append("--display-only-on-collision")
     stages.append(
         _run_stage(
             name="recorded_trajectory",
             command=trajectory_command,
             inputs=[
                 replay_config,
-                collision_model,
-                object_scene,
+                replay_model,
+                replay_object_scene,
                 ROOT / "rollout/recorded_trajectory_replay.py",
                 ROOT / "src/build_recorded_trajectory_replay.py",
             ],
@@ -559,8 +649,11 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
     trajectory = json.loads(trajectory_path.read_text())
     if not (
         trajectory["validation"]["all_keyframes_exact"]
-        and trajectory["validation"]["moving_arm_path_clear"]
         and trajectory.get("commands_sent") is False
+        and (
+            trajectory["validation"]["moving_arm_path_clear"]
+            or display_only_on_collision
+        )
     ):
         raise ValueError("recorded trajectory gates failed")
 
@@ -571,7 +664,7 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         python,
         str(ROOT / "src/render_recorded_trajectory_replay.py"),
         "--model",
-        str(collision_model),
+        str(replay_model),
         "--trajectory",
         str(trajectory_path),
         "--output-dir",
@@ -589,12 +682,14 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         "--camera-distance-m",
         str(render_config.get("camera_distance_m", 1.65)),
     ]
+    if display_only_on_collision:
+        render_command.append("--allow-display-only-collision")
     stages.append(
         _run_stage(
             name="render_replay",
             command=render_command,
             inputs=[
-                collision_model,
+                replay_model,
                 trajectory_path,
                 ROOT / "src/render_recorded_trajectory_replay.py",
             ],
@@ -616,7 +711,7 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         python,
         str(ROOT / "src/render_mujoco_mobile.py"),
         "--model",
-        str(collision_model),
+        str(replay_model),
         "--output",
         str(full_home),
         "--keyframe",
@@ -630,7 +725,7 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         _run_stage(
             name="render_home_3d",
             command=home_command,
-            inputs=[collision_model, ROOT / "src/render_mujoco_mobile.py"],
+            inputs=[replay_model, ROOT / "src/render_mujoco_mobile.py"],
             outputs=[full_home],
             output_root=output,
             force=force,
@@ -672,7 +767,7 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
             )
         )
 
-    object_data = json.loads(object_scene.read_text())
+    object_data = json.loads(replay_object_scene.read_text())
     object_record = object_data["objects"][0]
     latest_center = np.asarray(
         object_record["pose_scene"],
@@ -708,6 +803,11 @@ def run(config_path: Path, output: Path, *, force: bool) -> dict:
         ),
         "continuous_joint_log_available": False,
         "commands_sent": False,
+        "current_object_refresh_accepted": (
+            None
+            if current_refresh_report is None
+            else current_refresh_report["accepted"]
+        ),
     }
     report = {
         "schema": SCHEMA,
@@ -760,8 +860,17 @@ def main(argv=None) -> int:
         default=ROOT / "data/runs/pasteur/offline_replay_20260730_v1",
     )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--sam-endpoint",
+        help="override current-object SAM endpoint from the replay profile",
+    )
     args = parser.parse_args(argv)
-    report = run(args.config, args.output_dir.resolve(), force=args.force)
+    report = run(
+        args.config,
+        args.output_dir.resolve(),
+        force=args.force,
+        sam_endpoint=args.sam_endpoint,
+    )
     print(json.dumps(report["summary"], indent=2, ensure_ascii=False))
     return 0
 

@@ -89,6 +89,14 @@ def main(argv=None) -> None:
         default=0.0,
         help="carve allow-listed voxels within this verified-pose margin",
     )
+    parser.add_argument(
+        "--allow-rejected-display-only",
+        action="store_true",
+        help=(
+            "preserve the rejected model/report with a zero process exit for "
+            "downstream visualization; never grants collision or motion authority"
+        ),
+    )
     args = parser.parse_args(argv)
     report = carve_robot_contamination(
         args.model,
@@ -108,7 +116,7 @@ def main(argv=None) -> None:
         robot_clearance_margin_m=args.robot_clearance_margin_m,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
-    if not report["accepted"]:
+    if not report["accepted"] and not args.allow_rejected_display_only:
         raise SystemExit(2)
 
 

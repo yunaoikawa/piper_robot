@@ -37,14 +37,17 @@ mask、前stage出力をSHA-256に入れます。同じ入力で再実行する�
 - production branch名をprefix除去してsemantic branch名に変換してはいけない
 - 右camera、右controller関節、対象fit、collision carving、trajectoryが
   semantic `right/`で一致しない場合は停止する
-- joint値はcontrollerの物理Piper値をそのまま使い、古いMJCF home offsetを
-  加えない
+- controllerの物理Piper値は原本として保持し、semantic MuJoCoへ入れる時だけ
+  `physical_to_semantic_model_q_offset()`の固定joint-zero差を加える
+- NYU gripperのhome rollは面のPCAだけで決めない。爪方向の90°曖昧性を解消した
+  `semantic_model_home_q()`を使い、左右とも同じjaw-aligned姿勢にする
 - homeは `robot.arm.home.physical_home_q()` を唯一の権威とする
 - head cameraでbaseを合わせ、wrist cameraで動的対象を合わせる
 - 画像左右、SAM instance番号、固定pixel ROIから物理armや対象を決めない
 
 位置合わせstageは派生`positioned_robot.mjcf`のhome keyを毎回
-physical left、physical rightの順でcanonical値へ固定します。2つのpersistent
+physical left、physical rightの順でsemantic model値へ変換して固定します。
+物理home command自体は変更しません。2つのpersistent
 baseは古い初期位置との近さでは割り当てず、同期qposで片腕だけが大きく動いた
 viewと固定cameraのSAM差分を使って同定します。view名や画像左右は使いません。
 この不変条件はrenderer、planner、testでも確認します。
@@ -77,6 +80,45 @@ pixel数の固定閾値やROIは使いません。面積、距離、形状は画
 - `target/wrist_target_report.json`
 - `target/latest_target_scene.json`
 - `target/overlays/*.png`
+
+## 固定headから現在の皿・蓋を更新
+
+`current_object_refresh`を持つprofileでは、過去wrist target stageの直後に
+`src/update_current_semantic_objects.py`を実行します。このstageはaccepted
+MuJoCoのstatic geometry、robot base、incubator、microscopeを変更せず、
+catalogで指定した可動物体bodyだけを更新します。
+
+```bash
+MUJOCO_GL=egl \
+/home/admin/miniforge3/envs/robot-test/bin/python \
+  src/run_pasteur_offline_replay.py \
+  --config src/configs/pasteur_current_scene_20260731.json \
+  --output-dir data/runs/pasteur/current_scene_automatic_20260731
+```
+
+処理順:
+
+1. 現在head captureの照明・深度品質を確認
+2. live SAMまたはprovenance付きaccepted SAM maskから円形instanceを抽出
+3. fixed tag bridgeでpixel rayをaccepted scene座標へ変換
+4. 透明面のZをsupport plane＋物体厚さの半分へ拘束
+5. live SAMが同一promptで複数instanceを返した場合、画像左右ではなく、前回
+   accepted modelからの移動量を物体半径で正規化して割り当て
+6. best/second-best assignmentのmarginが小さい場合は停止
+7. 派生MuJoCoの対象bodyだけ更新し、NYU gripper、jaw-aligned home、左右identity、
+   body座標をcompile後に再検証
+8. 更新済みmodel/object sceneを軌道、動画、mobile 3Dへ渡す
+
+保存済みmaskで再現する場合はprofileの`accepted_masks`を使います。新しいlive
+captureでは`accepted_masks`を省き、`--sam-endpoint tcp://HOST:PORT`を指定します。
+固定pixel ROIやimage-left/right規則は使いません。
+
+出力:
+
+- `current_scene/scene.mjcf`
+- `current_scene/latest_target_scene.json`
+- `current_scene/current_object_report.json`
+- `current_scene/current_objects_overlay.png`
 
 ## 記録軌道の意味
 
@@ -125,6 +167,7 @@ OUTPUT/
   alignment/
   collision_scene/
   target/
+  current_scene/
   trajectory/trajectory.json
   render/recorded_replay.mp4
   render/recorded_replay_start.png

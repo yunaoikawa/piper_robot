@@ -51,6 +51,24 @@ object-radius geometry gate, preserve exact stopped keyframes, and reconstruct
 only the unrecorded intervals. A clear moving-arm path does not imply global
 scene or hardware motion authority.
 
+For the reviewed Pasteur scene plus a newer fixed-head dish/lid observation,
+use the current-scene profile:
+
+```bash
+MUJOCO_GL=egl python src/run_pasteur_offline_replay.py \
+  --config src/configs/pasteur_current_scene_20260731.json \
+  --output-dir OUTPUT
+```
+
+This runs `src/update_current_semantic_objects.py` after the historical wrist
+target fit and before trajectory reconstruction. It must preserve the accepted
+static model, semantic physical-left/right identity, pinned NYU grippers, and
+jaw-aligned semantic home. It updates only configured movable object bodies.
+Unlabelled same-prompt SAM instances are assigned by normalized motion from the
+accepted model, never image-left/right; ambiguous assignments fail closed.
+Accepted-mask replay is allowed for exact regression. For a new capture, omit
+accepted masks and provide `--sam-endpoint`.
+
 ## Tagless multiview and robot calibration
 
 For a completed `piper_robot.multiview_semantic_scene/v1` report, run semantic

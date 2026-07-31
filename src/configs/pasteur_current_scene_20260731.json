@@ -1,0 +1,88 @@
+{
+  "schema": "piper_robot.offline_scene_replay_profile/v1",
+  "base_scene": {
+    "multiview_report": "data/reconstructions/pasteur/record3d_20260730_215729_v3/multiview_report.json",
+    "profile": "src/configs/pasteur_semantic_scene.json"
+  },
+  "alignment": {
+    "reference_report": "data/reconstructions/pasteur/record3d_20260730_215729_v3/multiview_report.json",
+    "reference_capture": "data/captures/pasteur/record3d_multiview_import/2026-07-30/20260730T050529.878846Z_head_record3d_exr_d7d3a413",
+    "current_capture": "data/captures/pasteur/2026-07-30/20260730T065216.967597Z_head_fixed_head_robot_calibration_41c5df92",
+    "robot_mask_dir": "data/runs/pasteur/sam_robot_industrial_probe/accepted_union",
+    "support_plane_z_m": -0.5660460087444851,
+    "tag_id": 3,
+    "tag_size_m": 0.06,
+    "baseline_is_home": true,
+    "semantic_exclusion_margin_m": 0.02,
+    "maximum_independent_base_translation_m": 0.15,
+    "minimum_base_nearest_ratio": 2.0
+  },
+  "collision_carving": {
+    "allowed_body_prefixes": ["microscope-1-cell-"],
+    "robot_body_prefixes": ["right/"],
+    "physical_right_model_branch": "right",
+    "robot_clearance_margin_m": 0.03,
+    "maximum_removed_fraction": 0.5
+  },
+  "collision_carving_allow_rejected_display_only": true,
+  "wrist_target_config": "src/configs/pasteur_wrist_target_20260730.json",
+  "recorded_replay_config": "src/configs/pasteur_recorded_lid_replay_20260730.json",
+  "current_object_refresh": {
+    "current_capture": "data/captures/pasteur/2026-07-31/20260731T013227.803610Z_head_current_dish_lid_refresh_20260731_0206c874",
+    "reference_report": "data/reconstructions/pasteur/record3d_20260730_215729_v3/multiview_report.json",
+    "reference_capture": "data/captures/pasteur/record3d_multiview_import/2026-07-30/20260730T050529.878846Z_head_record3d_exr_d7d3a413",
+    "support_plane_z_m": -0.5660460087444851,
+    "tag_id": 3,
+    "tag_size_m": 0.06,
+    "shared_prompt": "transparent petri dish lid",
+    "sam_confidence_threshold": 0.8,
+    "sam_timeout_ms": 120000,
+    "minimum_mean_gray": 35.0,
+    "maximum_near_black_fraction": 0.35,
+    "minimum_assignment_margin_in_radii": 0.25,
+    "maximum_displacement_in_radii": 5.0,
+    "objects": [
+      {
+        "semantic_name": "petri_dish",
+        "body_name": "petri_dish-1",
+        "role": "dish_body",
+        "display_rgba": [1.0, 0.08, 0.08, 1.0],
+        "overlay_bgr": [0, 0, 255]
+      },
+      {
+        "semantic_name": "petri_lid",
+        "body_name": "petri_lid-1",
+        "role": "target_lid",
+        "display_rgba": [0.08, 1.0, 0.08, 1.0],
+        "overlay_bgr": [0, 255, 0]
+      }
+    ],
+    "accepted_masks": {
+      "petri_dish": {
+        "path": "data/runs/pasteur/current_dish_lid_refresh_20260731/sam/lid_3_1.png",
+        "model": "sam3",
+        "prompt": "transparent petri dish lid",
+        "score": 0.9453125
+      },
+      "petri_lid": {
+        "path": "data/runs/pasteur/current_dish_lid_refresh_20260731/sam/lid_3_0.png",
+        "model": "sam3",
+        "prompt": "transparent petri dish lid",
+        "score": 0.9296875
+      }
+    }
+  },
+  "recorded_replay_display_only_on_collision": true,
+  "render": {
+    "width": 640,
+    "height": 480,
+    "fps": 20,
+    "camera_azimuth_deg": 25.0,
+    "camera_elevation_deg": -24.0,
+    "camera_distance_m": 1.75
+  },
+  "mobile": {
+    "maximum_faces": 1200,
+    "maximum_points": 2500
+  }
+}
