@@ -31,6 +31,15 @@ assert np.allclose(middle.target_pose[4:6], [0.20, 0.01])
 assert np.allclose(middle.target_pose[:4], left_pose[:4])
 assert middle.target_pose[6] == left_pose[6]
 
+small = cal.interpolate([300, 250], image_shape_hw=(400, 800))
+large_cal = EndpointCalibration(
+    left=EndpointSample(cal.left.feature_px * 2, left_pose),
+    right=EndpointSample(cal.right.feature_px * 2, right_pose),
+    observer_pose=cal.observer_pose,
+)
+large = large_cal.interpolate([600, 500], image_shape_hw=(800, 1600))
+assert abs(small.fraction - large.fraction) < 1e-9
+
 head_path = Path("/tmp/test_head_endpoint_calibration.json")
 head_cal = EndpointCalibration(
     left=cal.left,

@@ -414,6 +414,52 @@ thin-planar target; AprilTags are not required at runtime. The present camera
 to robot calibration is intentionally unaccepted, so live execution remains
 fail-closed until a new multi-pose calibration is explicitly validated.
 
+## Fast lid grasp: SAM-free normal path (2026-07-31)
+
+For the marked transparent lid, runtime SAM is optional and is not part of the
+shortest first-success path. The normal sequence is:
+
+1. Put both arms in the known homing pose. Capture one immutable, lit head
+   frame and open `src/run_fast_lid_grasp.py` on the phone.
+2. The operator taps the blue mark and presses **この蓋を掴む** once. The tap,
+   exact frame hash, timestamp, and normalized image coordinate form the target
+   identity. Connected-component area is never used to choose the target.
+3. Interpolate the right-arm pregrasp pose from two clean endpoint images.
+   Image coordinates and cross-track gates are normalized by image dimensions;
+   replace the old wrong right-end image feature while retaining its measured
+   EE pose.
+4. Audit the home-to-hover route against the canonical MuJoCo static scene.
+   MuJoCo is not allowed to claim grasp success.
+5. Stream only the physical right arm through `set_right_ee_target` at 30 Hz,
+   matching proven teleoperation. At hover, use the right camera's blue marker
+   and transparent-rim edge template in the gripper-local frame. Do not home
+   between corrections.
+6. Make one continuous descent to the verified low pose. A failed low preclose
+   check causes a vertical retreat to hover before any XY correction. Never
+   search sideways while low.
+7. Close once. Classify obstruction relative to the captured successful
+   apertures (0.588857 and 0.573429) and empty baseline (0.004857), then lift
+   vertically and require the nonempty aperture to persist.
+
+The state order is encoded in `rollout/fast_lid_grasp.py`; target identity and
+camera freshness are in `rollout/tapped_lid_target.py`; wrist checks are in
+`rollout/marker_edge_grasp.py`. `--execute` stays fail-closed until both clean
+endpoint taps and their exact static MuJoCo audit exist. This is a calibration
+requirement, not a workspace/bias clamp. Pressure, IK, tracking, and actual
+static-collision stops remain in force.
+
+Endpoint-only calibration (no arm motion, existing EE pose retained):
+
+```bash
+python src/run_fast_lid_grasp.py --calibrate-endpoint left
+python src/run_fast_lid_grasp.py --calibrate-endpoint right
+```
+
+The command prints a Tailscale URL. Tap the correct blue mark in the displayed
+head image; do not use a frame in which an arm hides the mark. After both
+endpoints are confirmed, run the same command without `--calibrate-endpoint`
+to create the current target plan.
+
 ## Regression check — DO THIS FIRST, before any real task
 
 The live path now includes calibrated torque monitoring and marker-anchored
