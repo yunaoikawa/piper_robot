@@ -26,6 +26,16 @@ from rollout.teleop_trajectory_stream import (
     TeleopTrajectoryStreamer,
     sample_joint_knots,
 )
+from rollout.gripper_level import (
+    JawLevelReference,
+    RightJawLevelCheckpoint,
+    assess_jaw_level,
+    leveled_pose,
+)
+from rollout.orientation_monitor_policy import (
+    CachedOrientationMonitor,
+    OrientationMonitoringPolicyStore,
+)
 from rollout.torque_safety import torque_stop_enabled_from_config
 from rollout.right_active_visual_search import select_unique_scene_target
 from src.optimize_lid_grasp_trajectory import search
@@ -37,6 +47,22 @@ TRAJECTORY_SCHEMA = "piper_robot.simulated_lid_grasp_trajectory/v2"
 
 def _load_json(path: str | Path) -> dict:
     return json.loads(Path(path).resolve().read_text())
+
+
+def _load_level_reference(path: str | Path) -> JawLevelReference:
+    value = _load_json(path)
+    names = {
+        "support_up_robot",
+        "tip_baseline_ee",
+        "approach_axis_ee",
+        "open_tip_span_m",
+        "maximum_checkpoint_tilt_deg",
+        "maximum_planned_tilt_deg",
+        "maximum_tip_height_difference_m",
+    }
+    kwargs = {name: value[name] for name in names if name in value}
+    kwargs["source"] = str(value.get("schema", Path(path).resolve()))
+    return JawLevelReference(**kwargs)
 
 
 def validate_demo_free_trajectory(payload: dict) -> None:
@@ -89,6 +115,69 @@ def validate_demo_free_trajectory(payload: dict) -> None:
         raise ValueError("verification lift contains invalid joint targets")
 
 
+def audit_physical_right_level(
+    trajectory: dict,
+    *,
+    production_model: str | Path,
+    reference: JawLevelReference,
+) -> dict:
+    """Reject plans that only look level in the semantic NYU model."""
+
+    fk = ProductionRightFK(production_model)
+    records_by_stage = {}
+    required = {
+        "descend_fast",
+        "descend",
+        "insert",
+        "preclose_observe",
+        "close",
+        "verification_lift",
+    }
+    for sample in sample_joint_knots(trajectory["knots"]):
+        stage = str(sample.stage)
+        if stage not in required:
+            continue
+        assessment = assess_jaw_level(
+            leveled_pose(
+                fk.pose(sample.right_q_physical_rad).parameters(), reference
+            ),
+            reference,
+            planned=True,
+        )
+        record = records_by_stage.setdefault(
+            stage,
+            {
+                "stage": stage,
+                "accepted": True,
+                "maximum_combined_tilt_deg": 0.0,
+                "maximum_tip_height_difference_m": 0.0,
+                "sample_count": 0,
+            },
+        )
+        record["sample_count"] += 1
+        record["accepted"] = bool(record["accepted"] and assessment.accepted)
+        record["maximum_combined_tilt_deg"] = max(
+            record["maximum_combined_tilt_deg"],
+            assessment.combined_tilt_deg,
+        )
+        record["maximum_tip_height_difference_m"] = max(
+            record["maximum_tip_height_difference_m"],
+            assessment.tip_height_difference_m,
+        )
+    records = list(records_by_stage.values())
+    rejected = [record for record in records if not record["accepted"]]
+    if rejected:
+        first = rejected[0]
+        raise ValueError(
+            "physical-right jaw-level plan audit failed at "
+            f"{first['stage']}: tilt="
+            f"{first['maximum_combined_tilt_deg']:.2f}deg, "
+            "tip_delta="
+            f"{first['maximum_tip_height_difference_m'] * 1000:.2f}mm"
+        )
+    return {"accepted": True, "stages": records}
+
+
 def _plan(args) -> tuple[dict, Path]:
     report = search(
         SimpleNamespace(
@@ -127,8 +216,20 @@ def execute_trajectory(
     torque_config: dict,
     rpc,
     right_visual_goal_monitor=None,
+    lid_motion_guard=None,
+    level_reference: JawLevelReference | None = None,
+    orientation_policy_store: OrientationMonitoringPolicyStore | None = None,
+    cached_orientation_monitor: CachedOrientationMonitor | None = None,
 ) -> dict:
     validate_demo_free_trajectory(trajectory)
+    if trajectory.get("simulation_validation", {}).get("success") is not True:
+        raise ValueError("hardware execution requires successful MuJoCo validation")
+    level_reference = level_reference or JawLevelReference()
+    plan_level_audit = audit_physical_right_level(
+        trajectory,
+        production_model=production_model,
+        reference=level_reference,
+    )
     samples = sample_joint_knots(trajectory["knots"])
     fk = ProductionRightFK(production_model)
     initial_open_ratio = float(
@@ -144,17 +245,92 @@ def execute_trajectory(
         enforce_torque_stop=torque_stop_enabled_from_config(torque_config),
     )
     visual_gate = {}
+    level_checkpoint = RightJawLevelCheckpoint(rpc, level_reference)
+    policy = (
+        orientation_policy_store.load()
+        if orientation_policy_store is not None
+        else None
+    )
+    low_stages = {
+        "descend_fast",
+        "descend",
+        "insert",
+        "preclose_observe",
+        "close",
+    }
+    descent_checkpoint_done = False
 
     def stage_gate(stage: str) -> None:
-        if stage != "close" or right_visual_goal_monitor is None:
+        nonlocal descent_checkpoint_done
+        if stage in {"descend_fast", "descend"} and not descent_checkpoint_done:
+            level_checkpoint.require("before_descend")
+            descent_checkpoint_done = True
+        if stage == "close":
+            level_checkpoint.require("before_close")
+            if right_visual_goal_monitor is not None:
+                visual_gate.update(
+                    right_visual_goal_monitor.require_close_allowed(
+                        maximum_age_s=3.0
+                    )
+                )
+
+    def sample_gate(stage: str, _t_s: float) -> None:
+        if stage not in low_stages:
             return
-        visual_gate.update(
-            right_visual_goal_monitor.require_close_allowed(
-                maximum_age_s=3.0
-            )
+        if lid_motion_guard is not None:
+            lid_motion_guard.require_motion_safe()
+        if (
+            policy is not None
+            and policy.mode == "continuous_cached"
+        ):
+            if cached_orientation_monitor is None:
+                raise RuntimeError(
+                    "continuous_cached policy requires controller cache"
+                )
+            cached_orientation_monitor.require_level(maximum_age_s=0.2)
+
+    def pose_transformer(stage: str, pose):
+        if stage not in low_stages:
+            return pose
+        # Pure geometry on the already-planned pose: no camera or robot RPC.
+        # This prevents joint-space interpolation from reintroducing roll or
+        # pitch between level waypoints.
+        return type(pose)(
+            leveled_pose(pose.parameters(), level_reference)
         )
 
-    execution = streamer.execute(samples, stage_gate=stage_gate)
+    try:
+        execution = streamer.execute(
+            samples,
+            stage_gate=stage_gate,
+            sample_gate=sample_gate,
+            pose_transformer=pose_transformer,
+        )
+    except RuntimeError as error:
+        text = str(error)
+        low_pose_failure = any(
+            marker in text
+            for marker in (
+                "before_close",
+                "motion watchdog",
+                "both lid motion cameras",
+                "cached jaw orientation",
+            )
+        )
+        failure_reason = None
+        if "motion watchdog" in text or "lid motion cameras" in text:
+            failure_reason = "lid_lateral_motion"
+        elif "jaw" in text and ("level" in text or "orientation" in text):
+            failure_reason = "jaw_tilt"
+        if orientation_policy_store is not None and failure_reason is not None:
+            orientation_policy_store.record_failure(failure_reason)
+        if low_pose_failure:
+            recovery = streamer.recover_vertical_then_open(
+                clearance_m=0.020,
+                support_up_robot=level_reference.support_up_robot,
+            )
+            setattr(error, "vertical_recovery", recovery)
+        raise
     final_open_ratio = execution["final_right_gripper_open_ratio"]
     obstruction_threshold = max(0.01, 0.02 * initial_open_ratio)
     execution.update(
@@ -168,6 +344,11 @@ def execute_trajectory(
             ),
             "success_requires_visual_target_follow_confirmation": True,
             "right_visual_goal_gate": visual_gate or None,
+            "physical_right_level_plan_audit": plan_level_audit,
+            "physical_right_level_checkpoints": level_checkpoint.records,
+            "orientation_monitoring_mode": (
+                "checkpoint" if policy is None else policy.mode
+            ),
         }
     )
     return execution
@@ -186,6 +367,16 @@ def main(argv=None):
     parser.add_argument(
         "--torque-config",
         default="src/configs/pasteur_lid_torque.json",
+    )
+    parser.add_argument(
+        "--level-config",
+        default="src/configs/pasteur_fast_lid_grasp_level.json",
+    )
+    parser.add_argument(
+        "--orientation-policy-state",
+        default=(
+            "data/runs/pasteur/fast_lid_grasp_orientation_policy.json"
+        ),
     )
     parser.add_argument(
         "--right-visual-goal-selection",
@@ -303,6 +494,12 @@ def main(argv=None):
                 torque_config=_load_json(args.torque_config),
                 rpc=rpc,
                 right_visual_goal_monitor=right_visual_goal_monitor,
+                level_reference=_load_level_reference(args.level_config),
+                orientation_policy_store=(
+                    OrientationMonitoringPolicyStore(
+                        args.orientation_policy_state
+                    )
+                ),
             )
         except BaseException as error:
             execution_error = error
@@ -311,6 +508,9 @@ def main(argv=None):
                 "message": str(error),
                 "traceback": traceback.format_exc(),
             }
+            recovery = getattr(error, "vertical_recovery", None)
+            if recovery is not None:
+                result["failure"]["vertical_recovery"] = recovery
         finally:
             try:
                 if right_visual_goal_monitor is not None:

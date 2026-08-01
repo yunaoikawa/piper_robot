@@ -434,12 +434,49 @@ shortest first-success path. The normal sequence is:
    matching proven teleoperation. At hover, use the right camera's blue marker
    and transparent-rim edge template in the gripper-local frame. Do not home
    between corrections.
-6. Make one continuous descent to the verified low pose. A failed low preclose
-   check causes a vertical retreat to hover before any XY correction. Never
-   search sideways while low.
-7. Close once. Classify obstruction relative to the captured successful
+6. Before descent, read the measured right EE pose once. The physical-right
+   fingertip baseline is production-EE local Z (not the NYU mesh axis); reject
+   more than 3 degrees of jaw-plane tilt or 1.7 mm of left/right fingertip
+   height mismatch. During the low segment, project every already-planned
+   Cartesian setpoint onto the support-parallel orientation. This is pure
+   geometry and adds no 30 Hz camera or robot RPC. Check the measured pose once
+   more immediately before closure.
+7. Make one continuous descent, with the final 20 mm smoothly slowed. A cached
+   fixed-head/right-wrist motion watchdog may veto lateral lid motion without
+   blocking the teleop stream. On a veto or failed low preclose check, freeze
+   the current aperture, keep XY/orientation fixed, rise 20 mm, and only then
+   open. Never search sideways or open while low.
+8. Close once using the two-second minimum-jerk ramp. Classify obstruction relative to the captured successful
    apertures (0.588857 and 0.573429) and empty baseline (0.004857), then lift
    vertically and require the nonempty aperture to persist.
+
+The jaw-level calibration is in
+`src/configs/pasteur_fast_lid_grasp_level.json`. It is grounded in canonical
+right home, the saved verified preclose pose, and a saved bad low pose; it does
+not use a task-image pixel threshold. `rollout/gripper_level.py` bridges the
+production and semantic gripper axes explicitly. The optimizer now runs a
+second IK pass against production Piper FK, while MuJoCo contact, penetration,
+bilateral side contact, and retention remain separate acceptance conditions.
+A level solution that loses the lid in simulation is rejected.
+
+Normal runtime uses only the two named measured checkpoints. If a run records
+`jaw_tilt`, `fingertip_height_asymmetry`, `asymmetric_contact`, or
+`lid_lateral_motion`, `rollout/orientation_monitor_policy.py` persistently
+escalates the next run to `continuous_cached`; that mode consumes state already
+pushed by the controller receiver and never adds synchronous per-sample RPC.
+`rollout/lid_motion_watchdog.py` derives its threshold from stationary MAD and
+object diameter, requiring two consecutive excursions rather than a fixed px
+constant.
+
+For a headless physics regression (no GL/video allocation):
+
+```bash
+python src/optimize_lid_grasp_trajectory.py \
+  --model CURRENT_SCENE.mjcf \
+  --object-scene CURRENT_OBJECT_SCENE.json \
+  --output-dir /tmp/lid-level-audit \
+  --no-render
+```
 
 The state order is encoded in `rollout/fast_lid_grasp.py`; target identity and
 camera freshness are in `rollout/tapped_lid_target.py`; wrist checks are in

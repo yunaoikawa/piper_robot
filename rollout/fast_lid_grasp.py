@@ -16,9 +16,11 @@ class GraspStage(str, Enum):
     WAITING_FOR_TAP = "waiting_for_tap"
     TRANSIT = "transit"
     HOVER_ALIGN = "hover_align"
-    DESCEND = "descend"
+    LEVEL_CHECK = "level_check"
+    DESCENT_WATCH = "descent_watch"
     PRECLOSE = "preclose"
-    CLOSE = "close"
+    CLOSE_WATCH = "close_watch"
+    VERTICAL_RECOVERY = "vertical_recovery"
     LIFT = "lift"
     SUCCESS = "success"
     HOLD = "hold"
@@ -83,26 +85,84 @@ class FastLidGraspMachine:
             return self._go(GraspStage.HOLD, "hold", "selected target is not visible")
         if not aligned:
             return GraspAction("correct_xy_at_hover", "tool-relative marker/rim error")
-        return self._go(GraspStage.DESCEND, "stream_descend", "hover alignment accepted")
+        return self._go(
+            GraspStage.LEVEL_CHECK,
+            "check_level_before_descend",
+            "hover alignment accepted",
+        )
+
+    def level_checkpoint(self, *, accepted: bool) -> GraspAction:
+        if self.stage != GraspStage.LEVEL_CHECK:
+            raise ValueError("level checkpoint is out of order")
+        if not accepted:
+            return self._go(
+                GraspStage.HOLD,
+                "hold",
+                "measured jaw plane is not parallel to the support",
+            )
+        return self._go(
+            GraspStage.DESCENT_WATCH,
+            "stream_descend",
+            "measured hover jaw level accepted",
+        )
 
     def descent_complete(self) -> GraspAction:
-        if self.stage != GraspStage.DESCEND:
+        if self.stage != GraspStage.DESCENT_WATCH:
             raise ValueError("descent completion is out of order")
         return self._go(GraspStage.PRECLOSE, "inspect_preclose", "verified low pose reached")
 
-    def preclose_assessment(self, *, rim_between_fingers: bool) -> GraspAction:
+    def preclose_assessment(
+        self,
+        *,
+        rim_between_fingers: bool,
+        level_accepted: bool,
+    ) -> GraspAction:
         if self.stage != GraspStage.PRECLOSE:
             raise ValueError("preclose assessment is out of order")
-        if not rim_between_fingers:
+        if not rim_between_fingers or not level_accepted:
             return self._go(
-                GraspStage.HOVER_ALIGN,
-                "lift_to_hover",
-                "preclose geometry failed; planar correction is forbidden while low",
+                GraspStage.VERTICAL_RECOVERY,
+                "freeze_aperture_and_lift_vertical",
+                "preclose geometry/level failed; low planar correction is forbidden",
             )
-        return self._go(GraspStage.CLOSE, "close_once", "rim geometry accepted")
+        return self._go(
+            GraspStage.CLOSE_WATCH,
+            "close_once_ramped",
+            "rim geometry and measured jaw level accepted",
+        )
+
+    def motion_watchdog(
+        self, *, triggered: bool, at_least_one_camera_visible: bool
+    ) -> GraspAction | None:
+        if self.stage not in {
+            GraspStage.DESCENT_WATCH,
+            GraspStage.CLOSE_WATCH,
+        }:
+            raise ValueError("motion watchdog is only valid during descend/close")
+        if triggered or not at_least_one_camera_visible:
+            reason = (
+                "lid moved laterally during contact"
+                if triggered
+                else "both lid motion views were lost"
+            )
+            return self._go(
+                GraspStage.VERTICAL_RECOVERY,
+                "freeze_aperture_and_lift_vertical",
+                reason,
+            )
+        return None
+
+    def recovery_lift_complete(self) -> GraspAction:
+        if self.stage != GraspStage.VERTICAL_RECOVERY:
+            raise ValueError("recovery completion is out of order")
+        return self._go(
+            GraspStage.HOLD,
+            "open_at_hover",
+            "vertical clearance was restored before opening",
+        )
 
     def closure_measured(self, evidence: ClosureEvidence) -> GraspAction:
-        if self.stage != GraspStage.CLOSE:
+        if self.stage != GraspStage.CLOSE_WATCH:
             raise ValueError("closure evidence is out of order")
         if not evidence.nonempty:
             return self._go(GraspStage.HOLD, "hold", "closure matches empty baseline")

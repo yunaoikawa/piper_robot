@@ -200,6 +200,78 @@ def test_streamer_uses_uninterrupted_teleop_ee_targets():
     assert len(rpc.gains) >= 2
 
 
+def test_sample_gate_reads_cached_state_without_extra_robot_queries():
+    fk = ProductionRightFK(PRODUCTION_MODEL)
+    rpc = FakeRPC(fk)
+    clock = FakeClock()
+    home = physical_home_q("right")
+    samples = [
+        JointTrajectorySample(
+            t_s=(index + 1) / CONTROL_HZ,
+            stage="descend",
+            right_q_physical_rad=home.copy(),
+            right_gripper_open_ratio=1.0,
+        )
+        for index in range(3)
+    ]
+    cached_reads = []
+    _streamer(rpc, fk, clock).execute(
+        samples,
+        sample_gate=lambda stage, t_s: cached_reads.append((stage, t_s)),
+    )
+    assert len(cached_reads) == len(samples)
+    assert all(stage == "descend" for stage, _ in cached_reads)
+
+
+def test_pose_transformer_applies_to_every_low_sample_without_rpc():
+    fk = ProductionRightFK(PRODUCTION_MODEL)
+    rpc = FakeRPC(fk)
+    clock = FakeClock()
+    home = physical_home_q("right")
+    samples = [
+        JointTrajectorySample(
+            t_s=(index + 1) / CONTROL_HZ,
+            stage="descend",
+            right_q_physical_rad=home.copy(),
+            right_gripper_open_ratio=1.0,
+        )
+        for index in range(2)
+    ]
+    calls = []
+
+    def transform(stage, pose):
+        calls.append(stage)
+        value = np.asarray(pose.parameters()).copy()
+        value[6] += 0.001
+        return type(pose)(value)
+
+    _streamer(rpc, fk, clock).execute(samples, pose_transformer=transform)
+    assert calls == ["descend", "descend"]
+    expected_z = fk.pose(home).parameters()[6] + 0.001
+    assert all(np.isclose(command[0][6], expected_z) for command in rpc.ee_commands)
+
+
+def test_vertical_recovery_keeps_xy_orientation_and_aperture_until_clear():
+    fk = ProductionRightFK(PRODUCTION_MODEL)
+    rpc = FakeRPC(fk)
+    rpc.gripper = 0.42
+    clock = FakeClock()
+    start = np.asarray(rpc.get_right_ee_pose().parameters())
+    report = _streamer(rpc, fk, clock).recover_vertical_then_open(
+        clearance_m=0.020,
+        lift_duration_s=0.1,
+        open_duration_s=0.1,
+    )
+    commands = rpc.ee_commands
+    lift_count = int(np.ceil(0.1 * CONTROL_HZ))
+    assert report["completed"]
+    assert np.allclose([command[0][:4] for command in commands], start[:4])
+    assert np.allclose([command[0][4:6] for command in commands], start[4:6])
+    assert all(np.isclose(command[1], 0.42) for command in commands[:lift_count])
+    assert np.isclose(commands[lift_count - 1][0][6], start[6] + 0.020)
+    assert np.isclose(commands[-1][1], 1.0)
+
+
 def test_cartesian_tracking_accepts_a_different_joint_branch():
     fk = ProductionRightFK(PRODUCTION_MODEL)
     rpc = AlternateIKFakeRPC(fk)

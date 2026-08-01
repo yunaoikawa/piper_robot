@@ -32,6 +32,12 @@ from robot.arm.home import (
     physical_to_semantic_model_q_offset,
     semantic_model_home_q,
 )
+from rollout.gripper_level import (
+    JawLevelReference,
+    assess_jaw_level,
+    leveled_pose,
+)
+from rollout.teleop_trajectory_stream import ProductionRightFK
 
 
 SCHEMA = "piper_robot.simulated_lid_grasp_search/v2"
@@ -781,6 +787,12 @@ class GraspKinematics:
         if np.any(self.lower >= self.upper):
             raise ValueError("physical/model joint-limit intersection is empty")
         self.left_home = semantic_model_home_q("left")
+        production_model = (
+            Path(__file__).resolve().parents[1]
+            / "robot/cone-e-description/robot-welded-base-and-lift.mjcf"
+        )
+        self.production_fk = ProductionRightFK(production_model)
+        self.level_reference = JawLevelReference()
 
     def pose(self, q_model: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         self.data.qpos[self.right_ids] = q_model
@@ -859,6 +871,78 @@ class GraspKinematics:
             "maximum_joint_delta_rad": float(
                 np.max(np.abs(result.x - seed))
             ),
+            "optimizer_status": int(result.status),
+            "optimizer_cost": float(result.cost),
+        }
+
+    def enforce_physical_right_level(
+        self,
+        q_model: np.ndarray,
+        target_position: np.ndarray,
+        *,
+        maximum_position_error_m: float,
+    ) -> tuple[np.ndarray, dict]:
+        """Keep the semantic grasp point while leveling the physical jaws.
+
+        The pinned NYU mesh and production Piper EE have different fixed-axis
+        conventions and are not interchangeable.  This second optimization
+        therefore evaluates production FK directly instead of trusting the
+        semantic mesh's apparent levelness.
+        """
+
+        seed = np.clip(np.asarray(q_model, dtype=float), self.lower, self.upper)
+        seed_physical = seed - self.right_offset
+        measured = np.asarray(
+            self.production_fk.pose(seed_physical).parameters(), dtype=float
+        )
+        desired = leveled_pose(measured, self.level_reference)
+        desired_rotation = Rotation.from_quat(
+            desired[[1, 2, 3, 0]]
+        ).as_matrix()
+
+        def residual(q):
+            position, _ = self.pose(q)
+            physical_rotation = self.production_fk.pose(
+                q - self.right_offset
+            ).as_matrix()[:3, :3]
+            orientation = Rotation.from_matrix(
+                desired_rotation.T @ physical_rotation
+            ).as_rotvec()
+            return np.concatenate(
+                [
+                    (position - target_position) / 0.002,
+                    orientation / math.radians(2.0),
+                    0.02 * (q - seed),
+                ]
+            )
+
+        result = least_squares(
+            residual,
+            seed,
+            bounds=(self.lower + 1e-6, self.upper - 1e-6),
+            xtol=1e-10,
+            ftol=1e-10,
+            gtol=1e-10,
+            max_nfev=300,
+        )
+        position, _ = self.pose(result.x)
+        position_error = float(np.linalg.norm(position - target_position))
+        assessment = assess_jaw_level(
+            self.production_fk.pose(
+                result.x - self.right_offset
+            ).parameters(),
+            self.level_reference,
+            planned=True,
+        )
+        accepted = bool(
+            result.success
+            and position_error <= maximum_position_error_m
+            and assessment.accepted
+        )
+        return result.x.copy(), {
+            "accepted": accepted,
+            "position_error_m": position_error,
+            "level": assessment.to_dict(),
             "optimizer_status": int(result.status),
             "optimizer_cost": float(result.cost),
         }
@@ -1726,12 +1810,21 @@ def search(args) -> dict:
                         rotation,
                     ),
                     (
+                        "descend_fast",
+                        grasp_reference
+                        + np.asarray(
+                            [0.055 * direction[0], 0.055 * direction[1], 0.020]
+                        ),
+                        0.35,
+                        rotation,
+                    ),
+                    (
                         "descend",
                         grasp_reference
                         + np.asarray(
                             [0.055 * direction[0], 0.055 * direction[1], 0.0]
                         ),
-                        0.8,
+                        0.65,
                         rotation,
                     ),
                     ("insert", grasp_reference, 0.8, rotation),
@@ -1756,15 +1849,41 @@ def search(args) -> dict:
                         q,
                         maximum_position_error_m=(
                             0.015 if stage in {"depart_up", "hover_xy"} else (
-                                0.012 if stage == "descend" else 0.004
+                                0.012
+                                if stage in {"descend_fast", "descend"}
+                                else 0.004
                             )
                         ),
                         maximum_rotation_error_deg=(
                             30.0
-                            if stage in {"depart_up", "hover_xy", "descend"}
+                            if stage in {
+                                "depart_up",
+                                "hover_xy",
+                                "descend_fast",
+                                "descend",
+                            }
                             else 18.0
                         ),
                     )
+                    if ik["accepted"] and stage in {
+                        "hover_xy",
+                        "descend_fast",
+                        "descend",
+                        "insert",
+                    }:
+                        q, physical_level = (
+                            kinematics.enforce_physical_right_level(
+                                q,
+                                target,
+                                maximum_position_error_m=(
+                                    0.012
+                                    if stage in {"descend_fast", "descend"}
+                                    else 0.004
+                                ),
+                            )
+                        )
+                        ik["physical_right_level"] = physical_level
+                        ik["accepted"] = bool(physical_level["accepted"])
                     if ik["accepted"] and stage == "insert":
                         centering_iterations = []
                         adjusted_target = target.copy()
@@ -1796,6 +1915,18 @@ def search(args) -> dict:
                                 maximum_position_error_m=0.004,
                                 maximum_rotation_error_deg=18.0,
                             )
+                            if ik["accepted"]:
+                                q, physical_level = (
+                                    kinematics.enforce_physical_right_level(
+                                        q,
+                                        adjusted_target,
+                                        maximum_position_error_m=0.004,
+                                    )
+                                )
+                                ik["physical_right_level"] = physical_level
+                                ik["accepted"] = bool(
+                                    physical_level["accepted"]
+                                )
                             if not ik["accepted"]:
                                 break
                         ik["jaw_centering_error_iterations_m"] = (
@@ -1841,6 +1972,18 @@ def search(args) -> dict:
                             maximum_position_error_m=0.003,
                             maximum_rotation_error_deg=18.0,
                         )
+                        if lift_ik["accepted"]:
+                            lift_q, physical_level = (
+                                kinematics.enforce_physical_right_level(
+                                    lift_q,
+                                    lift_target,
+                                    maximum_position_error_m=0.003,
+                                )
+                            )
+                            lift_ik["physical_right_level"] = physical_level
+                            lift_ik["accepted"] = bool(
+                                physical_level["accepted"]
+                            )
                         ik_reports.append(
                             {
                                 "stage": "verification_lift",
@@ -1980,17 +2123,38 @@ def search(args) -> dict:
     best = successful[0] if successful else ranked[0]
     if best["_knots"] is not None:
         best_samples = _trajectory_samples(best["_knots"])
+        no_render = bool(getattr(args, "no_render", False))
         best["simulation"] = simulate_candidate(
             derived_model,
             best_samples,
             closed_target_half_gap_m=closed_target_half_gap_m,
-            render=True,
+            render=not no_render,
             video_path=output / "best_lid_grasp.mp4",
             width=args.width,
             height=args.height,
             fps=args.fps,
         )
         effective_knots = _effective_trajectory_knots(best["_knots"])
+        physical_level_plan_audit = []
+        for knot in effective_knots:
+            if knot["stage"] not in {
+                "descend",
+                "descend_fast",
+                "insert",
+                "preclose_observe",
+                "close",
+                "verification_lift",
+            }:
+                continue
+            physical_q = knot["q_model"] - kinematics.right_offset
+            assessment = assess_jaw_level(
+                kinematics.production_fk.pose(physical_q).parameters(),
+                kinematics.level_reference,
+                planned=True,
+            )
+            physical_level_plan_audit.append(
+                {"stage": knot["stage"], **assessment.to_dict()}
+            )
         trajectory = {
             "schema": TRAJECTORY_SCHEMA,
             "commands_sent": False,
@@ -2016,6 +2180,7 @@ def search(args) -> dict:
                 for knot in effective_knots
             ],
             "simulation_validation": best["simulation"],
+            "physical_right_level_knot_audit": physical_level_plan_audit,
         }
         (output / "best_lid_grasp_trajectory.json").write_text(
             json.dumps(trajectory, indent=2, ensure_ascii=False) + "\n"
@@ -2052,9 +2217,15 @@ def search(args) -> dict:
             "trajectory": str(
                 (output / "best_lid_grasp_trajectory.json").resolve()
             ),
-            "video": str((output / "best_lid_grasp.mp4").resolve()),
-            "final_image": str(
-                (output / "best_lid_grasp_final.png").resolve()
+            "video": (
+                None
+                if bool(getattr(args, "no_render", False))
+                else str((output / "best_lid_grasp.mp4").resolve())
+            ),
+            "final_image": (
+                None
+                if bool(getattr(args, "no_render", False))
+                else str((output / "best_lid_grasp_final.png").resolve())
             ),
         },
         "hardware_motion_authorized": False,
@@ -2073,6 +2244,11 @@ def main(argv=None):
     parser.add_argument("--width", type=int, default=720)
     parser.add_argument("--height", type=int, default=540)
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument(
+        "--no-render",
+        action="store_true",
+        help="run physics/IK validation without allocating a GL renderer",
+    )
     parser.add_argument(
         "--candidate-id",
         type=int,

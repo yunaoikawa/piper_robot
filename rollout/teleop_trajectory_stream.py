@@ -408,6 +408,8 @@ class TeleopTrajectoryStreamer:
         xyz_correction_provider: Callable[[str, float], Sequence[float]]
         | None = None,
         stage_gate: Callable[[str], None] | None = None,
+        sample_gate: Callable[[str, float], None] | None = None,
+        pose_transformer: Callable[[str, mink.SE3], mink.SE3] | None = None,
     ) -> dict:
         """Stream samples continuously; optional corrections never pause it."""
 
@@ -439,11 +441,25 @@ class TeleopTrajectoryStreamer:
                     raise ValueError("trajectory sample times must increase")
                 previous_time = sample.t_s
                 self._check_torque(f"during {sample.stage}")
+                # This hook must be backed by cached camera/controller state.
+                # It is intentionally separate from stage_gate so a caller
+                # cannot accidentally add a synchronous 30 Hz robot RPC.
+                if sample_gate is not None:
+                    sample_gate(sample.stage, sample.t_s)
                 if not stages or stages[-1] != sample.stage:
                     if stage_gate is not None:
                         stage_gate(sample.stage)
                         gated_stages.append(sample.stage)
                 pose = self.fk.pose(sample.right_q_physical_rad)
+                if pose_transformer is not None:
+                    pose = pose_transformer(sample.stage, pose)
+                    transformed = np.asarray(pose.parameters(), dtype=float)
+                    if transformed.shape != (7,) or not np.all(
+                        np.isfinite(transformed)
+                    ):
+                        raise TrajectoryStreamError(
+                            "planned Cartesian pose transform is invalid"
+                        )
                 if xyz_correction_provider is not None:
                     correction = np.asarray(
                         xyz_correction_provider(sample.stage, sample.t_s),
@@ -591,4 +607,97 @@ class TeleopTrajectoryStreamer:
                 final_ee.parameters(), dtype=float
             ).tolist(),
             "final_right_gripper_open_ratio": final_gripper,
+        }
+
+    def recover_vertical_then_open(
+        self,
+        *,
+        clearance_m: float = 0.020,
+        lift_duration_s: float = 0.6,
+        open_duration_s: float = 0.5,
+        support_up_robot: Sequence[float] = (0.0, 0.0, 1.0),
+    ) -> dict:
+        """Keep aperture fixed, retreat vertically, then open at clearance.
+
+        This is the only recovery authorized from a low grasp pose.  XY and
+        quaternion stay fixed.  The method uses the same Cartesian teleop
+        path and torque policy as normal execution.
+        """
+
+        if clearance_m <= 0.0 or min(lift_duration_s, open_duration_s) <= 0.0:
+            raise ValueError("vertical recovery dimensions must be positive")
+        up = np.asarray(support_up_robot, dtype=float)
+        if up.shape != (3,) or not np.all(np.isfinite(up)):
+            raise ValueError("support up must contain three finite values")
+        norm = float(np.linalg.norm(up))
+        if norm < 1e-9:
+            raise ValueError("support up must be non-zero")
+        up /= norm
+        prepared = None
+        motion_error = None
+        command_count = 0
+        try:
+            prepared = self._prepare()
+            _, measured_ee = self._state()
+            start = np.asarray(measured_ee.parameters(), dtype=float)
+            aperture = float(
+                np.asarray(self.rpc.get_right_gripper_exact(), dtype=float)
+                .reshape(-1)[0]
+            )
+            lift_count = max(1, int(math.ceil(lift_duration_s * CONTROL_HZ)))
+            for index in range(1, lift_count + 1):
+                self._check_torque("during vertical recovery")
+                target = start.copy()
+                target[4:7] += (
+                    clearance_m * _minimum_jerk(index / lift_count) * up
+                )
+                accepted = self.rpc.set_right_ee_target(
+                    mink.SE3(target),
+                    gripper_target=aperture,
+                    preview_time=COMMAND_PREVIEW_S,
+                )
+                if accepted is not True:
+                    raise TrajectoryStreamError(
+                        "vertical recovery setpoint was rejected"
+                    )
+                command_count += 1
+                self.sleep(lift_duration_s / lift_count)
+            hover = start.copy()
+            hover[4:7] += clearance_m * up
+            open_count = max(1, int(math.ceil(open_duration_s * CONTROL_HZ)))
+            for index in range(1, open_count + 1):
+                self._check_torque("while opening at recovery hover")
+                target_aperture = aperture + _minimum_jerk(
+                    index / open_count
+                ) * (1.0 - aperture)
+                accepted = self.rpc.set_right_ee_target(
+                    mink.SE3(hover),
+                    gripper_target=target_aperture,
+                    preview_time=COMMAND_PREVIEW_S,
+                )
+                if accepted is not True:
+                    raise TrajectoryStreamError(
+                        "recovery hover open setpoint was rejected"
+                    )
+                command_count += 1
+                self.sleep(open_duration_s / open_count)
+        except BaseException as error:
+            motion_error = error
+            raise
+        finally:
+            try:
+                self._finish()
+            except BaseException as cleanup_error:
+                if motion_error is None:
+                    raise
+                note = getattr(motion_error, "add_note", None)
+                if note is not None:
+                    note(f"recovery cleanup also failed: {cleanup_error!r}")
+        return {
+            "completed": True,
+            "command_path": "set_right_ee_target",
+            "clearance_m": float(clearance_m),
+            "held_aperture_before_open": aperture,
+            "command_count": command_count,
+            "fk_validation": prepared["fk_check"],
         }
