@@ -3,11 +3,16 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.capture_record3d_multiview import _load_resume_manifest
+from src.capture_record3d_multiview import (
+    _camera_udid_from_config,
+    _load_resume_manifest,
+    _select_record3d_device,
+)
 
 
 def record(path: Path, root: Path) -> dict:
@@ -59,6 +64,31 @@ def interrupted_capture(root: Path) -> Path:
 
 
 class CaptureRecord3DResumeTest(unittest.TestCase):
+    def test_camera_is_selected_by_udid_not_enumeration_order(self):
+        devices = [
+            SimpleNamespace(udid="right"),
+            SimpleNamespace(udid="head"),
+            SimpleNamespace(udid="left"),
+        ]
+        index, device = _select_record3d_device(
+            devices,
+            camera_label="head",
+            expected_udid="head",
+        )
+        self.assertEqual(index, 1)
+        self.assertEqual(device.udid, "head")
+
+    def test_camera_udid_is_loaded_from_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "camera.json"
+            config.write_text(
+                json.dumps({"camera_udids": {"head": "stable-head"}})
+            )
+            self.assertEqual(
+                _camera_udid_from_config(str(config), "head"),
+                "stable-head",
+            )
+
     def test_valid_prefix_is_loaded_without_overwriting_saved_view(self):
         with tempfile.TemporaryDirectory() as directory:
             session = interrupted_capture(Path(directory))

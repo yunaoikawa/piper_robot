@@ -102,6 +102,54 @@ def _robot_state_stability(
     }
 
 
+def _select_record3d_device(
+    devices,
+    *,
+    camera_label: str,
+    expected_udid: str | None,
+):
+    """Resolve a camera by immutable UDID, with index fallback for legacy data."""
+
+    if expected_udid:
+        matches = [
+            (index, device)
+            for index, device in enumerate(devices)
+            if str(getattr(device, "udid", "")) == str(expected_udid)
+        ]
+        if len(matches) != 1:
+            connected = [
+                str(getattr(device, "udid", "")) for device in devices
+            ]
+            raise RuntimeError(
+                f"{camera_label} Record3D UDID {expected_udid!r} was not "
+                f"uniquely connected; connected={connected}"
+            )
+        return matches[0]
+
+    camera_index = int(load_camera_map().get(camera_label, 0))
+    if camera_index >= len(devices):
+        raise RuntimeError(
+            f"{camera_label} Record3D camera unavailable at index "
+            f"{camera_index}; found {len(devices)} device(s)"
+        )
+    return camera_index, devices[camera_index]
+
+
+def _camera_udid_from_config(path: str | None, camera_label: str) -> str | None:
+    if not path:
+        return None
+    config_path = Path(path)
+    if not config_path.is_file():
+        raise ValueError(f"camera config does not exist: {config_path}")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    value = config.get("camera_udids", {}).get(camera_label)
+    if not isinstance(value, str) or not value:
+        raise ValueError(
+            f"camera config has no camera_udids.{camera_label}: {config_path}"
+        )
+    return value
+
+
 def _write_view(
     session_dir: Path,
     view_name: str,
@@ -304,7 +352,22 @@ def main() -> int:
     )
     parser.add_argument("--robot-host", default="localhost")
     parser.add_argument("--robot-port", type=int, default=8081)
+    parser.add_argument(
+        "--camera-config",
+        default="src/configs/pasteur_autonomous_lid_grasp.json",
+        help=(
+            "JSON containing camera_udids.head; use an empty value only for "
+            "legacy index-based capture"
+        ),
+    )
+    parser.add_argument(
+        "--camera-udid",
+        help="explicit immutable head-camera UDID (overrides --camera-config)",
+    )
     args = parser.parse_args()
+    expected_camera_udid = args.camera_udid or _camera_udid_from_config(
+        args.camera_config, "head"
+    )
     if args.resume_session:
         session_dir = Path(args.resume_session).resolve()
         manifest, views, saved_views = _load_resume_manifest(
@@ -367,6 +430,7 @@ def main() -> int:
             "purpose": args.condition,
             "created_at_utc": utc_iso(created_ns),
             "camera_label": "head",
+            "requested_camera_udid": expected_camera_udid,
             "view_order": views,
             "frames_per_view": args.frames_per_view,
             "pose_frame": "single_record3d_session_local",
@@ -417,13 +481,11 @@ def main() -> int:
         else None
     )
     devices = Record3DStream.get_connected_devices()
-    camera_index = int(load_camera_map().get("head", 0))
-    if camera_index >= len(devices):
-        raise RuntimeError(
-            f"head Record3D camera unavailable at index {camera_index}; "
-            f"found {len(devices)} device(s)"
-        )
-    device = devices[camera_index]
+    camera_index, device = _select_record3d_device(
+        devices,
+        camera_label="head",
+        expected_udid=expected_camera_udid,
+    )
     stream = Record3DStream()
     lock = threading.Lock()
     ready = threading.Event()
@@ -481,7 +543,13 @@ def main() -> int:
     stream.on_stream_stopped = lambda: errors.append(
         "Record3D stream stopped unexpectedly"
     )
-    stream.connect(device)
+    connected = stream.connect(device)
+    if connected is False:
+        raise RuntimeError(
+            "head Record3D rejected USB streaming; keep the app in the "
+            "foreground, press its Toggle once, and leave this single "
+            "capture connection open for the complete session"
+        )
     if not ready.wait(timeout=args.view_timeout_s):
         raise RuntimeError("Record3D warmup timed out")
     device_type = int(stream.get_device_type())

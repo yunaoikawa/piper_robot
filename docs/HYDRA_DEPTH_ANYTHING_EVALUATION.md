@@ -118,6 +118,82 @@ Promote mode 4 only if it improves opaque-object completeness without
 increasing support-plane error, robot-mesh reprojection error, or false free
 space around the grippers. Until then it is visualization/advisory data only.
 
+## One-time lab capture checklist
+
+The following data should be collected while the operator is next in the lab.
+It is intentionally separate from the first physical lid-grasp retry and does
+not require autonomous calibration motion.
+
+### Before capture
+
+- Install diffuse fixed lighting that illuminates the bench without a hard
+  reflection across the transparent lid.
+- Enable Developer Mode on all three camera phones, complete the required
+  reboot/confirmation, disable Auto-Lock, connect power, reopen Record3D, and
+  enable USB Streaming.
+- Keep mirroring disabled and keep the head camera mechanically fixed for the
+  entire calibration session.
+- Start one persistent receiver and leave it connected. Do not poll by opening
+  and closing a new Record3D session for each snapshot.
+- Capture immutable camera UDIDs and app/version/settings in the manifest.
+
+### Dataset A: fixed-head robot calibration (about five minutes)
+
+Use one continuous head Record3D connection. The capture script sends no robot
+commands; the operator moves the robot through the existing teleoperation path
+and presses Enter only after it is fully stopped.
+
+```bash
+python src/capture_record3d_multiview.py \
+  --operator-action move-robot --robot-state \
+  --condition hydra_depth_anything_20260805 \
+  --frames-per-view 9 \
+  --view home_baseline \
+  --view physical_left_excitation \
+  --view physical_right_excitation \
+  --view both_spread \
+  --view wrist_orientation_excitation \
+  --view holdout
+```
+
+The poses must be visibly different, collision-free, and jointly show as much
+of both Piper meshes as practical. The last pose is never used to fit the
+transform; it is the holdout. Each view stores lossless RGB, metric depth,
+confidence, intrinsics, Record3D pose, source hashes, and read-only 12-joint
+state before and after its burst. The burst fails if the phone or robot moves.
+
+### Dataset B: RGB-only wrist multi-view
+
+Record the normal lid-grasp trials with the existing teleoperation recorder so
+the head, left wrist, right wrist, joint state, EE pose, and gripper aperture
+are retained together. Also record one short observation-only episode in which
+one arm at a time is manually moved through 8–12 stopped or very slow,
+overlapping views of the bench. Include small azimuth and elevation changes;
+do not make fast circles. The second arm stays still.
+
+The future Depth Anything importer should extract sharp stopped frames from
+the wrist MP4 files, retain the corresponding HDF5 joint/EE state, and record
+that wrist depth is learned rather than measured. These images are useful for
+scene completion and a relative multi-view model, but never become collision
+authority without metric/CAD validation.
+
+### Minimum useful result
+
+Do not spend grasp time repeating a marginal optional view. The minimum useful
+future dataset is:
+
+- one fixed, lit head camera identity;
+- home plus four varied stopped fit poses and one stopped holdout;
+- nine synchronized head RGB-D frames per pose;
+- complete before/after 12-joint snapshots;
+- one recorded physical grasp attempt with all three RGB streams;
+- one right-wrist and one left-wrist overlapping scene sweep;
+- a visible known-scale Piper link, support plane, and 90 mm lid in the scene.
+
+If only one extra collection can be completed, Dataset A has priority because
+it enables a robot-grounded camera transform and also supplies metric
+ground-truth frames for evaluating learned depth.
+
 ## References
 
 - https://arxiv.org/abs/2504.20584
