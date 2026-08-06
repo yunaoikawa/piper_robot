@@ -1,0 +1,130 @@
+{
+  "schema": "piper_robot.adapter_grasp_task/v1",
+  "base_profile": "src/configs/pasteur_codexless_thin_object_grasp.json",
+  "target_adapter": "culture_media_cap",
+  "tap_identity": "data/runs/pasteur/culture_media_cap_tap_retry_20260806/tap_identity.json",
+  "scene_refresh": {
+    "capture": "data/captures/pasteur/2026-08-06/20260806T074422.957478Z_head_culture_media_cap_home_scene_refresh_a4726ec2",
+    "reference_report": "data/reconstructions/pasteur/record3d_20260730_215729_v3/multiview_report.json",
+    "reference_capture": "data/captures/pasteur/record3d_multiview_import/2026-07-30/20260730T050529.878846Z_head_record3d_exr_d7d3a413",
+    "tag_id": 3,
+    "tag_size_m": 0.06,
+    "body_name": "culture_media_bottle-1",
+    "support_relation": "recessed_between_two_equal-height_platforms",
+    "completion_direction": "down_from_observed_cap_top",
+    "catalog_size_m": [0.075, 0.075, 0.16],
+    "cap_size_m": [0.045, 0.045, 0.022],
+    "minimum_initial_egress_depth_m": 0.025,
+    "unobserved_dynamic_bodies": ["petri_dish-1", "petri_lid-1"]
+  },
+  "empirical_view_anchor": {
+    "target_scene_xyz_m": [-0.07536914416413132, 1.0368882804402626, -0.541057676968444],
+    "maximum_target_displacement_m": 0.025,
+    "final_tolerance_rad": 0.08,
+    "settle_timeout_s": 4.0,
+    "waypoints": [
+      {
+        "run": "data/runs/pasteur/culture_media_cap_grasp_20260806_plan_v2/run.json",
+        "iteration": 0,
+        "duration_s": 2.5
+      },
+      {
+        "run": "data/runs/pasteur/culture_media_cap_grasp_20260806_stable_plan/run.json",
+        "iteration": 0,
+        "duration_s": 3.0
+      },
+      {
+        "run": "data/runs/pasteur/culture_media_cap_grasp_20260806_current_view/run.json",
+        "iteration": 0,
+        "duration_s": 3.0
+      }
+    ]
+  },
+  "home": {
+    "maximum_joint_error_rad": 0.05
+  },
+  "head_coarse": {
+    "fixed_camera_stationary_target": true,
+    "maximum_tap_displacement_diagonal_fraction": 0.20,
+    "initial_lift_m": 0.0,
+    "probe_m": 0.006,
+    "minimum_step_m": 0.0015,
+    "maximum_step_m": 0.02,
+    "maximum_search_displacement_m": 0.08,
+    "minimum_joint_margin_rad": 0.02,
+    "maximum_iterations": 16,
+    "maximum_jacobian_condition": 40.0,
+    "tolerance_jaw_spans": 0.30,
+    "minimum_progress": 0.003
+  },
+  "validated_fixed_head_approach": {
+    "source": "hardware_observed_recessed_bottle_trial_20260806",
+    "scope": "open_jaw_approach_from_physical_home",
+    "final_tolerance_rad": 0.08,
+    "settle_timeout_s": 4.0,
+    "waypoints": [
+      {
+        "right_q_physical_rad": [0.1775523424, 1.5511614084, -0.5149070621, 0.2005906850, -0.9499478340, 2.2430098057],
+        "duration_s": 2.0
+      },
+      {
+        "right_q_physical_rad": [0.3031462431, 1.5154169798, -0.5066691041, 0.3166550994, -0.9499478340, 2.1737377644],
+        "duration_s": 2.0
+      },
+      {
+        "right_q_physical_rad": [0.3367961943, 1.6309229136, -0.4639085233, 0.2994635999, -1.1954632998, 2.2006680965],
+        "duration_s": 2.0
+      },
+      {
+        "right_q_physical_rad": [0.4460363388, 1.6494059563, -0.4697379172, 0.3581590056, -1.1958646774, 2.1840527058],
+        "duration_s": 2.0
+      },
+      {
+        "right_q_physical_rad": [0.4863534570, 1.6634907722, -0.4697379172, 0.3839899004, -1.1958646774, 2.1830403805],
+        "duration_s": 1.5
+      }
+    ]
+  },
+  "fixed_head_preclose": {
+    "target_identity": "immutable_initial_user_tap_in_fixed_head_camera",
+    "error_units": "current_open_jaw_span",
+    "jaw_error_per_meter_jacobian": [
+      [-14.44924277, -8.51244240, 7.17898234],
+      [-7.29531878, -1.97610237, -5.30912915]
+    ],
+    "jacobian_source": "seven_hardware_observed_open_jaw_poses_20260806",
+    "preclose_tolerance_jaw_spans": 0.10,
+    "maximum_step_m": 0.015,
+    "maximum_iterations": 4,
+    "maximum_support_shift_fraction": 0.10
+  },
+  "right_alignment": {
+    "identity_anchor_uv": [0.192806452760387, 0.6048294915575793],
+    "identity_anchor_source": "hardware_observed_current_view_right_00",
+    "maximum_identity_displacement_diagonal_fraction": 0.22,
+    "contact_center_uv": [0.8010635517967067, -0.6578585490577822],
+    "contact_center_source": "nyu_open_jaw_tool_geometry",
+    "probe_m": 0.005,
+    "maximum_step_m": 0.006,
+    "maximum_iterations": 8,
+    "maximum_jacobian_condition": 40.0,
+    "minimum_joint_margin_rad": 0.02,
+    "minimum_progress_tool_units": 0.02,
+    "tolerance_tool_units": 0.12
+  },
+  "closure": {
+    "endpoint": "grasp_and_hold",
+    "lift_after_closure_m": 0.0,
+    "use_thin_object_final_seating_extra_down": false,
+    "duration_s": 1.8,
+    "settle_s": 1.0,
+    "minimum_contact_open_ratio": 0.10,
+    "maximum_contact_open_ratio": 0.40,
+    "maximum_target_perpendicular_span_fraction": 0.25,
+    "maximum_support_shift_fraction": 0.10
+  },
+  "fiducials": {
+    "role": "localization_only",
+    "included_in_collision_geometry": false
+  }
+}
