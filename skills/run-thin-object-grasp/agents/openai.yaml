@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Thin-Object Grasp"
+  short_description: "Orchestrate and audit safe thin-object grasp primitives"
+  default_prompt: "Use $run-thin-object-grasp to audit and orchestrate a thin-object grasp through immutable semantic checkpoints."
