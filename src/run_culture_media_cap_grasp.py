@@ -43,6 +43,14 @@ from rollout.rgbd_target_scene import (
     target_surface_in_scene,
     write_completed_vertical_object_scene,
 )
+from rollout.cylindrical_cap_transfer import (
+    CapTransferFrame,
+    audit_cap_transfer_captures,
+    validate_hardware_route_replay,
+    validate_lift_transition,
+    validate_transport_transition,
+    waypoint_route_sha256,
+)
 from src.run_codexless_thin_object_grasp import (
     LiveCamera,
     _cartesian_move,
@@ -409,7 +417,9 @@ def _save_head(output: Path, index: int, observed: dict) -> dict:
     }
 
 
-def _move_cartesian_delta(profile, rpc, fk, delta_xyz, *, stage: str):
+def _move_cartesian_delta(
+    profile, rpc, fk, delta_xyz, *, stage: str, aperture: float = 1.0
+):
     start = np.asarray(rpc.get_right_ee_pose().parameters(), dtype=float)
     target = start.copy()
     target[4:] += np.asarray(delta_xyz, dtype=float)
@@ -419,10 +429,192 @@ def _move_cartesian_delta(profile, rpc, fk, delta_xyz, *, stage: str):
         fk,
         target_pose=target,
         duration_s=1.5,
-        aperture=1.0,
+        aperture=float(aperture),
         stage=stage,
         settle_s=0.35,
     )
+
+
+def _transfer_frame(task, rpc, observed: dict, *, label: str) -> CapTransferFrame:
+    """Convert a live fixed-head observation to the I/O-free transfer gate."""
+
+    image = observed["image"]
+    anchor = _tap_anchor_px(task, image)
+    span = float(observed["jaw"]["jaw_span_px"])
+    radius = float(task["verified_transfer"]["source_radius_jaw_spans"]) * span
+    yy, xx = np.ogrid[: image.shape[0], : image.shape[1]]
+    source_roi = (xx - anchor[0]) ** 2 + (yy - anchor[1]) ** 2 <= radius**2
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    local_white = (hsv[:, :, 1] <= 90) & (hsv[:, :, 2] >= 185)
+    pose = np.asarray(rpc.get_right_ee_pose().parameters(), dtype=float)
+    return CapTransferFrame(
+        capture=label,
+        target_anchor_px=tuple(float(item) for item in anchor),
+        jaw_center_px=tuple(float(item) for item in observed["jaw_center_px"]),
+        jaw_centers_px=tuple(
+            tuple(float(item) for item in center)
+            for center in observed["jaw"]["jaw_centers_px"]
+        ),
+        jaw_span_px=span,
+        source_local_white_pixels=int(np.count_nonzero(local_white & source_roi)),
+        source_local_area_pixels=int(np.count_nonzero(source_roi)),
+        support_center_px=tuple(
+            float(item) for item in observed["support_center_px"]
+        ),
+        support_scale_px=float(observed["support"]["component_diagonal_px"]),
+        right_q_physical_rad=tuple(
+            float(item) for item in rpc.get_right_joint_positions()
+        ),
+        right_ee_xyz_m=tuple(float(item) for item in pose[4:]),
+        gripper_open_ratio=float(rpc.get_right_gripper_exact()),
+    )
+
+
+def _lift_and_transport_verified_cap(
+    task, profile, rpc, fk, output, report, closed: dict
+):
+    """Lift once, validate removal, then replay the verified free-space egress."""
+
+    settings = task["verified_transfer"]
+    before = _transfer_frame(task, rpc, closed, label="closed_before_lift")
+    aperture = before.gripper_open_ratio
+    report["initial_lift_motion"] = _move_cartesian_delta(
+        profile,
+        rpc,
+        fk,
+        [0.0, 0.0, float(settings["initial_lift_m"])],
+        stage="culture_cap_verified_initial_lift",
+        aperture=aperture,
+    )
+    camera = LiveCamera("head")
+    camera.__enter__()
+    try:
+        lifted_observation = _observe_head(camera, task)
+    finally:
+        camera.__exit__(None, None, None)
+    report["head_observations"].append(
+        _save_head(output, len(report["head_observations"]), lifted_observation)
+    )
+    lifted = _transfer_frame(
+        task, rpc, lifted_observation, label="after_initial_lift"
+    )
+    lift_validation = validate_lift_transition(before, lifted, settings)
+    report["initial_lift_validation"] = lift_validation
+    if not lift_validation["accepted"]:
+        raise RuntimeError("cap initial-lift evidence failed")
+
+    start = np.asarray(rpc.get_right_joint_positions(), dtype=float)
+    route = list(task["validated_fixed_head_approach"]["waypoints"])
+    if len(route) < 2:
+        raise ValueError("verified cap transfer needs at least two approach waypoints")
+    knots = [
+        {
+            "stage": "held_cap_lift_start",
+            "right_q_physical_rad": start.tolist(),
+            "right_gripper_open_ratio": aperture,
+            "minimum_duration_s": 0.1,
+        }
+    ]
+    # Omit the last contact-height waypoint.  The initial lift already moved
+    # vertically clear; revisiting that waypoint would lower the held cap.
+    for index, waypoint in enumerate(reversed(route[:-1])):
+        knots.append(
+            {
+                "stage": f"held_cap_reverse_egress_{index}",
+                "right_q_physical_rad": waypoint["right_q_physical_rad"],
+                "right_gripper_open_ratio": aperture,
+                "minimum_duration_s": float(waypoint["duration_s"]),
+            }
+        )
+    knots.append(
+        {
+            "stage": "held_cap_home_staging",
+            "right_q_physical_rad": physical_home_q("right").tolist(),
+            "right_gripper_open_ratio": aperture,
+            "minimum_duration_s": 2.5,
+        }
+    )
+    samples = sample_joint_knots(knots)
+    path = np.vstack((start, *[item.right_q_physical_rad for item in samples]))
+    collision = _right_joint_path_contact_audit(profile, path)
+    lower, upper = _joint_bounds(profile, fk)
+    route_sha256 = waypoint_route_sha256(
+        task["validated_fixed_head_approach"]["waypoints"]
+    )
+    evidence = settings["hardware_evidence"]
+    identity = _load(task["tap_identity"])
+    hardware_audit = audit_cap_transfer_captures(
+        evidence["before_lift"],
+        evidence["after_lift"],
+        evidence["transported_hold"],
+        target_anchor_uv=identity["tap"]["uv"],
+        settings=settings,
+    )
+    route_gate = validate_hardware_route_replay(
+        path,
+        lower=lower,
+        upper=upper,
+        model_collision_audit=collision,
+        hardware_evidence_audit=hardware_audit,
+        actual_waypoints_sha256=route_sha256,
+        expected_waypoints_sha256=settings["approach_waypoints_sha256"],
+        maximum_route_joint_step_rad=float(
+            settings["maximum_route_joint_step_rad"]
+        ),
+        allow_model_false_positive=bool(
+            settings.get(
+                "allow_model_false_positive_only_for_exact_hardware_route",
+                False,
+            )
+        ),
+    )
+    if not route_gate["accepted"]:
+        raise RuntimeError("verified cap egress route gate rejected")
+    report["transport_motion"] = {
+        "route": settings["route"],
+        "route_gate": route_gate,
+        "motion": _execute_direct_joint_samples(
+            profile,
+            rpc,
+            fk,
+            samples,
+            final_tolerance_rad=float(
+                task["validated_fixed_head_approach"]["final_tolerance_rad"]
+            ),
+            endpoint_correction_gain=0.0,
+            settle_timeout_s=float(
+                task["validated_fixed_head_approach"]["settle_timeout_s"]
+            ),
+            require_final_convergence=False,
+        ),
+    }
+    camera = LiveCamera("head")
+    camera.__enter__()
+    try:
+        transported_observation = _observe_head(camera, task)
+    finally:
+        camera.__exit__(None, None, None)
+    report["head_observations"].append(
+        _save_head(
+            output,
+            len(report["head_observations"]),
+            transported_observation,
+        )
+    )
+    transported = _transfer_frame(
+        task, rpc, transported_observation, label="transported_hold"
+    )
+    transport_validation = validate_transport_transition(
+        lifted, transported, before, settings
+    )
+    report["transport_validation"] = transport_validation
+    if not transport_validation["accepted"]:
+        raise RuntimeError("cap held-transport evidence failed")
+    return {
+        "promotion_scope": "cap_side_pinch_lift_and_held_transport",
+        "placement_promoted": False,
+        "held_aperture": transported.gripper_open_ratio,
+    }
 
 
 def _move_validated_fixed_head_approach(task, profile, rpc, fk):
@@ -834,7 +1026,9 @@ def main(argv=None):
         default="data/runs/pasteur/culture_media_cap_adapter_latest",
     )
     parser.add_argument(
-        "--stage", choices=("observe", "coarse", "align", "grasp"), default="observe"
+        "--stage",
+        choices=("observe", "coarse", "align", "grasp", "grasp-transfer"),
+        default="observe",
     )
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
@@ -905,8 +1099,10 @@ def main(argv=None):
                 camera.__exit__(None, None, None)
         else:
             if not args.execute:
-                raise RuntimeError("coarse/align/grasp stages require --execute")
-            if args.stage == "grasp":
+                raise RuntimeError(
+                    "coarse/align/grasp/grasp-transfer stages require --execute"
+                )
+            if args.stage in ("grasp", "grasp-transfer"):
                 report["validated_fixed_head_approach"] = (
                     _move_validated_fixed_head_approach(
                         task, profile, rpc, fk
@@ -916,10 +1112,15 @@ def main(argv=None):
                     task, profile, rpc, fk, output, report
                 )
                 report["status"] = "fixed_head_tap_aligned_open"
-                _close_and_validate_fixed_head(
+                closed = _close_and_validate_fixed_head(
                     task, profile, rpc, fk, output, report, preclose
                 )
                 report["status"] = "culture_media_cap_grasped_and_held"
+                if args.stage == "grasp-transfer":
+                    report["verified_transfer"] = _lift_and_transport_verified_cap(
+                        task, profile, rpc, fk, output, report, closed
+                    )
+                    report["status"] = "culture_media_cap_removed_and_held_at_home"
             else:
                 report["empirical_view_motion"] = _move_to_empirical_view(
                     task, profile, rpc, fk, scene_refresh

@@ -123,6 +123,39 @@
     "maximum_target_perpendicular_span_fraction": 0.25,
     "maximum_support_shift_fraction": 0.10
   },
+  "verified_transfer": {
+    "status": "promoted_from_end_to_end_hardware_evidence",
+    "source_radius_jaw_spans": 0.30,
+    "initial_lift_m": 0.010,
+    "minimum_measured_lift_m": 0.008,
+    "minimum_jaw_motion_spans": 0.05,
+    "minimum_transport_distance_m": 0.05,
+    "minimum_contact_open_ratio": 0.10,
+    "maximum_contact_open_ratio": 0.40,
+    "maximum_aperture_drift": 0.05,
+    "maximum_target_perpendicular_span_fraction": 0.25,
+    "maximum_support_shift_fraction": 0.10,
+    "maximum_source_appearance_ratio": 0.50,
+    "maximum_route_joint_step_rad": 0.02,
+    "route": "reverse_validated_fixed_head_approach_excluding_contact_to_home",
+    "approach_waypoints_sha256": "421f3d99b94a7d87901e8f3ed830f9f5817df2bcdd59f1defa3c9a5302eefa59",
+    "allow_model_false_positive_only_for_exact_hardware_route": true,
+    "hardware_evidence": {
+      "before_lift": "data/captures/pasteur/2026-08-06/20260806T090454.207716Z_head_culture_media_cap_hold_before_lift_ce98d39c",
+      "after_lift": "data/captures/pasteur/2026-08-06/20260806T090516.450533Z_head_culture_media_cap_lift_probe10_792a8b3c",
+      "transported_hold": "data/captures/pasteur/2026-08-06/20260806T090638.703002Z_head_culture_media_cap_transport_home_hold_c01dae62"
+    }
+  },
+  "placement": {
+    "status": "not_promoted",
+    "reason": "release destination was not visually or depth verified",
+    "required_before_enable": [
+      "fresh_destination_support_selection",
+      "held_cap_bottom_clearance",
+      "post_open_cap_on_support_evidence",
+      "vertical_retract_without_target_follow"
+    ]
+  },
   "fiducials": {
     "role": "localization_only",
     "included_in_collision_geometry": false

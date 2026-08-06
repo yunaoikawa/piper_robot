@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Cylindrical Cap Transfer"
+  short_description: "Audit and run reusable cap removal and held transfer"
+  default_prompt: "Use $run-cylindrical-cap-transfer to audit and execute a cylindrical cap side-pinch, lift, and held transfer."
