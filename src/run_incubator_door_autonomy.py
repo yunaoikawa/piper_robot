@@ -85,6 +85,17 @@ class WorkflowFailure(RuntimeError):
     pass
 
 
+def _residual_door_yaw_deg(
+    measured_yaw_deg: float,
+    reference_yaw_deg: float,
+    registration_report: dict | None,
+) -> float:
+    delta = wrap_degrees(float(measured_yaw_deg) - float(reference_yaw_deg))
+    if registration_report is not None:
+        delta = wrap_degrees(delta - float(registration_report["yaw_deg"]))
+    return delta
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -98,6 +109,21 @@ class Orchestrator:
         self.profile = _load(self.profile_path)
         self.settings = self.profile["autonomy"]
         self.state_settings = self.profile["state_detection"]
+        registration = self.settings.get("appliance_registration")
+        self.appliance_registration = (
+            None if registration is None else _resolve(registration)
+        )
+        self.appliance_registration_report = None
+        if self.appliance_registration is not None:
+            self.appliance_registration_report = _load(
+                self.appliance_registration
+            )
+            if not bool(
+                self.appliance_registration_report.get("accepted", False)
+            ):
+                raise WorkflowFailure(
+                    "configured appliance registration is not accepted"
+                )
         self.run_dir = run_dir.resolve()
         self.run_dir.mkdir(parents=True, exist_ok=False)
         self.rpc_host = rpc_host
@@ -371,7 +397,14 @@ class Orchestrator:
             raise WorkflowFailure("opening requires a confidently closed initial state")
         plane = self.estimate_closed_plane_yaw(initial["capture_dir"])
         reference_yaw = float(self.settings["reference_closed_plane_yaw_deg"])
-        yaw_delta = wrap_degrees(plane["normal_yaw_deg"] - reference_yaw)
+        yaw_delta = _residual_door_yaw_deg(
+            plane["normal_yaw_deg"],
+            reference_yaw,
+            self.appliance_registration_report,
+        )
+        # Full appliance registration already carries the cross-lab yaw.
+        # Apply only the residual from the higher-resolution live door plane;
+        # adding the full plane delta again would rotate the preclose twice.
         maximum_attempts = int(self.settings.get("maximum_open_attempts", 2))
         aligned_reference = _resolve(self.settings["reference_aligned_preclose_state"])
 
@@ -381,6 +414,7 @@ class Orchestrator:
                 "aligned-yaw-preclose",
                 aligned_state=aligned_reference,
                 world_yaw_deg=yaw_delta,
+                appliance_registration=self.appliance_registration,
             )
             preclose_state = self._nested(preclose, "aligned_yaw_preclose")
             visual = self.visual_converged(
@@ -457,7 +491,10 @@ class Orchestrator:
             return self.finish("goal-already-satisfied", final_state=initial)
         if initial["state"] != ApplianceState.OPEN.value:
             raise WorkflowFailure("closing requires a confidently open initial state")
-        self.run_motion_stage("close-door-demo")
+        self.run_motion_stage(
+            "close-door-demo",
+            appliance_registration=self.appliance_registration,
+        )
         final = self.capture_and_classify("close_result")
         if final["state"] != ApplianceState.CLOSED.value:
             raise WorkflowFailure(

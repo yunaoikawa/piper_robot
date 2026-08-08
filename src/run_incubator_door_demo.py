@@ -41,6 +41,7 @@ from rollout.incubator_door_close import (
     reverse_opening_from_live_pose,
 )
 from rollout.incubator_door_visual import extract_feature, predict_local_delta
+from rollout.appliance_frame import matrix4, matrix_to_pose7
 from rollout.teleop_trajectory_stream import (
     CONTROL_HZ,
     JointTrajectorySample,
@@ -54,6 +55,20 @@ from src.run_demo_relative_servo import LiveSource
 
 def _load(path: str | Path) -> dict:
     return json.loads(Path(path).read_text())
+
+
+def _load_appliance_registration(path: Path | None) -> np.ndarray:
+    """Load a bounded, accepted reference-lab to live-lab registration."""
+
+    if path is None:
+        return np.eye(4)
+    payload = _load(path)
+    if not bool(payload.get("accepted", False)):
+        raise RuntimeError("appliance registration is not accepted")
+    transform = payload.get("T_registration")
+    if transform is None:
+        raise RuntimeError("appliance registration lacks T_registration")
+    return matrix4(transform, "T_registration")
 
 
 def _minimum_jerk(value: float) -> float:
@@ -875,12 +890,17 @@ def close_door_from_peacock_demo(
     profile: dict,
     rpc,
     output_dir: Path,
+    appliance_registration_path: Path | None = None,
 ) -> dict:
     """Use the dedicated low push point from a verified close demonstration."""
 
     settings = profile["close_door"]
     closing = load_open_jaw_close_trajectory(
         settings["peacock_strategy_reference"]
+    )
+    registration = _load_appliance_registration(appliance_registration_path)
+    closing = register_close_trajectory(
+        closing, matrix_to_pose7(registration)
     )
     target = np.asarray(closing[0]["pose_wxyz_xyz"], dtype=float)
     target_rotation = mink.SE3(target).as_matrix()[:3, :3]
@@ -925,7 +945,11 @@ def close_door_from_peacock_demo(
         "commands_sent": True,
         "stage": "close-door-demo",
         "strategy": "raw Peacock low open-jaw pushing trajectory",
-        "scene_registration": "none; verified Pasteur robot coordinates",
+        "scene_registration": (
+            "identity; verified Pasteur robot coordinates"
+            if appliance_registration_path is None
+            else str(appliance_registration_path.resolve())
+        ),
         "source": str(Path(settings["peacock_strategy_reference"]).resolve()),
         "precontact_motion": precontact_motion,
         "contact_motion": contact_motion,
@@ -1478,6 +1502,7 @@ def aligned_yaw_preclose(
     aligned_state_path: Path,
     *,
     world_yaw_deg: float,
+    appliance_registration_path: Path | None = None,
 ) -> dict:
     """Move to one absolute, visually aligned preclose with a door-yaw offset."""
 
@@ -1495,6 +1520,8 @@ def aligned_yaw_preclose(
     compiled = _load(profile["compiled_demo"])
     base = np.asarray(state["live_preclose_wxyz_xyz"], dtype=float)
     base[6] = float(compiled["medoid"]["preclose_pose_wxyz_xyz"][6])
+    registration = _load_appliance_registration(appliance_registration_path)
+    base = matrix_to_pose7(registration @ mink.SE3(base).as_matrix())
     target = world_yaw_pose(base, world_yaw_deg)
     before = _capture(profile, rpc, output_dir / "before")
     settle = _settle_cartesian_target(
@@ -1512,6 +1539,11 @@ def aligned_yaw_preclose(
         "stage": "aligned-yaw-preclose",
         "source_state": str(aligned_state_path.resolve()),
         "world_yaw_deg": float(world_yaw_deg),
+        "appliance_registration": (
+            None
+            if appliance_registration_path is None
+            else str(appliance_registration_path.resolve())
+        ),
         "base_wxyz_xyz": base.tolist(),
         "target_wxyz_xyz": target.tolist(),
         "settle": settle,
@@ -1697,6 +1729,7 @@ def main() -> int:
     parser.add_argument("--aligned-state", type=Path)
     parser.add_argument("--close-state", type=Path)
     parser.add_argument("--world-yaw-deg", type=float, default=0.0)
+    parser.add_argument("--appliance-registration", type=Path)
     parser.add_argument(
         "stage",
         choices=(
@@ -1780,7 +1813,7 @@ def main() -> int:
         )
     if args.stage == "close-door-demo":
         result["close_door_demo"] = close_door_from_peacock_demo(
-            profile, rpc, args.output_dir
+            profile, rpc, args.output_dir, args.appliance_registration
         )
     if args.stage == "restore-close-demo-start":
         result["restore_close_demo_start"] = restore_peacock_close_start(
@@ -1834,6 +1867,7 @@ def main() -> int:
             args.output_dir,
             args.aligned_state,
             world_yaw_deg=args.world_yaw_deg,
+            appliance_registration_path=args.appliance_registration,
         )
     print(json.dumps(result, indent=2))
     return 0

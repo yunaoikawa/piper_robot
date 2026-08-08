@@ -217,3 +217,81 @@ $PY -m pytest -q tests/test_articulated_appliance.py \
   tests/test_incubator_door_visual.py \
   tests/test_incubator_door_close.py
 ```
+
+## Portable appliance frame for another lab
+
+The Pasteur coordinates above are a verified installation profile, not the
+portable task definition.  Cross-lab execution uses the completed incubator
+box as a canonical semantic frame.  An end-effector sample is compiled as
+`T_appliance_ee`; at runtime it becomes
+`T_robot_appliance_live @ T_appliance_ee`.  Thus a translated or rotated
+incubator moves both the opening preclose and every sample of the low open-jaw
+closing path.
+
+AprilTags are optional local trackers.  Their ids and physical locations do
+not need to match between labs.  During enrollment, SAM plus RGB-D first fits
+the incubator volume and establishes `T_robot_appliance`.  If a tag is useful,
+the enrollment stores that lab's measured
+`T_appliance_tag = inv(T_robot_appliance) @ T_robot_tag`.  Later observations
+recover the appliance as
+`T_robot_tag_live @ inv(T_appliance_tag)`.  Neither tag id nor tag pose appears
+in the portable trajectory.  Without a tag, acquire another SAM plus RGB-D
+scene instead.
+
+The first enrollment step is read-only and never contacts the robot:
+
+```bash
+$PY src/enroll_appliance_frame.py \
+  --scene /lab/site/scene.json \
+  --robot-scene-calibration /lab/site/accepted_robot_scene.json \
+  --semantic-name incubator \
+  --tag-observation /lab/site/optional_tag_observation.json \
+  --tag-id 41 \
+  --output /lab/site/incubator_enrollment.json
+```
+
+`accepted_robot_scene.json` must independently accept the convention
+`p_robot = T_robot_scene @ p_scene`.  A gravity-levelled Record3D scene is not
+silently treated as the camera or robot frame.  The semantic volume fit,
+confidence, and collision readiness must also pass.  `--inspection-only` may
+write diagnostics from an incomplete scene, but its output explicitly has no
+motion authority.
+
+Create the bounded registration from the reference demo installation to the
+current lab.  Give `--current-tag-observation` only for the fast locally
+enrolled tag path; omit it to use the current SAM/RGB-D enrollment directly:
+
+```bash
+$PY src/prepare_appliance_registration.py \
+  --reference-enrollment /reference/incubator_enrollment.json \
+  --current-enrollment /lab/site/incubator_enrollment.json \
+  --current-tag-observation /lab/site/tag_now.json \
+  --output /lab/site/incubator_registration.json
+```
+
+Registration rejects excessive translation, yaw, tilt, and reconstructed size
+change.  Pass only the accepted artifact to either motion stage:
+
+```bash
+$PY src/run_incubator_door_demo.py \
+  --appliance-registration /lab/site/incubator_registration.json \
+  --output-dir "$RUN/preclose" aligned-yaw-preclose \
+  --aligned-state /reference/aligned_contact.json
+
+$PY src/run_incubator_door_demo.py \
+  --appliance-registration /lab/site/incubator_registration.json \
+  --output-dir "$RUN/close" close-door-demo
+```
+
+The registration already contains the cross-lab appliance yaw.  During the
+Codexless opening workflow, the live RGB-D door-plane yaw is used only as a
+small residual correction; it is not added a second time.
+
+For Codexless orchestration, set `autonomy.appliance_registration` in the
+site-local profile.  If it is absent, the existing Pasteur profile retains its
+verified identity registration.  A portable site profile must never copy
+Pasteur's identity assumption.
+
+The portable contract and arbitrary-tag-placement regressions are in
+`rollout/appliance_frame.py`, `tests/test_appliance_frame.py`, and
+`tests/test_prepare_appliance_registration.py`.
