@@ -80,6 +80,21 @@
     "maximum_image_age_s": 0.25,
     "maximum_camera_skew_s": 0.08
   },
+  "close_door": {
+    "source": "raw_peacock_open_jaw_close",
+    "reference_proof_state": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_proof_reverify/proof_state.json",
+    "peacock_strategy_reference": "data/reference/pasteur/incubator/incoming/door_close/door_close_20260703_163736.hdf5",
+    "maximum_anchor_position_error_m": 0.025,
+    "maximum_anchor_rotation_error_deg": 10.0,
+    "rotation_score_weight_m_per_rad": 0.03,
+    "anchor_approach_duration_s": 1.2,
+    "time_scale": 2.0,
+    "checkpoint_frames": 15,
+    "open_gripper_ratio": 1.0,
+    "demo_precontact_retreat_m": 0.05,
+    "demo_precontact_duration_s": 2.5,
+    "demo_contact_duration_s": 1.2
+  },
   "visual_feature": {
     "type": "largest_configured_red_component_on_rigid_door_parent",
     "hsv_ranges": [

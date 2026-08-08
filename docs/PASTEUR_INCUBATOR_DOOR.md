@@ -121,3 +121,35 @@ $PY src/run_incubator_door_demo.py recover-empty-close \
 The tests cover demonstration landmarks, SE(3) retargeting, feature alignment,
 world-yaw correction, and synthetic vertical-plane recovery.  A future change
 must preserve the shadow-independent plane fit and the close/proof/pull gates.
+
+## Closing an open door
+
+Closing is not the reverse of the grasped opening trajectory.  Verified
+Peacock data shows that the physical right arm keeps both jaws fully open and
+pushes the lower inside edge of the door.  The opening grasp path is about
+15 cm too high for this contact and can move the arm without moving the door.
+
+The accepted reference is copied from Peacock as:
+
+```text
+/home/yoikawa/src/robot/data/raw/horizon/door_close/
+  door_close_20260703_163736.{hdf5,head.mp4,left.mp4,right.mp4}
+```
+
+On Pasteur it lives under
+`data/reference/pasteur/incubator/incoming/door_close/`.  The loader rejects a
+reference if the inactive arm moves or if either jaw closes.  For the current
+fixed Pasteur installation, use the demonstrated robot coordinates directly;
+do not apply the opening-handle registration rotation.  That rotation moved
+the low pusher beside the open panel and produced a collision-free but empty
+motion.  The raw 140-frame Cartesian close trajectory completed successfully
+on 2026-08-08 with the jaws open.
+
+```bash
+$PY src/run_incubator_door_demo.py close-door-demo \
+  --output-dir "$RUN/close-door"
+```
+
+Success must be confirmed by a fresh image in which the incubator interior is
+no longer visible and the outer door face/control panel is visible.  Shadows
+remain non-evidence.  Do not add an extra terminal push after visual closure.

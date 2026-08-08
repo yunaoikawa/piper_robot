@@ -34,6 +34,12 @@ from rollout.incubator_door_demo import (
     retarget_relative_pose,
     retarget_relative_trajectory,
 )
+from rollout.incubator_door_close import (
+    load_open_jaw_close_trajectory,
+    nearest_pose_index,
+    register_close_trajectory,
+    reverse_opening_from_live_pose,
+)
 from rollout.incubator_door_visual import extract_feature, predict_local_delta
 from rollout.teleop_trajectory_stream import (
     CONTROL_HZ,
@@ -682,6 +688,312 @@ def open_door(
         ),
     }
     (output_dir / "open_door.json").write_text(
+        json.dumps(result, indent=2) + "\n"
+    )
+    return result
+
+
+def close_door_by_reversing_opening(
+    profile: dict,
+    rpc,
+    output_dir: Path,
+) -> dict:
+    """Push the open door closed with open jaws on the executed IK branch."""
+
+    settings = profile["close_door"]
+    compiled = _load(profile["compiled_demo"])
+    proof_state_path = Path(settings["reference_proof_state"])
+    state = _load(proof_state_path)
+    before = _capture(profile, rpc, output_dir / "before")
+    live_pose = np.asarray(rpc.get_right_ee_pose().parameters(), dtype=float)
+    live_aperture = float(
+        np.asarray(rpc.get_right_gripper_exact(), dtype=float).reshape(-1)[0]
+    )
+    required_aperture = float(settings["open_gripper_ratio"])
+    if live_aperture < required_aperture - 0.05:
+        raise RuntimeError("door close requires the right gripper fully open")
+    opening = retarget_relative_trajectory(
+        state["contact_pose_wxyz_xyz"],
+        compiled["relative_pull_trajectory"],
+        first_frame=int(state["proof_frame"]) + 1,
+        last_frame=int(compiled["medoid"]["release_frame"]),
+    )
+    nearest = nearest_pose_index(
+        live_pose,
+        opening,
+        rotation_weight_m_per_rad=float(
+            settings["rotation_score_weight_m_per_rad"]
+        ),
+    )
+    if nearest["position_error_m"] > float(
+        settings["maximum_anchor_position_error_m"]
+    ) or nearest["rotation_error_deg"] > float(
+        settings["maximum_anchor_rotation_error_deg"]
+    ):
+        raise RuntimeError(
+            "live wrist is not close to the actually executed opening path: "
+            f"position={nearest['position_error_m']:.4f}m, "
+            f"rotation={nearest['rotation_error_deg']:.2f}deg"
+        )
+    exact_anchor_pose = opening[int(nearest["index"])]["pose_wxyz_xyz"]
+    approach = _settle_cartesian_target(
+        profile,
+        rpc,
+        ProductionRightFK(profile["production_model"]),
+        target_pose=np.asarray(exact_anchor_pose, dtype=float),
+        duration_s=float(settings["anchor_approach_duration_s"]),
+        aperture=required_aperture,
+        stage="incubator_close_contact_approach",
+    )
+    measured_anchor = np.asarray(
+        rpc.get_right_ee_pose().parameters(), dtype=float
+    )
+    anchor_position_error = float(
+        np.linalg.norm(measured_anchor[4:] - np.asarray(exact_anchor_pose)[4:])
+    )
+    anchor_rotation_error = math.degrees(
+        quaternion_distance_rad(
+            measured_anchor[:4], np.asarray(exact_anchor_pose)[:4]
+        )
+    )
+    closing = reverse_opening_from_live_pose(
+        exact_anchor_pose,
+        opening,
+        nearest_index=int(nearest["index"]),
+        control_hz=CONTROL_HZ,
+        aperture=required_aperture,
+    )
+    motion = _stream_retargeted_segment(
+        profile,
+        rpc,
+        ProductionRightFK(profile["production_model"]),
+        closing,
+        stage="incubator_reverse_successful_opening_to_close",
+        time_scale=float(settings["time_scale"]),
+        checkpoint_frames=int(settings["checkpoint_frames"]),
+    )
+    after = _capture(profile, rpc, output_dir / "after")
+    result = {
+        "commands_sent": True,
+        "stage": "close-door",
+        "strategy": (
+            "open jaws from Peacock close demo; geometry from reversed "
+            "current successful opening"
+        ),
+        "proof_state_source": str(proof_state_path.resolve()),
+        "peacock_strategy_reference": str(
+            Path(settings["peacock_strategy_reference"]).resolve()
+        ),
+        "nearest_opening_sample": nearest,
+        "contact_approach": approach,
+        "measured_anchor_error_m": anchor_position_error,
+        "measured_anchor_rotation_error_deg": anchor_rotation_error,
+        "closing_sample_count": len(closing),
+        "motion": motion,
+        "before": before,
+        "after": after,
+        "extra_push_sent": False,
+    }
+    (output_dir / "close_door.json").write_text(
+        json.dumps(result, indent=2) + "\n"
+    )
+    return result
+
+
+def restore_after_missed_close(
+    profile: dict,
+    rpc,
+    output_dir: Path,
+    close_state_path: Path,
+) -> dict:
+    """Reverse a non-contact close attempt back to its observed open start."""
+
+    previous = _load(close_state_path)
+    if previous.get("extra_push_sent") is not False:
+        raise RuntimeError("restore requires a close run with no extra push")
+    settings = profile["close_door"]
+    compiled = _load(profile["compiled_demo"])
+    state = _load(settings["reference_proof_state"])
+    opening = retarget_relative_trajectory(
+        state["contact_pose_wxyz_xyz"],
+        compiled["relative_pull_trajectory"],
+        first_frame=int(state["proof_frame"]) + 1,
+        last_frame=int(compiled["medoid"]["release_frame"]),
+    )
+    index = int(previous["nearest_opening_sample"]["index"])
+    sent_close = reverse_opening_from_live_pose(
+        previous["before"]["right_ee_wxyz_xyz"],
+        opening,
+        nearest_index=index,
+        control_hz=CONTROL_HZ,
+        aperture=float(settings["open_gripper_ratio"]),
+    )
+    live = mink.SE3(
+        np.asarray(rpc.get_right_ee_pose().parameters(), dtype=float)
+    )
+    endpoint = mink.SE3(np.asarray(sent_close[-1]["pose_wxyz_xyz"]))
+    correction = live @ endpoint.inverse()
+    restore = []
+    for output_index, sample in enumerate(reversed(sent_close), start=1):
+        source = mink.SE3(np.asarray(sample["pose_wxyz_xyz"], dtype=float))
+        restore.append(
+            {
+                **sample,
+                "t_s": output_index / CONTROL_HZ,
+                "pose_wxyz_xyz": np.asarray(
+                    (correction @ source).parameters(), dtype=float
+                ).tolist(),
+                "gripper": float(settings["open_gripper_ratio"]),
+            }
+        )
+    before = _capture(profile, rpc, output_dir / "before")
+    motion = _stream_retargeted_segment(
+        profile,
+        rpc,
+        ProductionRightFK(profile["production_model"]),
+        restore,
+        stage="incubator_restore_after_noncontact_close",
+        time_scale=float(settings["time_scale"]),
+        checkpoint_frames=int(settings["checkpoint_frames"]),
+    )
+    after = _capture(profile, rpc, output_dir / "after")
+    result = {
+        "commands_sent": True,
+        "stage": "restore-open-start",
+        "source": str(close_state_path.resolve()),
+        "motion": motion,
+        "before": before,
+        "after": after,
+    }
+    (output_dir / "restore_open_start.json").write_text(
+        json.dumps(result, indent=2) + "\n"
+    )
+    return result
+
+
+def close_door_from_peacock_demo(
+    profile: dict,
+    rpc,
+    output_dir: Path,
+) -> dict:
+    """Use the dedicated low push point from a verified close demonstration."""
+
+    settings = profile["close_door"]
+    closing = load_open_jaw_close_trajectory(
+        settings["peacock_strategy_reference"]
+    )
+    target = np.asarray(closing[0]["pose_wxyz_xyz"], dtype=float)
+    target_rotation = mink.SE3(target).as_matrix()[:3, :3]
+    precontact = target.copy()
+    precontact[4:] -= float(settings["demo_precontact_retreat_m"]) * target_rotation[:, 0]
+    before = _capture(profile, rpc, output_dir / "before")
+    aperture = float(
+        np.asarray(rpc.get_right_gripper_exact(), dtype=float).reshape(-1)[0]
+    )
+    if aperture < float(settings["open_gripper_ratio"]) - 0.05:
+        raise RuntimeError("Peacock close demo requires fully open jaws")
+    fk = ProductionRightFK(profile["production_model"])
+    precontact_motion = _settle_cartesian_target(
+        profile,
+        rpc,
+        fk,
+        target_pose=precontact,
+        duration_s=float(settings["demo_precontact_duration_s"]),
+        aperture=1.0,
+        stage="incubator_close_demo_precontact",
+    )
+    contact_motion = _settle_cartesian_target(
+        profile,
+        rpc,
+        fk,
+        target_pose=target,
+        duration_s=float(settings["demo_contact_duration_s"]),
+        aperture=1.0,
+        stage="incubator_close_demo_contact",
+    )
+    motion = _stream_retargeted_segment(
+        profile,
+        rpc,
+        fk,
+        closing[1:],
+        stage="incubator_peacock_open_jaw_close",
+        time_scale=float(settings["time_scale"]),
+        checkpoint_frames=int(settings["checkpoint_frames"]),
+    )
+    after = _capture(profile, rpc, output_dir / "after")
+    result = {
+        "commands_sent": True,
+        "stage": "close-door-demo",
+        "strategy": "raw Peacock low open-jaw pushing trajectory",
+        "scene_registration": "none; verified Pasteur robot coordinates",
+        "source": str(Path(settings["peacock_strategy_reference"]).resolve()),
+        "precontact_motion": precontact_motion,
+        "contact_motion": contact_motion,
+        "motion": motion,
+        "before": before,
+        "after": after,
+        "extra_push_sent": False,
+    }
+    (output_dir / "close_door_demo.json").write_text(
+        json.dumps(result, indent=2) + "\n"
+    )
+    return result
+
+
+def restore_peacock_close_start(
+    profile: dict,
+    rpc,
+    output_dir: Path,
+) -> dict:
+    """Reverse the registered open-jaw close demo to its low start pose."""
+
+    settings = profile["close_door"]
+    compiled = _load(profile["compiled_demo"])
+    proof_state = _load(settings["reference_proof_state"])
+    registration = mink.SE3(
+        np.asarray(proof_state["contact_pose_wxyz_xyz"], dtype=float)
+    ) @ mink.SE3(
+        np.asarray(compiled["medoid"]["contact_pose_wxyz_xyz"], dtype=float)
+    ).inverse()
+    closing = register_close_trajectory(
+        load_open_jaw_close_trajectory(settings["peacock_strategy_reference"]),
+        registration.parameters(),
+    )
+    live = mink.SE3(np.asarray(rpc.get_right_ee_pose().parameters(), dtype=float))
+    endpoint = mink.SE3(np.asarray(closing[-1]["pose_wxyz_xyz"], dtype=float))
+    correction = live @ endpoint.inverse()
+    restore = []
+    for index, sample in enumerate(reversed(closing), start=1):
+        source = mink.SE3(np.asarray(sample["pose_wxyz_xyz"], dtype=float))
+        restore.append(
+            {
+                **sample,
+                "t_s": index / CONTROL_HZ,
+                "pose_wxyz_xyz": np.asarray(
+                    (correction @ source).parameters(), dtype=float
+                ).tolist(),
+                "gripper": 1.0,
+            }
+        )
+    before = _capture(profile, rpc, output_dir / "before")
+    motion = _stream_retargeted_segment(
+        profile,
+        rpc,
+        ProductionRightFK(profile["production_model"]),
+        restore,
+        stage="incubator_restore_peacock_close_start",
+        time_scale=float(settings["time_scale"]),
+        checkpoint_frames=int(settings["checkpoint_frames"]),
+    )
+    after = _capture(profile, rpc, output_dir / "after")
+    result = {
+        "commands_sent": True,
+        "stage": "restore-close-demo-start",
+        "motion": motion,
+        "before": before,
+        "after": after,
+    }
+    (output_dir / "restore_close_demo_start.json").write_text(
         json.dumps(result, indent=2) + "\n"
     )
     return result
@@ -1383,6 +1695,7 @@ def main() -> int:
     parser.add_argument("--contact-state", type=Path)
     parser.add_argument("--proof-state", type=Path)
     parser.add_argument("--aligned-state", type=Path)
+    parser.add_argument("--close-state", type=Path)
     parser.add_argument("--world-yaw-deg", type=float, default=0.0)
     parser.add_argument(
         "stage",
@@ -1396,6 +1709,10 @@ def main() -> int:
             "proof-pull",
             "reverify-proof",
             "open-door",
+            "close-door",
+            "restore-open-start",
+            "close-door-demo",
+            "restore-close-demo-start",
             "recover-empty-close",
             "open-in-place",
             "demo-hover",
@@ -1450,6 +1767,24 @@ def main() -> int:
             parser.error("open-door requires --proof-state")
         result["open_door"] = open_door(
             profile, rpc, args.output_dir, args.proof_state
+        )
+    if args.stage == "close-door":
+        result["close_door"] = close_door_by_reversing_opening(
+            profile, rpc, args.output_dir
+        )
+    if args.stage == "restore-open-start":
+        if args.close_state is None:
+            parser.error("restore-open-start requires --close-state")
+        result["restore_open_start"] = restore_after_missed_close(
+            profile, rpc, args.output_dir, args.close_state
+        )
+    if args.stage == "close-door-demo":
+        result["close_door_demo"] = close_door_from_peacock_demo(
+            profile, rpc, args.output_dir
+        )
+    if args.stage == "restore-close-demo-start":
+        result["restore_close_demo_start"] = restore_peacock_close_start(
+            profile, rpc, args.output_dir
         )
     if args.stage == "recover-empty-close":
         result["recover_empty_close"] = recover_empty_close(
