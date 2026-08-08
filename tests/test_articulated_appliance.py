@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import rollout.articulated_appliance as appliance
+from src.run_incubator_door_autonomy import _parse_process_json
 
 
 SETTINGS = {
@@ -96,6 +97,22 @@ def test_between_endpoints_stays_unknown(monkeypatch):
     assert report["state"] == "unknown"
 
 
+def test_supplied_panel_mask_ignores_unrelated_robot_depth(monkeypatch):
+    monkeypatch.setattr(appliance, "detect_tags", _fake_detect)
+    opened, closed = _endpoints()
+    candidate = np.zeros_like(opened.depth_m, dtype=bool)
+    candidate[:12, 8:23] = True
+    model = appliance.build_endpoint_model(
+        opened, closed, SETTINGS, candidate_mask=candidate
+    )
+    live = opened.depth_m.copy()
+    live[15:, :] = 0.3  # unrelated robot moved outside the panel mask
+    report = appliance.classify_endpoint_state(
+        _observation(0, live, "robot-moved"), model, SETTINGS
+    )
+    assert report["state"] == "open"
+
+
 def test_registration_fails_closed_when_fixed_tags_disappear(monkeypatch):
     opened, closed = _endpoints()
     monkeypatch.setattr(appliance, "detect_tags", _fake_detect)
@@ -115,6 +132,14 @@ def test_close_workflow_uses_dedicated_demo_not_reverse_opening():
     assert not any("reverse" in stage for stage in stages)
 
 
+def test_native_camera_logs_before_process_json_are_ignored():
+    output = (
+        'Searching for iPhone devices\n[right wrist] connected\n'
+        '{"ok": true, "frames": [{"id": 3}]}\n'
+    )
+    assert _parse_process_json(output) == {"ok": True, "frames": [{"id": 3}]}
+
+
 def test_current_pasteur_endpoint_references_regression():
     profile_path = Path("src/configs/pasteur_incubator_door_demo.json")
     # Endpoint recordings are deliberately excluded from git.  Exercise the
@@ -123,16 +148,28 @@ def test_current_pasteur_endpoint_references_regression():
     settings = profile["state_detection"]
     opened_paths = settings["references"]["open"]
     closed_paths = settings["references"]["closed"]
-    paths = [
-        Path(opened_paths["image"]),
-        Path(opened_paths["depth"]),
-        Path(closed_paths["image"]),
-        Path(closed_paths["depth"]),
-    ]
+    paths = [Path(opened_paths["capture"]), Path(closed_paths["capture"])]
     if not all(path.exists() for path in paths):
         pytest.skip("Pasteur endpoint calibration volume is not mounted")
-    opened = appliance.load_endpoint(paths[0], paths[1])
-    closed = appliance.load_endpoint(paths[2], paths[3])
-    model = appliance.build_endpoint_model(opened, closed, settings)
+    opened = appliance.load_bundle_endpoint(paths[0])
+    closed = appliance.load_bundle_endpoint(paths[1])
+    frame = Path(closed.source)
+    metadata = json.loads((frame / "meta.json").read_text())
+    from rollout.incubator_door_plane import estimate_frame
+
+    tag_config = json.loads(Path(profile["door_plane"]["tag_config"]).read_text())
+    plane = estimate_frame(
+        closed.image_bgr,
+        closed.depth_m,
+        metadata["intrinsics"]["K_rgb_rotated_clockwise"],
+        tag_config,
+        profile["door_plane"],
+    )
+    model = appliance.build_endpoint_model(
+        opened,
+        closed,
+        settings,
+        candidate_mask=plane["depth_inlier_mask"],
+    )
     assert appliance.classify_endpoint_state(opened, model, settings)["state"] == "open"
     assert appliance.classify_endpoint_state(closed, model, settings)["state"] == "closed"

@@ -43,7 +43,7 @@ class EndpointModel:
     closed_depth_m: np.ndarray
     dynamic_mask: np.ndarray
     endpoint_separation_m: float
-    closed_marker_corners: np.ndarray
+    closed_marker_corners: np.ndarray | None
     closed_marker_length_depth_px: float
     open_source: str
     closed_source: str
@@ -195,6 +195,8 @@ def build_endpoint_model(
     opened: EndpointObservation,
     closed: EndpointObservation,
     settings: Mapping,
+    *,
+    candidate_mask: np.ndarray | None = None,
 ) -> EndpointModel:
     """Learn the moving-panel comparison mask from verified endpoints."""
 
@@ -202,18 +204,41 @@ def build_endpoint_model(
     open_depth = _warp_depth(opened, closed, open_to_closed)
     closed_depth = np.asarray(closed.depth_m, dtype=float)
     closed_tags = _tag_map(closed.image_bgr, settings)
-    marker_id = int(settings["closed_state_marker_tag_id"])
-    if marker_id not in closed_tags:
-        raise RuntimeError(f"closed endpoint is missing moving-panel marker {marker_id}")
-    marker = closed_tags[marker_id]
+    marker_id_value = settings.get("closed_state_marker_tag_id")
+    marker_id = int(marker_id_value) if marker_id_value is not None else None
+    scale_id_value = settings.get("mask_scale_tag_id", marker_id)
+    if scale_id_value is None:
+        raise RuntimeError("endpoint model needs a mask scale tag")
+    scale_id = int(scale_id_value)
+    if scale_id not in closed_tags:
+        raise RuntimeError(f"closed endpoint is missing mask scale tag {scale_id}")
+    scale_tag = closed_tags[scale_id]
     image_to_depth_x = closed_depth.shape[1] / closed.image_bgr.shape[1]
     image_to_depth_y = closed_depth.shape[0] / closed.image_bgr.shape[0]
-    center = np.asarray(marker.center, dtype=float) * [image_to_depth_x, image_to_depth_y]
-    marker_length = _mean_tag_edge(marker.corners) * image_to_depth_x
-    yy, xx = np.indices(closed_depth.shape)
-    radius_x = float(settings.get("roi_horizontal_marker_lengths", 4.0)) * marker_length
-    radius_y = float(settings.get("roi_vertical_marker_lengths", 5.2)) * marker_length
-    region = ((xx - center[0]) / radius_x) ** 2 + ((yy - center[1]) / radius_y) ** 2 <= 1.0
+    marker_length = _mean_tag_edge(scale_tag.corners) * image_to_depth_x
+    if candidate_mask is None:
+        center = np.asarray(scale_tag.center, dtype=float) * [
+            image_to_depth_x,
+            image_to_depth_y,
+        ]
+        yy, xx = np.indices(closed_depth.shape)
+        radius_x = (
+            float(settings.get("roi_horizontal_marker_lengths", 4.0))
+            * marker_length
+        )
+        radius_y = (
+            float(settings.get("roi_vertical_marker_lengths", 5.2))
+            * marker_length
+        )
+        region = (
+            ((xx - center[0]) / radius_x) ** 2
+            + ((yy - center[1]) / radius_y) ** 2
+            <= 1.0
+        )
+    else:
+        region = np.asarray(candidate_mask, dtype=bool)
+        if region.shape != closed_depth.shape:
+            raise ValueError("candidate mask shape does not match closed depth")
     minimum_depth = float(settings.get("minimum_depth_m", 0.15))
     maximum_depth = float(settings.get("maximum_depth_m", 2.0))
     valid = (
@@ -243,7 +268,11 @@ def build_endpoint_model(
         closed_depth_m=closed_depth,
         dynamic_mask=dynamic,
         endpoint_separation_m=separation,
-        closed_marker_corners=np.asarray(marker.corners, dtype=float),
+        closed_marker_corners=(
+            np.asarray(closed_tags[marker_id].corners, dtype=float)
+            if marker_id is not None and marker_id in closed_tags
+            else None
+        ),
         closed_marker_length_depth_px=marker_length,
         open_source=opened.source,
         closed_source=closed.source,
@@ -291,11 +320,16 @@ def classify_endpoint_state(
             state = ApplianceState.CLOSED
             reason = "registered depth matches verified closed endpoint"
 
-    marker_id = int(settings["closed_state_marker_tag_id"])
+    marker_id_value = settings.get("closed_state_marker_tag_id")
+    marker_id = int(marker_id_value) if marker_id_value is not None else None
     live_tags = _tag_map(live.image_bgr, settings)
     marker_confirmed = False
     marker_error_tag_lengths = None
-    if marker_id in live_tags:
+    if (
+        marker_id is not None
+        and model.closed_marker_corners is not None
+        and marker_id in live_tags
+    ):
         projected = cv2.perspectiveTransform(
             np.asarray(live_tags[marker_id].corners, dtype=np.float32).reshape(1, 4, 2),
             homography,
@@ -328,7 +362,7 @@ def classify_endpoint_state(
         "relative_open_error": open_error,
         "relative_closed_error": closed_error,
         "closed_marker_tag_id": marker_id,
-        "closed_marker_visible": marker_id in live_tags,
+        "closed_marker_visible": marker_id is not None and marker_id in live_tags,
         "closed_marker_confirmed": marker_confirmed,
         "closed_marker_error_tag_lengths": marker_error_tag_lengths,
         "reference_sources": {

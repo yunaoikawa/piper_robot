@@ -33,7 +33,7 @@ from rollout.articulated_appliance import (
     render_endpoint_evidence,
     workflow_stages,
 )
-from rollout.incubator_door_plane import estimate_bundle, wrap_degrees
+from rollout.incubator_door_plane import estimate_bundle, estimate_frame, wrap_degrees
 from rollout.incubator_door_visual import extract_feature
 
 
@@ -54,6 +54,27 @@ def _write_json(path: Path, value: Any) -> None:
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(value, indent=2) + "\n")
     os.replace(temporary, path)
+
+
+def _parse_process_json(output: str) -> Any:
+    """Return the last complete JSON value from mixed native-process logs."""
+
+    decoder = json.JSONDecoder()
+    parsed = []
+    for index, character in enumerate(output):
+        if character not in "[{":
+            continue
+        try:
+            value, end = decoder.raw_decode(output, index)
+        except json.JSONDecodeError:
+            continue
+        parsed.append((end, -index, value))
+    if not parsed:
+        raise json.JSONDecodeError("no JSON value in process output", output, 0)
+    # A nested object can be decoded independently too.  The outer process
+    # result is the candidate that reaches farthest into stdout; for an equal
+    # endpoint prefer the earliest opening bracket.
+    return max(parsed, key=lambda item: (item[0], item[1]))[2]
 
 
 def _utc_stamp() -> str:
@@ -94,16 +115,34 @@ class Orchestrator:
         self.journal_path = self.run_dir / "journal.json"
         _write_json(self.journal_path, self.journal)
         references = self.state_settings["references"]
-        opened = load_endpoint(
-            _resolve(references["open"]["image"]),
-            _resolve(references["open"]["depth"]),
-        )
-        closed = load_endpoint(
-            _resolve(references["closed"]["image"]),
-            _resolve(references["closed"]["depth"]),
-        )
+        opened = self._load_reference(references["open"])
+        closed = self._load_reference(references["closed"])
+        candidate_mask = None
+        if self.state_settings.get("candidate_mask") == "closed_vertical_plane":
+            frame = Path(closed.source)
+            metadata = _load(frame / "meta.json")
+            tag_config = _load(_resolve(self.profile["door_plane"]["tag_config"]))
+            plane = estimate_frame(
+                closed.image_bgr,
+                closed.depth_m,
+                metadata["intrinsics"]["K_rgb_rotated_clockwise"],
+                tag_config,
+                self.profile["door_plane"],
+            )
+            candidate_mask = plane["depth_inlier_mask"]
         self.endpoint_model = build_endpoint_model(
-            opened, closed, self.state_settings
+            opened,
+            closed,
+            self.state_settings,
+            candidate_mask=candidate_mask,
+        )
+
+    @staticmethod
+    def _load_reference(reference: dict):
+        if "capture" in reference:
+            return load_bundle_endpoint(_resolve(reference["capture"]))
+        return load_endpoint(
+            _resolve(reference["image"]), _resolve(reference["depth"])
         )
 
     def record(self, event: str, **payload: Any) -> None:
@@ -159,7 +198,7 @@ class Orchestrator:
                 f"{label} failed with exit {result.returncode}; see {stderr_path}"
             )
         try:
-            payload = json.loads(result.stdout)
+            payload = _parse_process_json(result.stdout)
         except json.JSONDecodeError as error:
             raise WorkflowFailure(
                 f"{label} did not return one JSON object; see {stdout_path}"
@@ -224,7 +263,7 @@ class Orchestrator:
                 f"motion stage {stage} failed; see {stderr_path}"
             )
         try:
-            payload = json.loads(result.stdout)
+            payload = _parse_process_json(result.stdout)
         except json.JSONDecodeError as error:
             raise WorkflowFailure(
                 f"motion stage {stage} returned invalid JSON; see {stdout_path}"

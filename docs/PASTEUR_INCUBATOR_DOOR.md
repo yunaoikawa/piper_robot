@@ -182,9 +182,10 @@ black image regions.  The controller:
 
 1. registers a fresh head RGB-D bundle to two verified endpoint observations;
 2. learns the moving-panel region from the open-vs-closed metric depth change;
-3. expresses that region in door-marker lengths instead of image pixels;
+3. intersects the depth change with the low-saturation closed vertical-plane
+   inliers, excluding the blue gripper and most arm geometry;
 4. compares the live depth independently with both endpoint prototypes;
-5. uses the door marker only as affirmative closed-state evidence;
+5. expresses minimum support in reference-tag areas instead of image pixels;
 6. reports `unknown` and sends no further command when the two endpoints are
    ambiguous.
 

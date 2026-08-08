@@ -101,7 +101,9 @@
     "tag_detection_scales": [1, 2],
     "fixed_tag_ids": [3, 12, 13],
     "minimum_fixed_tags": 2,
-    "closed_state_marker_tag_id": 1,
+    "closed_state_marker_tag_id": null,
+    "mask_scale_tag_id": 13,
+    "candidate_mask": "closed_vertical_plane",
     "registration_ransac_threshold_tag_lengths": 0.08,
     "maximum_registration_error_tag_lengths": 0.2,
     "maximum_closed_marker_error_tag_lengths": 0.75,
@@ -117,12 +119,10 @@
     "maximum_marker_confirmed_relative_error": 0.65,
     "references": {
       "open": {
-        "image": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_slip_observe/head.png",
-        "depth": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_slip_observe/head_depth.npy"
+        "capture": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/captures/2026-08-08/20260808T100427.298699Z_head_open_attempt_1_result_95dc7b74"
       },
       "closed": {
-        "image": "data/runs/pasteur/incubator_door_close_20260808T085145Z_raw_after_observe/head.png",
-        "depth": "data/runs/pasteur/incubator_door_close_20260808T085145Z_raw_after_observe/head_depth.npy"
+        "capture": "data/runs/pasteur/incubator_auto_close_20260808_demo/captures/2026-08-08/20260808T100604.838020Z_head_close_result_722eb26e"
       }
     }
   },
