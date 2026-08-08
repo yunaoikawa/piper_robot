@@ -77,3 +77,12 @@ A future inference wrapper must return a separate artifact containing:
 The semantic scene pipeline may compare this result against SAM and depth,
 but must preserve disagreements as uncertainty rather than replacing one mask
 silently.
+
+After inference, render the prediction contract without mixing it into the
+bootstrap SAM viewer:
+
+```bash
+$PY src/render_qwen3d_predictions.py \
+  --predictions data/runs/pasteur/qwen3d_predictions/predictions.json \
+  --output data/runs/pasteur/qwen3d_predictions/index.html
+```

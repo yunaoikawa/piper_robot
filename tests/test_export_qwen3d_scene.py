@@ -5,6 +5,7 @@ from src.export_qwen3d_scene import (
     _resize_rgbd_and_intrinsics,
     _stratified_indices,
 )
+from src.render_qwen3d_predictions import _sample_indices
 
 
 def test_stratified_display_sampling_preserves_small_semantic_regions():
@@ -49,3 +50,11 @@ def test_rgbd_resize_preserves_backprojected_ray_geometry():
         ),
     )
     assert cv2.INTER_NEAREST == 0
+
+
+def test_prediction_viewer_sampling_is_bounded_and_deterministic():
+    first = _sample_indices(1000, 75, seed=4)
+    second = _sample_indices(1000, 75, seed=4)
+    assert len(first) == 75
+    np.testing.assert_array_equal(first, second)
+    np.testing.assert_array_equal(_sample_indices(4, 10), np.arange(4))
