@@ -37,7 +37,13 @@ Artifacts:
 - `posed_rgbd/*/color.png`: RGB resized to the organized depth grid
 - `posed_rgbd/*/depth.png`: uint16 millimetre depth
 - `posed_rgbd/*/{intrinsic,pose}.txt`: per-view camera geometry
+- `qwen3d_upstream_rgbd/pasteur_scene/*`: 512x512 RGB-D, pose, and adjusted
+  intrinsics for the reviewed upstream AI2-THOR-style loader
 - `index.html`: RGB and per-object 3D visibility controls
+
+The upstream copy uses nearest-neighbour depth resampling and scales `fx`,
+`fy`, `cx`, and `cy` independently. This preserves backprojected camera rays
+even though the source Record3D image is not square.
 
 The viewer title and manifest explicitly distinguish existing SAM bootstrap
 labels from Qwen-3D predictions.

@@ -20,6 +20,7 @@ import plotly.graph_objects as go
 
 
 SCHEMA = "piper_robot.qwen3d_scene_input/v1"
+QWEN3D_UPSTREAM_IMAGE_SIZE = 512
 
 
 def _sha256(path: Path) -> str:
@@ -55,6 +56,29 @@ def _stratified_indices(labels: np.ndarray, maximum: int) -> np.ndarray:
     return np.sort(selected[:maximum])
 
 
+def _resize_rgbd_and_intrinsics(
+    rgb: np.ndarray,
+    depth: np.ndarray,
+    intrinsics: np.ndarray,
+    output_hw: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Resize an aligned RGB-D frame while preserving its pinhole geometry."""
+    source_height, source_width = depth.shape
+    output_height, output_width = output_hw
+    if rgb.shape[:2] != depth.shape:
+        raise ValueError("RGB and depth must already be pixel-aligned")
+    resized_rgb = cv2.resize(
+        rgb, (output_width, output_height), interpolation=cv2.INTER_AREA
+    )
+    resized_depth = cv2.resize(
+        depth, (output_width, output_height), interpolation=cv2.INTER_NEAREST
+    )
+    resized_intrinsics = np.asarray(intrinsics, dtype=float).copy()
+    resized_intrinsics[0] *= output_width / source_width
+    resized_intrinsics[1] *= output_height / source_height
+    return resized_rgb, resized_depth, resized_intrinsics
+
+
 def _view_records(report: dict, output_dir: Path) -> list[dict]:
     capture = Path(report["capture"])
     manifest = json.loads((capture / "manifest.json").read_text())
@@ -65,6 +89,9 @@ def _view_records(report: dict, output_dir: Path) -> list[dict]:
     records = []
     frames_root = output_dir / "posed_rgbd"
     frames_root.mkdir(parents=True, exist_ok=True)
+    upstream_root = output_dir / "qwen3d_upstream_rgbd" / "pasteur_scene"
+    for subdirectory in ("color", "depth", "intrinsic", "pose"):
+        (upstream_root / subdirectory).mkdir(parents=True, exist_ok=True)
     for output_index, view in enumerate(manifest["views"]):
         frames = view["frames"]
         frame = frames[len(frames) // 2]
@@ -98,6 +125,35 @@ def _view_records(report: dict, output_dir: Path) -> list[dict]:
         )
         np.savetxt(intrinsic_path, intrinsics, fmt="%.10f")
         np.savetxt(pose_path, pose, fmt="%.10f")
+
+        upstream_rgb, upstream_depth, upstream_intrinsics = (
+            _resize_rgbd_and_intrinsics(
+                aligned_rgb,
+                depth,
+                intrinsics,
+                (QWEN3D_UPSTREAM_IMAGE_SIZE, QWEN3D_UPSTREAM_IMAGE_SIZE),
+            )
+        )
+        upstream_stem = f"{output_index:06d}"
+        upstream_paths = {
+            "rgb": upstream_root / "color" / f"{upstream_stem}.png",
+            "depth": upstream_root / "depth" / f"{upstream_stem}.png",
+            "intrinsics": upstream_root
+            / "intrinsic"
+            / f"{upstream_stem}.txt",
+            "pose": upstream_root / "pose" / f"{upstream_stem}.txt",
+        }
+        cv2.imwrite(str(upstream_paths["rgb"]), upstream_rgb)
+        cv2.imwrite(
+            str(upstream_paths["depth"]),
+            np.clip(np.rint(upstream_depth * 1000.0), 0, 65535).astype(
+                np.uint16
+            ),
+        )
+        np.savetxt(
+            upstream_paths["intrinsics"], upstream_intrinsics, fmt="%.10f"
+        )
+        np.savetxt(upstream_paths["pose"], pose, fmt="%.10f")
         records.append(
             {
                 "name": view["name"],
@@ -112,6 +168,10 @@ def _view_records(report: dict, output_dir: Path) -> list[dict]:
                 "source_frame_index": frame["source_frame_index"],
                 "source_rgb": files["rgb_png"],
                 "source_depth": files["depth_npy"],
+                "qwen3d_upstream": {
+                    key: str(path.resolve())
+                    for key, path in upstream_paths.items()
+                },
             }
         )
     return records
