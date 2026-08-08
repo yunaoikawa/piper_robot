@@ -504,7 +504,10 @@ pipeline.  In particular, black claw-shaped image regions are treated as
 lighting shadows, never as gripper geometry.  Current door yaw comes from a
 multi-frame RGB-D plane fit, followed by right-camera rigid-parent alignment,
 stable-aperture close verification, a 5 mm proof pull, and a slow checkpointed
-open.  See [PASTEUR_INCUBATOR_DOOR.md](PASTEUR_INCUBATOR_DOOR.md).
+open.  The normal open/close sequence is now executable without a Codex
+feedback loop through `src/run_incubator_door_autonomy.py`; unknown endpoint
+evidence stops rather than guessing or repeating a push.  See
+[PASTEUR_INCUBATOR_DOOR.md](PASTEUR_INCUBATOR_DOOR.md).
 
 ## Regression check — DO THIS FIRST, before any real task
 

@@ -95,6 +95,49 @@
     "demo_precontact_duration_s": 2.5,
     "demo_contact_duration_s": 1.2
   },
+  "state_detection": {
+    "method": "registered_verified_endpoint_rgbd",
+    "tag_family": "DICT_APRILTAG_36h11",
+    "tag_detection_scales": [1, 2],
+    "fixed_tag_ids": [3, 12, 13],
+    "minimum_fixed_tags": 2,
+    "closed_state_marker_tag_id": 1,
+    "registration_ransac_threshold_tag_lengths": 0.08,
+    "maximum_registration_error_tag_lengths": 0.2,
+    "maximum_closed_marker_error_tag_lengths": 0.75,
+    "roi_horizontal_marker_lengths": 4.0,
+    "roi_vertical_marker_lengths": 5.2,
+    "minimum_depth_m": 0.15,
+    "maximum_depth_m": 2.0,
+    "minimum_endpoint_depth_change_m": 0.025,
+    "minimum_dynamic_tag_areas": 4.0,
+    "minimum_dynamic_depth_fraction": 0.7,
+    "maximum_endpoint_relative_error": 0.45,
+    "minimum_endpoint_relative_margin": 0.2,
+    "maximum_marker_confirmed_relative_error": 0.65,
+    "references": {
+      "open": {
+        "image": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_slip_observe/head.png",
+        "depth": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_slip_observe/head_depth.npy"
+      },
+      "closed": {
+        "image": "data/runs/pasteur/incubator_door_close_20260808T085145Z_raw_after_observe/head.png",
+        "depth": "data/runs/pasteur/incubator_door_close_20260808T085145Z_raw_after_observe/head_depth.npy"
+      }
+    }
+  },
+  "autonomy": {
+    "state_capture_frames": 8,
+    "state_capture_warmup_frames": 5,
+    "state_capture_timeout_s": 20.0,
+    "reference_closed_plane_yaw_deg": -5.38,
+    "maximum_plane_yaw_std_deg": 1.5,
+    "reference_aligned_preclose_state": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_contact/aligned_contact.json",
+    "maximum_visual_steps": 3,
+    "maximum_visual_uv_error": 0.065,
+    "maximum_visual_log_area_error": 0.15,
+    "maximum_open_attempts": 2
+  },
   "visual_feature": {
     "type": "largest_configured_red_component_on_rigid_door_parent",
     "hsv_ranges": [

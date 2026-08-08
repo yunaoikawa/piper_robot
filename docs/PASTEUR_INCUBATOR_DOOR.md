@@ -153,3 +153,66 @@ $PY src/run_incubator_door_demo.py close-door-demo \
 Success must be confirmed by a fresh image in which the incubator interior is
 no longer visible and the outer door face/control panel is visible.  Shadows
 remain non-evidence.  Do not add an extra terminal push after visual closure.
+
+## Codexless endpoint workflow
+
+`run_incubator_door_autonomy.py` now owns the normal stage transitions.  Codex
+is not part of its perception or control loop.  With no `--execute` flag it
+only prints the evidence-gated plan and cannot connect to or move the robot:
+
+```bash
+$PY src/run_incubator_door_autonomy.py open
+$PY src/run_incubator_door_autonomy.py closed
+```
+
+To run against Pasteur, give one unique run directory.  Every motion, image,
+decision, subprocess output and failure is appended atomically to
+`journal.json`:
+
+```bash
+$PY src/run_incubator_door_autonomy.py open --execute \
+  --output-dir data/runs/pasteur/incubator_auto_open_001
+
+$PY src/run_incubator_door_autonomy.py closed --execute \
+  --output-dir data/runs/pasteur/incubator_auto_close_001
+```
+
+The initial and final door states are not inferred from a missing tag or from
+black image regions.  The controller:
+
+1. registers a fresh head RGB-D bundle to two verified endpoint observations;
+2. learns the moving-panel region from the open-vs-closed metric depth change;
+3. expresses that region in door-marker lengths instead of image pixels;
+4. compares the live depth independently with both endpoint prototypes;
+5. uses the door marker only as affirmative closed-state evidence;
+6. reports `unknown` and sends no further command when the two endpoints are
+   ambiguous.
+
+Opening estimates the closed face plane, moves to the calibrated open-jaw
+preclose, permits only a bounded number of normalized right-image corrections,
+closes once, proves the grasp with 5 mm motion, re-verifies it while
+stationary, and then runs the demonstrated pull.  An empty or lost grasp first
+retreats before reopening.  No 30 Hz vision loop is inserted into the pull.
+
+Closing deliberately selects the separate low, open-jaw Peacock push demo.
+It never reverses the opening trajectory and never sends an unverified extra
+terminal push.  A final registered RGB-D observation must classify as closed.
+
+The state machine and endpoint classifier live in
+`rollout/articulated_appliance.py`; the Pasteur profile only supplies the
+incubator-specific demonstrations, endpoint observations and calibrated
+tolerances.  To reuse the flow for another hinged or sliding appliance,
+record and visually verify both endpoint RGB-D observations, provide a rigid
+parent marker plus fixed registration markers, and supply distinct open and
+close demonstrations.  Pixel coordinates and shadow colour are not part of
+the reusable contract.
+
+Run its offline regressions with:
+
+```bash
+$PY -m pytest -q tests/test_articulated_appliance.py \
+  tests/test_incubator_door_demo.py \
+  tests/test_incubator_door_plane.py \
+  tests/test_incubator_door_visual.py \
+  tests/test_incubator_door_close.py
+```
