@@ -11,6 +11,7 @@ phone decision backed by fresh head and active-wrist photographs.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import socket
@@ -409,8 +410,19 @@ def execute_plans(
                     refinement = None
                     if refinement_config.get("enabled", True):
                         try:
-                            refinement = streamer.refine_jaw_level(
+                            refinement_level = replace(
                                 level,
+                                maximum_checkpoint_tilt_deg=float(
+                                    refinement_config["target_maximum_tilt_deg"]
+                                ),
+                                maximum_tip_height_difference_m=float(
+                                    refinement_config[
+                                        "target_maximum_tip_height_difference_m"
+                                    ]
+                                ),
+                            )
+                            refinement = streamer.refine_jaw_level(
+                                refinement_level,
                                 gripper_open_ratio=float(
                                     execution["air_gripper_open_ratio"]
                                 ),

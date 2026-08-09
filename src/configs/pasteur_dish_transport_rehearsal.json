@@ -40,6 +40,8 @@
     "jaw_level_refinement": {
       "enabled": true,
       "maximum_attempts": 3,
+      "target_maximum_tilt_deg": 0.25,
+      "target_maximum_tip_height_difference_m": 0.0005,
       "maximum_correction_deg": 5.0,
       "maximum_total_correction_deg": 8.0,
       "correction_duration_s": 0.5,

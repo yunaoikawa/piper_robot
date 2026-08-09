@@ -64,6 +64,10 @@ rejecting coupled XYZ drift.  Each correction is at most 5 degrees, total correc
 is at most 8 degrees, and at most three attempts are allowed.  Translation
 residual is fed back with at most 5 mm of command correction per attempt.  A
 checkpoint still requires at most 5 mm final drift; 15 mm is the hard stop.
+The transport refinement target is intentionally tighter than the ordinary
+pre-grasp gate: 0.25 degrees for both horizontal tool axes and 0.5 mm between
+the open fingertips.  This prevents a visually obvious upward pitch from
+being accepted merely because it is below the generic 3-degree grasp limit.
 
 ```bash
 /home/admin/miniforge3/envs/robot-test/bin/python \
