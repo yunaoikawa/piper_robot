@@ -62,6 +62,7 @@ def _capture(stage: str, output_dir: Path, settings: dict):
         camera.start()
         deadline = time.monotonic() + 12.0
         samples = []
+        rejected_frames = []
         last_timestamp = None
         while time.monotonic() < deadline:
             rgb, timestamp, depth = camera.get_latest_frame()
@@ -84,33 +85,40 @@ def _capture(stage: str, output_dir: Path, settings: dict):
                 ]
             )
             pose_value = _camera_pose(pose)
-            measurement = measure_blue_gripper_level(
-                rgb,
-                depth,
-                matrix,
-                camera_pose=pose_value,
-                blue_hue_range=settings["blue_hue_range"],
-                minimum_blue_area_fraction=float(
-                    settings["minimum_blue_area_fraction"]
-                ),
-                minimum_blue_depth_points=int(
-                    settings["minimum_blue_depth_points"]
-                ),
-                minimum_support_points=int(settings["minimum_support_points"]),
-                maximum_support_gravity_disagreement_deg=float(
-                    settings["maximum_support_gravity_disagreement_deg"]
-                ),
-                maximum_accepted_angle_deg=float(
-                    settings["maximum_accepted_angle_deg"]
-                ),
-            )
+            try:
+                measurement = measure_blue_gripper_level(
+                    rgb,
+                    depth,
+                    matrix,
+                    camera_pose=pose_value,
+                    blue_hue_range=settings["blue_hue_range"],
+                    minimum_blue_area_fraction=float(
+                        settings["minimum_blue_area_fraction"]
+                    ),
+                    minimum_blue_depth_points=int(
+                        settings["minimum_blue_depth_points"]
+                    ),
+                    minimum_support_points=int(settings["minimum_support_points"]),
+                    maximum_support_gravity_disagreement_deg=float(
+                        settings["maximum_support_gravity_disagreement_deg"]
+                    ),
+                    maximum_accepted_angle_deg=float(
+                        settings["maximum_accepted_angle_deg"]
+                    ),
+                )
+            except ValueError as error:
+                rejected_frames.append(str(error))
+                time.sleep(0.01)
+                continue
             structural_reasons = set(measurement.reasons) - {
                 "physical_blue_jaw_not_horizontal"
             }
             if structural_reasons:
-                raise RuntimeError(
-                    f"RGB-D structural measurement failed: {sorted(structural_reasons)}"
+                rejected_frames.append(
+                    f"structural: {sorted(structural_reasons)}"
                 )
+                time.sleep(0.01)
+                continue
             samples.append(
                 {
                     "rgb": np.asarray(rgb, dtype=np.uint8).copy(),
@@ -175,6 +183,8 @@ def _capture(stage: str, output_dir: Path, settings: dict):
                 "camera_pose": pose_value,
                 "measurement": measurement.to_dict(),
                 "angle_burst": burst,
+                "rejected_frame_count": len(rejected_frames),
+                "rejected_frame_reasons": sorted(set(rejected_frames)),
             }
             _write(stage_dir / "measurement.json", report)
             bgr = cv2.cvtColor(
