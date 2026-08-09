@@ -31,7 +31,7 @@
   "motion": {
     "rate_hz": 30.0,
     "maximum_tracking_error_deg": 8.0,
-    "endpoint_tolerance_deg": 0.35,
+    "endpoint_tolerance_deg": 0.5,
     "endpoint_consecutive_samples": 4,
     "endpoint_timeout_s": 2.5
   }

@@ -18,7 +18,7 @@ above 0.6 degrees.  A correction that does not improve the physical angle is
 rolled back.  There is no object motion or closure.
 
 Every joint waypoint republishes its endpoint at 30 Hz and requires four
-consecutive measured samples within 0.35 degrees before any RGB-D capture.
+consecutive measured samples within 0.5 degrees before any RGB-D capture.
 This prevents controller lag from being mistaken for a stopped probe or a
 failed return.
 
