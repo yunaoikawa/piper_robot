@@ -430,6 +430,19 @@ def execute_plans(
                                 maximum_xyz_drift_m=float(
                                     refinement_config["maximum_xyz_drift_m"]
                                 ),
+                                maximum_xyz_correction_per_attempt_m=float(
+                                    refinement_config[
+                                        "maximum_xyz_correction_per_attempt_m"
+                                    ]
+                                ),
+                                maximum_xyz_command_offset_m=float(
+                                    refinement_config[
+                                        "maximum_xyz_command_offset_m"
+                                    ]
+                                ),
+                                hard_xyz_drift_m=float(
+                                    refinement_config["hard_xyz_drift_m"]
+                                ),
                             )
                         except BaseException:
                             streamer.hold_measured()

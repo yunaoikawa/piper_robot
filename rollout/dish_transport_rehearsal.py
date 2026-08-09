@@ -1170,14 +1170,17 @@ class CartesianAirTransportStreamer:
         correction_duration_s: float = 0.5,
         settle_s: float = 0.6,
         maximum_xyz_drift_m: float = 0.005,
+        maximum_xyz_correction_per_attempt_m: float = 0.005,
+        maximum_xyz_command_offset_m: float = 0.012,
+        hard_xyz_drift_m: float = 0.015,
     ) -> dict:
-        """Level the jaw at fixed measured XYZ using bounded visual-free feedback.
+        """Level the jaw while rejecting coupled XYZ drift with bounded feedback.
 
         Cartesian IK can leave a repeatable orientation residual even when the
         requested endpoint is exactly level.  Estimate that residual from the
-        measured EE rotation, apply its inverse to the next command, and stop
-        as soon as the normal checkpoint gate passes.  No translation is
-        intentionally commanded by this refinement.
+        measured EE rotation, apply its inverse to the next command, and feed
+        the measured Cartesian residual back into the next command.  Stop only
+        when both the normal level gate and the final XYZ tolerance pass.
         """
 
         maximum_attempts = int(maximum_attempts)
@@ -1189,11 +1192,15 @@ class CartesianAirTransportStreamer:
             correction_duration_s,
             settle_s,
             maximum_xyz_drift_m,
+            maximum_xyz_correction_per_attempt_m,
+            maximum_xyz_command_offset_m,
+            hard_xyz_drift_m,
         ) <= 0.0:
             raise ValueError("jaw-level refinement limits must be positive")
         measured = self.measured_pose()
         fixed_xyz = measured[4:].copy()
         command_rotation = Rotation.from_quat(measured[[1, 2, 3, 0]])
+        command_xyz = fixed_xyz.copy()
         total_correction_rad = 0.0
         history = []
 
@@ -1209,15 +1216,15 @@ class CartesianAirTransportStreamer:
                 "total_command_correction_deg": math.degrees(total_correction_rad),
             }
             history.append(item)
-            if drift > maximum_xyz_drift_m:
+            if drift > hard_xyz_drift_m:
                 raise RuntimeError(
                     f"{self.side} level refinement translated {drift:.4f}m"
                 )
-            return current, assessment
+            return current, assessment, drift
 
-        measured, assessment = record(0)
+        measured, assessment, xyz_drift = record(0)
         for attempt in range(1, maximum_attempts + 1):
-            if assessment.accepted:
+            if assessment.accepted and xyz_drift <= maximum_xyz_drift_m:
                 break
             desired = leveled_pose(measured, reference)
             desired_rotation = Rotation.from_quat(desired[[1, 2, 3, 0]])
@@ -1226,28 +1233,49 @@ class CartesianAirTransportStreamer:
                 desired_rotation * measured_rotation.inv()
             ).as_rotvec()
             correction_norm = float(np.linalg.norm(correction_vector))
-            if correction_norm < math.radians(0.02):
-                break
             allowed_this_attempt = min(
                 math.radians(maximum_correction_deg),
                 math.radians(maximum_total_correction_deg) - total_correction_rad,
             )
             if allowed_this_attempt <= 0.0:
-                break
-            if correction_norm > allowed_this_attempt:
+                correction_vector[:] = 0.0
+                correction_norm = 0.0
+            elif correction_norm > allowed_this_attempt:
                 correction_vector *= allowed_this_attempt / correction_norm
                 correction_norm = allowed_this_attempt
             correction = Rotation.from_rotvec(correction_vector)
             next_rotation = correction * command_rotation
+            xyz_error = fixed_xyz - measured[4:]
+            xyz_error_norm = float(np.linalg.norm(xyz_error))
+            if xyz_error_norm > maximum_xyz_correction_per_attempt_m:
+                xyz_error *= maximum_xyz_correction_per_attempt_m / xyz_error_norm
+            next_command_xyz = command_xyz + xyz_error
+            command_offset = next_command_xyz - fixed_xyz
+            command_offset_norm = float(np.linalg.norm(command_offset))
+            if command_offset_norm > maximum_xyz_command_offset_m:
+                next_command_xyz = fixed_xyz + (
+                    command_offset
+                    * maximum_xyz_command_offset_m
+                    / command_offset_norm
+                )
+            if (
+                correction_norm < math.radians(0.02)
+                and float(np.linalg.norm(next_command_xyz - command_xyz)) < 0.0002
+            ):
+                break
             next_xyzw = next_rotation.as_quat()
-            next_pose = np.r_[next_xyzw[[3, 0, 1, 2]], fixed_xyz]
+            next_pose = np.r_[next_xyzw[[3, 0, 1, 2]], next_command_xyz]
             transition = np.asarray([measured, next_pose], dtype=float)
+            equivalent_motion_m = max(
+                0.12 * correction_norm,
+                float(np.linalg.norm(next_command_xyz - measured[4:])),
+            )
             samples = sample_pose_path_at_speed(
                 transition,
                 # Angular duration is encoded as 0.12 m/rad by the sampler.
                 speed_m_s=max(
                     1e-6,
-                    0.12 * correction_norm / float(correction_duration_s),
+                    equivalent_motion_m / float(correction_duration_s),
                 ),
                 control_hz=self.control_hz,
             )
@@ -1288,16 +1316,24 @@ class CartesianAirTransportStreamer:
                     self.sleep(remaining)
             total_correction_rad += correction_norm
             command_rotation = next_rotation
-            measured, assessment = record(attempt)
+            command_xyz = next_command_xyz
+            measured, assessment, xyz_drift = record(attempt)
         self.hold_measured()
+        accepted = bool(assessment.accepted and xyz_drift <= maximum_xyz_drift_m)
         return {
-            "accepted": bool(assessment.accepted),
+            "accepted": accepted,
             "physical_arm": self.side,
             "fixed_xyz_m": fixed_xyz.tolist(),
             "attempts_used": len(history) - 1,
             "maximum_attempts": maximum_attempts,
             "maximum_correction_deg": float(maximum_correction_deg),
             "maximum_total_correction_deg": float(maximum_total_correction_deg),
+            "maximum_xyz_drift_m": float(maximum_xyz_drift_m),
+            "maximum_xyz_correction_per_attempt_m": float(
+                maximum_xyz_correction_per_attempt_m
+            ),
+            "maximum_xyz_command_offset_m": float(maximum_xyz_command_offset_m),
+            "hard_xyz_drift_m": float(hard_xyz_drift_m),
             "history": history,
             "final_pose_wxyz_xyz": measured.tolist(),
             "final_assessment": assessment.to_dict(),
