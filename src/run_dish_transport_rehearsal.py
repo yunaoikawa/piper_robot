@@ -392,6 +392,7 @@ def execute_plans(
                 maximum_tracking_rotation_error_rad=float(
                     execution["maximum_tracking_rotation_error_rad"]
                 ),
+                final_settle_s=float(execution["endpoint_settle_s"]),
             )
             with SynchronizedCameraPair(
                 camera_names["head"], camera_names[plan.physical_arm]

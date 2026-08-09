@@ -156,6 +156,7 @@ def test_streamer_uses_physical_left_teleop_rpc_path():
         "left",
         torque_limit_nm=np.ones(6),
         tracking_interval=1,
+        final_settle_s=0.2,
         clock=clock,
         sleep=clock.sleep,
     )
@@ -170,7 +171,9 @@ def test_streamer_uses_physical_left_teleop_rpc_path():
         poses, speed_m_s=0.04, gripper_open_ratio=1.0, stage="test"
     )
     assert report["command_path"] == "set_left_ee_target"
-    assert len(rpc.left_commands) == report["sample_count"] + 1  # final hold
+    assert len(rpc.left_commands) == (
+        report["sample_count"] + report["endpoint_settle_command_count"] + 1
+    )  # samples, endpoint settle, final measured hold
     assert all(command[1] == 1.0 for command in rpc.left_commands)
 
 

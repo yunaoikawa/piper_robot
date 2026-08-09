@@ -54,7 +54,9 @@ It writes `plan.json` and `plan_preview.html` under
 Execution uses the same `set_{side}_ee_target` Cartesian RPC path as teleop,
 at 30 Hz with a 50 ms preview.  It does not rewrite controller gains or CAN
 mode.  Both arms are first sent to canonical home.  The air gripper remains
-fully open.
+fully open.  Every chunk republishes its final target for 0.8 seconds before
+reading and holding the measured pose; this prevents preview/tracking lag from
+being frozen as a false endpoint tilt.
 
 ```bash
 /home/admin/miniforge3/envs/robot-test/bin/python \

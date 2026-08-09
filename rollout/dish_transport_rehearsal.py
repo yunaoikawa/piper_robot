@@ -960,6 +960,7 @@ class CartesianAirTransportStreamer:
         tracking_interval: int = 15,
         maximum_tracking_position_error_m: float = 0.10,
         maximum_tracking_rotation_error_rad: float = 1.5,
+        final_settle_s: float = 0.8,
         clock=time.monotonic,
         sleep=time.sleep,
     ):
@@ -978,6 +979,9 @@ class CartesianAirTransportStreamer:
         self.maximum_tracking_rotation_error_rad = float(
             maximum_tracking_rotation_error_rad
         )
+        self.final_settle_s = float(final_settle_s)
+        if self.final_settle_s < 0.0 or self.final_settle_s > 3.0:
+            raise ValueError("final_settle_s must be within [0, 3] seconds")
         self.clock = clock
         self.sleep = sleep
         self.torque_warning_count = 0
@@ -1045,6 +1049,7 @@ class CartesianAirTransportStreamer:
         started = self.clock()
         maximum_position_error = 0.0
         maximum_rotation_error = 0.0
+        settle_command_count = 0
         motion_error = None
         try:
             for index, sample in enumerate(samples, start=1):
@@ -1084,6 +1089,48 @@ class CartesianAirTransportStreamer:
                     raise RuntimeError(f"{self.side} teleop stream missed its deadline")
                 if remaining > 0.0:
                     self.sleep(remaining)
+            # The Piper target is timestamped preview_time_s into the future.
+            # Latching the measured pose immediately after the final sample
+            # freezes tracking lag as a real endpoint error.  Keep publishing
+            # the exact endpoint through a bounded settle window, then measure
+            # and only afterwards convert it to a measured-pose hold.
+            settle_count = int(math.ceil(self.final_settle_s * self.control_hz))
+            settle_started = self.clock()
+            final_pose = mink.SE3(samples[-1].pose_wxyz_xyz)
+            for settle_index in range(1, settle_count + 1):
+                self._observe_torque(f"{stage}/settle")
+                accepted = self._call(
+                    "set",
+                    final_pose,
+                    gripper_target=float(gripper_open_ratio),
+                    preview_time=self.preview_time_s,
+                    suffix="ee_target",
+                )
+                if accepted is False:
+                    raise RuntimeError(f"{self.side} endpoint settle target rejected")
+                settle_command_count += 1
+                deadline = settle_started + settle_index / self.control_hz
+                remaining = deadline - self.clock()
+                if remaining > 0.0:
+                    self.sleep(remaining)
+            measured = self.measured_pose()
+            final_position_error = float(
+                np.linalg.norm(measured[4:] - samples[-1].pose_wxyz_xyz[4:])
+            )
+            final_rotation_error = _quaternion_distance_rad(
+                measured[:4], samples[-1].pose_wxyz_xyz[:4]
+            )
+            maximum_position_error = max(maximum_position_error, final_position_error)
+            maximum_rotation_error = max(maximum_rotation_error, final_rotation_error)
+            if (
+                final_position_error > self.maximum_tracking_position_error_m
+                or final_rotation_error > self.maximum_tracking_rotation_error_rad
+            ):
+                raise RuntimeError(
+                    f"{self.side} endpoint did not settle: "
+                    f"position={final_position_error:.3f}m "
+                    f"rotation={final_rotation_error:.3f}rad"
+                )
         except BaseException as error:
             motion_error = error
             raise
@@ -1102,6 +1149,8 @@ class CartesianAirTransportStreamer:
             "control_hz": self.control_hz,
             "preview_time_s": self.preview_time_s,
             "sample_count": len(samples),
+            "endpoint_settle_s": self.final_settle_s,
+            "endpoint_settle_command_count": settle_command_count,
             "stage": stage,
             "maximum_tracking_position_error_m": maximum_position_error,
             "maximum_tracking_rotation_error_rad": maximum_rotation_error,

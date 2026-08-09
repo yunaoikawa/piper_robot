@@ -36,6 +36,7 @@
   "execution": {
     "control_hz": 30.0,
     "preview_time_s": 0.05,
+    "endpoint_settle_s": 0.8,
     "speed_m_s": 0.04,
     "air_gripper_open_ratio": 1.0,
     "tracking_check_interval": 15,
