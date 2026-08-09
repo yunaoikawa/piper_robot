@@ -261,7 +261,32 @@ def _stream(rpc, q, duration_s, gripper, config):
         delay = started + index / rate_hz - time.monotonic()
         if delay > 0.0:
             time.sleep(delay)
-    return np.asarray(rpc.get_right_joint_positions(), dtype=float)
+    tolerance = math.radians(float(config["motion"]["endpoint_tolerance_deg"]))
+    required = int(config["motion"]["endpoint_consecutive_samples"])
+    deadline = time.monotonic() + float(config["motion"]["endpoint_timeout_s"])
+    consecutive = 0
+    while time.monotonic() < deadline:
+        accepted = rpc.set_right_joint_target(
+            target,
+            gripper_target=float(gripper),
+            preview_time=max(0.05, 2.0 / rate_hz),
+        )
+        if accepted is False:
+            raise RuntimeError("right joint endpoint settle command was rejected")
+        measured = np.asarray(rpc.get_right_joint_positions(), dtype=float)
+        error = float(np.max(np.abs(measured - target)))
+        consecutive = consecutive + 1 if error <= tolerance else 0
+        if consecutive >= required:
+            return measured
+        time.sleep(1.0 / rate_hz)
+    measured = np.asarray(rpc.get_right_joint_positions(), dtype=float)
+    rpc.set_right_joint_target(
+        measured, gripper_target=float(gripper), preview_time=0.2
+    )
+    raise RuntimeError(
+        "right joint endpoint did not settle; "
+        f"error={float(np.max(np.abs(measured - target))):.4f}rad"
+    )
 
 
 def run(config: dict, output_dir: Path, *, execute: bool) -> dict:
