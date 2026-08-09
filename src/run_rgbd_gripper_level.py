@@ -20,7 +20,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from robot.rpc import RPCClient
-from rollout.branch_locked_contact import JointWaypoint, stream_joint_waypoint
 from rollout.camera import CameraFeedManager
 from rollout.dish_transport_rehearsal import ProductionArmKinematics
 from rollout.rgbd_gripper_level import (
@@ -219,16 +218,40 @@ def _capture(stage: str, output_dir: Path, settings: dict):
 
 
 def _stream(rpc, q, duration_s, gripper, config):
-    return stream_joint_waypoint(
-        rpc,
-        arm="right",
-        waypoint=JointWaypoint(np.asarray(q, dtype=float), float(duration_s)),
-        gripper_target=float(gripper),
-        rate_hz=float(config["motion"]["rate_hz"]),
-        maximum_tracking_error_rad=math.radians(
-            float(config["motion"]["maximum_tracking_error_deg"])
-        ),
+    target = np.asarray(q, dtype=float).reshape(6)
+    duration = float(duration_s)
+    rate_hz = float(config["motion"]["rate_hz"])
+    maximum_tracking_error = math.radians(
+        float(config["motion"]["maximum_tracking_error_deg"])
     )
+    start = np.asarray(rpc.get_right_joint_positions(), dtype=float)
+    steps = max(1, int(math.ceil(duration * rate_hz)))
+    started = time.monotonic()
+    for index in range(1, steps + 1):
+        fraction = index / steps
+        blend = fraction**3 * (10.0 + fraction * (-15.0 + 6.0 * fraction))
+        command = start + blend * (target - start)
+        accepted = rpc.set_right_joint_target(
+            command,
+            gripper_target=float(gripper),
+            preview_time=max(0.05, 2.0 / rate_hz),
+        )
+        if accepted is False:
+            raise RuntimeError("right joint probe command was rejected")
+        measured = np.asarray(rpc.get_right_joint_positions(), dtype=float)
+        error = float(np.max(np.abs(measured - command)))
+        if error > maximum_tracking_error:
+            rpc.set_right_joint_target(
+                measured, gripper_target=float(gripper), preview_time=0.2
+            )
+            raise RuntimeError(
+                f"right joint probe tracking error {error:.3f}rad exceeds "
+                f"{maximum_tracking_error:.3f}rad"
+            )
+        delay = started + index / rate_hz - time.monotonic()
+        if delay > 0.0:
+            time.sleep(delay)
+    return np.asarray(rpc.get_right_joint_positions(), dtype=float)
 
 
 def run(config: dict, output_dir: Path, *, execute: bool) -> dict:
