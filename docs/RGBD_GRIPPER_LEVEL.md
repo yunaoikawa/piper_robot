@@ -7,6 +7,8 @@ offset that production FK does not encode.
 `src/run_rgbd_gripper_level.py` measures the elongated blue jaw in the raw
 head RGB-D frame.  Record3D gravity and measured horizontal support normals
 are checked independently.  No accepted camera-to-robot transform is needed.
+The current blue-curve PCA feature is diagnostic only: automatic correction is
+disabled in the profile until the flat grey contact-pad feature replaces it.
 
 The execution path uses production FK only to choose a joint direction in the
 nullspace of XYZ translation and cross-jaw roll.  It then performs a stopped
@@ -21,6 +23,10 @@ Every joint waypoint republishes its endpoint at 30 Hz and requires four
 consecutive measured samples within 0.5 degrees before any RGB-D capture.
 This prevents controller lag from being mistaken for a stopped probe or a
 failed return.
+The endpoint loop can integrate steady directional error into at most three
+degrees of command bias, then latches the measured stopped state.  This is for
+controller deadband/gravity rejection and does not relax the measured endpoint
+gate.
 
 Observation only:
 

@@ -264,19 +264,33 @@ def _stream(rpc, q, duration_s, gripper, config):
     tolerance = math.radians(float(config["motion"]["endpoint_tolerance_deg"]))
     required = int(config["motion"]["endpoint_consecutive_samples"])
     deadline = time.monotonic() + float(config["motion"]["endpoint_timeout_s"])
+    integral_gain = float(config["motion"]["endpoint_integral_gain"])
+    maximum_bias = math.radians(
+        float(config["motion"]["maximum_endpoint_bias_deg"])
+    )
+    command_bias = np.zeros(6, dtype=float)
     consecutive = 0
     while time.monotonic() < deadline:
+        measured = np.asarray(rpc.get_right_joint_positions(), dtype=float)
+        target_error = target - measured
+        command_bias = np.clip(
+            command_bias + integral_gain * target_error,
+            -maximum_bias,
+            maximum_bias,
+        )
         accepted = rpc.set_right_joint_target(
-            target,
+            target + command_bias,
             gripper_target=float(gripper),
             preview_time=max(0.05, 2.0 / rate_hz),
         )
         if accepted is False:
             raise RuntimeError("right joint endpoint settle command was rejected")
-        measured = np.asarray(rpc.get_right_joint_positions(), dtype=float)
         error = float(np.max(np.abs(measured - target)))
         consecutive = consecutive + 1 if error <= tolerance else 0
         if consecutive >= required:
+            rpc.set_right_joint_target(
+                measured, gripper_target=float(gripper), preview_time=0.2
+            )
             return measured
         time.sleep(1.0 / rate_hz)
     measured = np.asarray(rpc.get_right_joint_positions(), dtype=float)
@@ -325,6 +339,11 @@ def run(config: dict, output_dir: Path, *, execute: bool) -> dict:
         report["finished_at_s"] = time.time()
         _write(output_dir / "run.json", report)
         return report
+    if not bool(config.get("automatic_correction_enabled", False)):
+        raise RuntimeError(
+            "automatic correction is disabled until the flat grey contact-pad "
+            "feature replaces diagnostic blue-curve PCA"
+        )
     structural_reasons = set(base["measurement"]["reasons"]) - {
         "physical_blue_jaw_not_horizontal"
     }

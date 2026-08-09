@@ -1,6 +1,7 @@
 {
   "schema": "piper_robot.rgbd_physical_gripper_level/v1",
   "arm": "right",
+  "automatic_correction_enabled": false,
   "production_model": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",
   "rpc": {"host": "127.0.0.1", "port": 8081, "timeout_ms": 10000},
   "measurement": {
@@ -33,6 +34,8 @@
     "maximum_tracking_error_deg": 8.0,
     "endpoint_tolerance_deg": 0.5,
     "endpoint_consecutive_samples": 4,
-    "endpoint_timeout_s": 2.5
+    "endpoint_timeout_s": 3.5,
+    "endpoint_integral_gain": 0.12,
+    "maximum_endpoint_bias_deg": 3.0
   }
 }
