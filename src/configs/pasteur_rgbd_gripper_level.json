@@ -1,0 +1,35 @@
+{
+  "schema": "piper_robot.rgbd_physical_gripper_level/v1",
+  "arm": "right",
+  "production_model": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",
+  "rpc": {"host": "127.0.0.1", "port": 8081, "timeout_ms": 10000},
+  "measurement": {
+    "blue_hue_range": [82, 112],
+    "minimum_blue_area_fraction": 0.00015,
+    "minimum_blue_depth_points": 35,
+    "minimum_support_points": 100,
+    "maximum_support_gravity_disagreement_deg": 8.0,
+    "maximum_accepted_angle_deg": 0.25,
+    "burst_frames": 15,
+    "maximum_burst_mad_deg": 0.6
+  },
+  "probe": {
+    "target_angle_deg": 1.2,
+    "maximum_joint_delta_deg": 2.0,
+    "duration_s": 0.8,
+    "return_duration_s": 0.8,
+    "minimum_observed_change_deg": 0.6,
+    "maximum_return_angle_error_deg": 0.75,
+    "maximum_return_joint_error_deg": 1.0
+  },
+  "correction": {
+    "maximum_angle_per_run_deg": 1.5,
+    "maximum_joint_delta_deg": 3.0,
+    "duration_s": 1.0,
+    "minimum_improvement_deg": 0.12
+  },
+  "motion": {
+    "rate_hz": 30.0,
+    "maximum_tracking_error_deg": 8.0
+  }
+}
