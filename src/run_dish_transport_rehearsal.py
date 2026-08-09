@@ -405,6 +405,35 @@ def execute_plans(
                         gripper_open_ratio=float(execution["air_gripper_open_ratio"]),
                         stage=f"{plan.name}/{checkpoint.name}",
                     )
+                    refinement_config = execution["jaw_level_refinement"]
+                    refinement = None
+                    if refinement_config.get("enabled", True):
+                        try:
+                            refinement = streamer.refine_jaw_level(
+                                level,
+                                gripper_open_ratio=float(
+                                    execution["air_gripper_open_ratio"]
+                                ),
+                                maximum_attempts=int(
+                                    refinement_config["maximum_attempts"]
+                                ),
+                                maximum_correction_deg=float(
+                                    refinement_config["maximum_correction_deg"]
+                                ),
+                                maximum_total_correction_deg=float(
+                                    refinement_config["maximum_total_correction_deg"]
+                                ),
+                                correction_duration_s=float(
+                                    refinement_config["correction_duration_s"]
+                                ),
+                                settle_s=float(refinement_config["settle_s"]),
+                                maximum_xyz_drift_m=float(
+                                    refinement_config["maximum_xyz_drift_m"]
+                                ),
+                            )
+                        except BaseException:
+                            streamer.hold_measured()
+                            raise
                     measured = streamer.measured_pose()
                     jaw = assess_jaw_level(measured, level, planned=False)
                     capture = cameras.capture(
@@ -428,6 +457,7 @@ def execute_plans(
                         "checkpoint": checkpoint.to_dict(),
                         "physical_arm": plan.physical_arm,
                         "motion": motion,
+                        "jaw_level_refinement": refinement,
                         "measured_pose_wxyz_xyz": measured.tolist(),
                         "jaw_level": jaw.to_dict(),
                         "camera": {

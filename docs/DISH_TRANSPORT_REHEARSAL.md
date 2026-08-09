@@ -58,6 +58,12 @@ fully open.  Every chunk republishes its final target for 0.8 seconds before
 reading and holding the measured pose; this prevents preview/tracking lag from
 being frozen as a false endpoint tilt.
 
+If the measured jaw is still outside the normal checkpoint gate, a bounded
+endpoint refinement keeps XYZ fixed and applies the inverse measured
+roll/pitch residual.  Each correction is at most 5 degrees, total correction
+is at most 8 degrees, and at most three attempts are allowed.  Translation
+drift above 5 mm aborts the refinement.
+
 ```bash
 /home/admin/miniforge3/envs/robot-test/bin/python \
   src/run_dish_transport_rehearsal.py --execute

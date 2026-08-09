@@ -5,6 +5,7 @@ import h5py
 import mink
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from rollout.dish_transport_rehearsal import (
     CartesianAirTransportStreamer,
@@ -16,6 +17,7 @@ from rollout.dish_transport_rehearsal import (
     split_checkpoint_chunks,
 )
 from src.dish_transport_rehearsal_ui import CheckpointApprovalStore
+from rollout.gripper_level import JawLevelReference
 
 
 def _write_episode(path: Path, gripper):
@@ -175,6 +177,35 @@ def test_streamer_uses_physical_left_teleop_rpc_path():
         report["sample_count"] + report["endpoint_settle_command_count"] + 1
     )  # samples, endpoint settle, final measured hold
     assert all(command[1] == 1.0 for command in rpc.left_commands)
+
+
+def test_bounded_level_refinement_keeps_measured_xyz():
+    rpc = _RPC()
+    clock = _Clock()
+    level = Rotation.from_euler("x", 90, degrees=True)
+    tilted = Rotation.from_euler("y", 4, degrees=True) * level
+    xyzw = tilted.as_quat()
+    xyz = np.asarray([0.21, -0.12, 0.91])
+    rpc.pose = mink.SE3(np.r_[xyzw[[3, 0, 1, 2]], xyz])
+    streamer = CartesianAirTransportStreamer(
+        rpc,
+        "left",
+        torque_limit_nm=np.ones(6),
+        final_settle_s=0.0,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    report = streamer.refine_jaw_level(
+        JawLevelReference(),
+        gripper_open_ratio=1.0,
+        maximum_attempts=2,
+        correction_duration_s=0.2,
+        settle_s=0.2,
+    )
+    assert report["accepted"] is True
+    assert report["attempts_used"] == 1
+    assert np.allclose(report["fixed_xyz_m"], xyz)
+    assert np.allclose(report["final_pose_wxyz_xyz"][4:], xyz)
 
 
 def test_ui_rejects_continue_when_level_gate_failed():

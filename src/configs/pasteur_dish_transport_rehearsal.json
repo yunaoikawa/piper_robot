@@ -37,6 +37,15 @@
     "control_hz": 30.0,
     "preview_time_s": 0.05,
     "endpoint_settle_s": 0.8,
+    "jaw_level_refinement": {
+      "enabled": true,
+      "maximum_attempts": 3,
+      "maximum_correction_deg": 5.0,
+      "maximum_total_correction_deg": 8.0,
+      "correction_duration_s": 0.5,
+      "settle_s": 0.6,
+      "maximum_xyz_drift_m": 0.005
+    },
     "speed_m_s": 0.04,
     "air_gripper_open_ratio": 1.0,
     "tracking_check_interval": 15,

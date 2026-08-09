@@ -1158,3 +1158,147 @@ class CartesianAirTransportStreamer:
             "torque_warning_count": self.torque_warning_count,
             "last_torque_warning": self.last_torque_warning,
         }
+
+    def refine_jaw_level(
+        self,
+        reference: JawLevelReference,
+        *,
+        gripper_open_ratio: float,
+        maximum_attempts: int = 3,
+        maximum_correction_deg: float = 5.0,
+        maximum_total_correction_deg: float = 8.0,
+        correction_duration_s: float = 0.5,
+        settle_s: float = 0.6,
+        maximum_xyz_drift_m: float = 0.005,
+    ) -> dict:
+        """Level the jaw at fixed measured XYZ using bounded visual-free feedback.
+
+        Cartesian IK can leave a repeatable orientation residual even when the
+        requested endpoint is exactly level.  Estimate that residual from the
+        measured EE rotation, apply its inverse to the next command, and stop
+        as soon as the normal checkpoint gate passes.  No translation is
+        intentionally commanded by this refinement.
+        """
+
+        maximum_attempts = int(maximum_attempts)
+        if maximum_attempts < 0 or maximum_attempts > 5:
+            raise ValueError("maximum_attempts must be within [0, 5]")
+        if min(
+            maximum_correction_deg,
+            maximum_total_correction_deg,
+            correction_duration_s,
+            settle_s,
+            maximum_xyz_drift_m,
+        ) <= 0.0:
+            raise ValueError("jaw-level refinement limits must be positive")
+        measured = self.measured_pose()
+        fixed_xyz = measured[4:].copy()
+        command_rotation = Rotation.from_quat(measured[[1, 2, 3, 0]])
+        total_correction_rad = 0.0
+        history = []
+
+        def record(attempt: int):
+            current = self.measured_pose()
+            assessment = assess_jaw_level(current, reference, planned=False)
+            drift = float(np.linalg.norm(current[4:] - fixed_xyz))
+            item = {
+                "attempt": int(attempt),
+                "measured_pose_wxyz_xyz": current.tolist(),
+                "assessment": assessment.to_dict(),
+                "xyz_drift_m": drift,
+                "total_command_correction_deg": math.degrees(total_correction_rad),
+            }
+            history.append(item)
+            if drift > maximum_xyz_drift_m:
+                raise RuntimeError(
+                    f"{self.side} level refinement translated {drift:.4f}m"
+                )
+            return current, assessment
+
+        measured, assessment = record(0)
+        for attempt in range(1, maximum_attempts + 1):
+            if assessment.accepted:
+                break
+            desired = leveled_pose(measured, reference)
+            desired_rotation = Rotation.from_quat(desired[[1, 2, 3, 0]])
+            measured_rotation = Rotation.from_quat(measured[[1, 2, 3, 0]])
+            correction_vector = (
+                desired_rotation * measured_rotation.inv()
+            ).as_rotvec()
+            correction_norm = float(np.linalg.norm(correction_vector))
+            if correction_norm < math.radians(0.02):
+                break
+            allowed_this_attempt = min(
+                math.radians(maximum_correction_deg),
+                math.radians(maximum_total_correction_deg) - total_correction_rad,
+            )
+            if allowed_this_attempt <= 0.0:
+                break
+            if correction_norm > allowed_this_attempt:
+                correction_vector *= allowed_this_attempt / correction_norm
+                correction_norm = allowed_this_attempt
+            correction = Rotation.from_rotvec(correction_vector)
+            next_rotation = correction * command_rotation
+            next_xyzw = next_rotation.as_quat()
+            next_pose = np.r_[next_xyzw[[3, 0, 1, 2]], fixed_xyz]
+            transition = np.asarray([measured, next_pose], dtype=float)
+            samples = sample_pose_path_at_speed(
+                transition,
+                # Angular duration is encoded as 0.12 m/rad by the sampler.
+                speed_m_s=max(
+                    1e-6,
+                    0.12 * correction_norm / float(correction_duration_s),
+                ),
+                control_hz=self.control_hz,
+            )
+            started = self.clock()
+            for index, sample in enumerate(samples, start=1):
+                self._observe_torque(f"jaw_level_refinement_{attempt}")
+                accepted = self._call(
+                    "set",
+                    mink.SE3(sample.pose_wxyz_xyz),
+                    gripper_target=float(gripper_open_ratio),
+                    preview_time=self.preview_time_s,
+                    suffix="ee_target",
+                )
+                if accepted is False:
+                    raise RuntimeError(
+                        f"{self.side} jaw-level correction target rejected"
+                    )
+                remaining = started + sample.t_s - self.clock()
+                if remaining > 0.0:
+                    self.sleep(remaining)
+            settle_count = max(1, int(math.ceil(settle_s * self.control_hz)))
+            settle_started = self.clock()
+            for index in range(1, settle_count + 1):
+                self._observe_torque(f"jaw_level_refinement_{attempt}/settle")
+                accepted = self._call(
+                    "set",
+                    mink.SE3(next_pose),
+                    gripper_target=float(gripper_open_ratio),
+                    preview_time=self.preview_time_s,
+                    suffix="ee_target",
+                )
+                if accepted is False:
+                    raise RuntimeError(
+                        f"{self.side} jaw-level settle target rejected"
+                    )
+                remaining = settle_started + index / self.control_hz - self.clock()
+                if remaining > 0.0:
+                    self.sleep(remaining)
+            total_correction_rad += correction_norm
+            command_rotation = next_rotation
+            measured, assessment = record(attempt)
+        self.hold_measured()
+        return {
+            "accepted": bool(assessment.accepted),
+            "physical_arm": self.side,
+            "fixed_xyz_m": fixed_xyz.tolist(),
+            "attempts_used": len(history) - 1,
+            "maximum_attempts": maximum_attempts,
+            "maximum_correction_deg": float(maximum_correction_deg),
+            "maximum_total_correction_deg": float(maximum_total_correction_deg),
+            "history": history,
+            "final_pose_wxyz_xyz": measured.tolist(),
+            "final_assessment": assessment.to_dict(),
+        }
