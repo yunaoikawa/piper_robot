@@ -40,7 +40,7 @@ from rollout.gripper_level import (
 )
 
 
-SCHEMA = "piper_robot.dish_transport_air_rehearsal/v1"
+SCHEMA = "piper_robot.dish_transport_air_rehearsal/v2"
 PRODUCTION_BRANCH = {"right": "left_arm", "left": "right_arm"}
 PRODUCTION_EE = {"right": "left_arm_ee", "left": "right_arm_ee"}
 SEMANTIC_BRANCH = {"right": "right", "left": "left"}
@@ -165,8 +165,8 @@ class TransportPlan:
     coordinate_retarget: str
     poses_wxyz_xyz: np.ndarray
     q_physical_rad: np.ndarray
-    checkpoint_indices: tuple[int, int, int]
-    checkpoint_names: tuple[str, str, str]
+    checkpoint_indices: tuple[int, ...]
+    checkpoint_names: tuple[str, ...]
     maximum_planned_tilt_deg: float
     collision_audit: dict
 
@@ -190,9 +190,39 @@ class TransportPlan:
             "coordinate_retarget": self.coordinate_retarget,
             "poses_wxyz_xyz": self.poses_wxyz_xyz.tolist(),
             "q_physical_rad": self.q_physical_rad.tolist(),
-            "checkpoints": [self.checkpoint(i).to_dict() for i in range(3)],
+            "checkpoints": [
+                self.checkpoint(i).to_dict() for i in range(len(self.checkpoint_indices))
+            ],
             "maximum_planned_tilt_deg": self.maximum_planned_tilt_deg,
             "collision_audit": self.collision_audit,
+        }
+
+
+@dataclass(frozen=True)
+class StoppedObserverPlan:
+    """Left-camera poses executed only while the right carrier is stopped."""
+
+    physical_arm: str
+    carrier_arm: str
+    checkpoint_poses_wxyz_xyz: np.ndarray
+    checkpoint_q_physical_rad: np.ndarray
+    transition_pose_paths: tuple[np.ndarray, ...]
+    transition_q_paths: tuple[np.ndarray, ...]
+    return_pose_path: np.ndarray
+    return_q_path: np.ndarray
+    audit: dict
+
+    def to_dict(self) -> dict:
+        return {
+            "physical_arm": self.physical_arm,
+            "carrier_arm": self.carrier_arm,
+            "checkpoint_poses_wxyz_xyz": self.checkpoint_poses_wxyz_xyz.tolist(),
+            "checkpoint_q_physical_rad": self.checkpoint_q_physical_rad.tolist(),
+            "transition_pose_paths": [value.tolist() for value in self.transition_pose_paths],
+            "transition_q_paths": [value.tolist() for value in self.transition_q_paths],
+            "return_pose_path": self.return_pose_path.tolist(),
+            "return_q_path": self.return_q_path.tolist(),
+            "audit": self.audit,
         }
 
 
@@ -305,6 +335,7 @@ class ProductionArmKinematics:
         maximum_position_error_m: float = 0.008,
         maximum_rotation_error_rad: float = math.radians(8.0),
         level_reference: JawLevelReference | None = None,
+        allow_multistart: bool = True,
     ) -> tuple[np.ndarray, dict]:
         target = np.asarray(target_pose_wxyz_xyz, dtype=float).reshape(7)
         seed = np.asarray(seed_q_physical_rad, dtype=float).reshape(6)
@@ -324,17 +355,20 @@ class ProductionArmKinematics:
         # A level wrist can sit on either side of a wrist-roll local minimum.
         # Retry only after the continuous seed fails; execution still receives
         # Cartesian targets and the selected audit path is checked for jumps.
-        for joint4_delta, joint6_delta in (
-            (0.0, -0.8),
-            (0.0, 0.8),
-            (-0.35, -0.7),
-            (0.35, 0.7),
-        ):
-            candidate = seed.copy()
-            candidate[3] += joint4_delta
-            candidate[5] += joint6_delta
-            starts.append(np.clip(candidate, self.lower, self.upper))
-        starts.append(np.clip(physical_home_q(self.physical_arm), self.lower, self.upper))
+        if allow_multistart:
+            for joint4_delta, joint6_delta in (
+                (0.0, -0.8),
+                (0.0, 0.8),
+                (-0.35, -0.7),
+                (0.35, 0.7),
+            ):
+                candidate = seed.copy()
+                candidate[3] += joint4_delta
+                candidate[5] += joint6_delta
+                starts.append(np.clip(candidate, self.lower, self.upper))
+            starts.append(
+                np.clip(physical_home_q(self.physical_arm), self.lower, self.upper)
+            )
         candidates = []
         for start_index, start in enumerate(starts):
             result = least_squares(
@@ -415,6 +449,9 @@ class ProductionArmKinematics:
         *,
         seed_q=None,
         level_reference: JawLevelReference | None = None,
+        allow_multistart: bool = False,
+        maximum_position_error_m: float = 0.008,
+        maximum_rotation_error_rad: float = math.radians(8.0),
     ) -> tuple[np.ndarray, list[dict]]:
         seed = physical_home_q(self.physical_arm) if seed_q is None else np.asarray(seed_q)
         q_path = []
@@ -422,7 +459,12 @@ class ProductionArmKinematics:
         for index, pose in enumerate(np.asarray(poses_wxyz_xyz, dtype=float)):
             try:
                 seed, report = self.solve_pose(
-                    pose, seed, level_reference=level_reference
+                    pose,
+                    seed,
+                    level_reference=level_reference,
+                    allow_multistart=allow_multistart,
+                    maximum_position_error_m=maximum_position_error_m,
+                    maximum_rotation_error_rad=maximum_rotation_error_rad,
                 )
             except ValueError as error:
                 raise ValueError(f"IK path sample {index} rejected: {error}") from error
@@ -586,6 +628,8 @@ def audit_joint_path(
     dish_center_offset_ee_m: Sequence[float],
     ignored_environment_bodies: Sequence[str] = (),
     maximum_baseline_penetration_increase_m: float = 0.003,
+    carrying_sample_range: tuple[int, int] | None = None,
+    minimum_dish_clearance_m: float = 0.0,
 ) -> dict:
     """Audit arm and a horizontal virtual dish against the calibrated scene."""
 
@@ -616,6 +660,7 @@ def audit_joint_path(
     data.qpos[active_ids] = physical_home_q(side) + offset
     dish_body = model.body("virtual-carried-dish")
     mocap_id = int(dish_body.mocapid[0])
+    dish_geom_id = int(model.geom("virtual-carried-dish-collision").id)
     ee_site = model.site(f"{active_prefix}/ee")
     tool_offset = np.asarray(dish_center_offset_ee_m, dtype=float).reshape(3)
     ignored_bodies = {str(value) for value in ignored_environment_bodies}
@@ -659,13 +704,53 @@ def audit_joint_path(
     disallowed_minimum_distance: dict[tuple[str, str], float] = {}
     first_disallowed_sample = None
     minimum_dish_environment_distance_m = float("inf")
+    minimum_dish_environment_pair = None
+    minimum_dish_environment_sample = None
+    carry_start, carry_stop = (
+        (0, len(path) - 1)
+        if carrying_sample_range is None
+        else tuple(int(value) for value in carrying_sample_range)
+    )
+    if not 0 <= carry_start <= carry_stop < len(path):
+        raise ValueError("carrying sample range is outside the joint path")
     for sample_index, q_physical in enumerate(path):
         data.qpos[active_ids] = q_physical + offset
         mujoco.mj_forward(model, data)
-        rotation = np.asarray(data.site_xmat[ee_site.id], dtype=float).reshape(3, 3)
-        data.mocap_pos[mocap_id] = data.site_xpos[ee_site.id] + rotation @ tool_offset
-        data.mocap_quat[mocap_id] = np.asarray([1.0, 0.0, 0.0, 0.0])
+        carrying = carry_start <= sample_index <= carry_stop
+        if carrying:
+            rotation = np.asarray(data.site_xmat[ee_site.id], dtype=float).reshape(3, 3)
+            data.mocap_pos[mocap_id] = data.site_xpos[ee_site.id] + rotation @ tool_offset
+            data.mocap_quat[mocap_id] = np.asarray([1.0, 0.0, 0.0, 0.0])
+        else:
+            data.mocap_pos[mocap_id] = np.asarray([0.0, 0.0, 2.0])
         mujoco.mj_forward(model, data)
+        if carrying:
+            for geom_id in range(model.ngeom):
+                if geom_id == dish_geom_id:
+                    continue
+                geom = model.geom(geom_id)
+                body_name = model.body(int(geom.bodyid[0])).name
+                if (
+                    body_name in ignored_bodies
+                    or body_name.startswith(active_prefix + "/")
+                    or (
+                        int(model.geom_contype[geom_id]) == 0
+                        and int(model.geom_conaffinity[geom_id]) == 0
+                    )
+                ):
+                    continue
+                distance = float(
+                    mujoco.mj_geomDistance(
+                        model, data, dish_geom_id, geom_id, 1.0, None
+                    )
+                )
+                if distance < minimum_dish_environment_distance_m:
+                    minimum_dish_environment_distance_m = distance
+                    minimum_dish_environment_pair = [
+                        "virtual-carried-dish-collision",
+                        geom.name or body_name,
+                    ]
+                    minimum_dish_environment_sample = sample_index
         for contact_index in range(data.ncon):
             contact = data.contact[contact_index]
             geom1 = model.geom(int(contact.geom1))
@@ -697,12 +782,20 @@ def audit_joint_path(
             )
             if first_disallowed_sample is None:
                 first_disallowed_sample = sample_index
-            if dish1 or dish2:
+            if carrying and (dish1 or dish2):
                 minimum_dish_environment_distance_m = min(
                     minimum_dish_environment_distance_m, float(contact.dist)
                 )
+    clearance = (
+        None
+        if math.isinf(minimum_dish_environment_distance_m)
+        else float(minimum_dish_environment_distance_m)
+    )
+    clearance_accepted = bool(
+        clearance is not None and clearance >= float(minimum_dish_clearance_m)
+    )
     return {
-        "accepted": not disallowed,
+        "accepted": bool(not disallowed and clearance_accepted),
         "physical_arm": side,
         "semantic_branch": active_prefix,
         "sample_count": int(len(path)),
@@ -717,11 +810,12 @@ def audit_joint_path(
             for pair, distance in sorted(baseline_contacts.items())
         ],
         "ignored_environment_bodies": sorted(ignored_bodies),
-        "minimum_contacting_dish_environment_distance_m": (
-            None
-            if math.isinf(minimum_dish_environment_distance_m)
-            else minimum_dish_environment_distance_m
-        ),
+        "minimum_dish_environment_distance_m": clearance,
+        "minimum_dish_environment_pair": minimum_dish_environment_pair,
+        "minimum_dish_environment_sample": minimum_dish_environment_sample,
+        "minimum_required_dish_clearance_m": float(minimum_dish_clearance_m),
+        "dish_clearance_accepted": clearance_accepted,
+        "carrying_sample_range": [carry_start, carry_stop],
         "virtual_dish": {
             "radius_m": float(dish_radius_m),
             "thickness_m": float(dish_thickness_m),
@@ -747,11 +841,22 @@ def build_transport_plan(
     maximum_cartesian_step_m: float = 0.012,
     dish_radius_m: float = 0.045,
     dish_thickness_m: float = 0.014,
-    dish_center_offset_ee_m: Sequence[float] = (0.075, 0.0, 0.0),
+    dish_center_offset_ee_m: Sequence[float] = (-0.075, 0.0, 0.0),
     ignored_environment_bodies: Sequence[str] = (),
     require_collision_free: bool = True,
+    minimum_dish_clearance_m: float = 0.010,
+    low_route_search_step_m: float = 0.005,
+    maximum_low_route_lift_m: float = 0.120,
+    maximum_ik_joint_step_rad: float = 0.12,
 ) -> TransportPlan:
-    """Compile successes into one level, collision-audited air route."""
+    """Compile successes into the lowest level, collision-audited air route.
+
+    The demonstration supplies station positions and route shape in XY.  Its
+    hand-authored high waypoint is deliberately not reused: the vertical
+    profile starts at the two station lifts and is raised in small increments
+    until the carried-dish clearance, arm collision, and branch-locked IK gates
+    all pass.
+    """
 
     side = _side(physical_arm)
     episodes = []
@@ -772,14 +877,11 @@ def build_transport_plan(
             f"{name}: only {len(episodes)} clean successes; rejected={rejected}"
         )
     medoid = episodes[choose_route_medoid(episodes)]
-    route = _resample_pose_path(medoid.transport_poses, route_samples)
-    route[0, 4:] = medoid.positions_m[medoid.close_frame]
-    route[0, 6] += float(source_lift_m)
-    route[-1, 4:] = medoid.positions_m[medoid.release_frame]
-    route[-1, 6] += float(arrival_hover_m)
-    # A carried dish must never follow a downward teleop wobble below the
-    # straight clearance envelope joining the two verified hover endpoints.
-    route[:, 6] = np.maximum(route[:, 6], np.linspace(route[0, 6], route[-1, 6], len(route)))
+    demonstrated_route = _resample_pose_path(medoid.transport_poses, route_samples)
+    demonstrated_route[0, 4:] = medoid.positions_m[medoid.close_frame]
+    demonstrated_route[0, 6] += float(source_lift_m)
+    demonstrated_route[-1, 4:] = medoid.positions_m[medoid.release_frame]
+    demonstrated_route[-1, 6] += float(arrival_hover_m)
 
     kinematics = ProductionArmKinematics(production_model, side)
     home_q = physical_home_q(side)
@@ -789,75 +891,186 @@ def build_transport_plan(
         right_home = ProductionArmKinematics(production_model, "right").pose(
             physical_home_q("right")
         )
-        route[:, 4:] += home_pose[4:] - right_home[4:]
+        demonstrated_route[:, 4:] += home_pose[4:] - right_home[4:]
         coordinate_retarget = (
             "operator_confirmed_air_rehearsal_home_relative_translation_from_right_demo"
         )
-    # Raw teleoperation contains backtracking and local IK-branch loops.  Keep
-    # the station geometry and a demonstrated high-clearance waypoint, then
-    # construct the shortest route through those anchors.  This is both faster
-    # and substantially more reproducible than replaying wrist-scale wobble.
-    middle_start = max(1, len(route) // 5)
-    middle_stop = min(len(route) - 1, 4 * len(route) // 5)
+    # Retain the demonstrated middle XY bend, but replace its height with the
+    # straight station-to-station envelope.  Search upward from there; the
+    # first accepted candidate is the lowest route at the configured grid.
+    middle_start = max(1, len(demonstrated_route) // 5)
+    middle_stop = min(len(demonstrated_route) - 1, 4 * len(demonstrated_route) // 5)
+    # Preserve only the demonstrated obstacle-avoiding XY bend.  Its height is
+    # discarded below, so a cautious human lift cannot force every replay high.
     middle_index = middle_start + int(
-        np.argmax(route[middle_start:middle_stop, 6])
+        np.argmax(demonstrated_route[middle_start:middle_stop, 6])
     )
-    anchors = route[[0, middle_index, len(route) - 1]].copy()
-    fixed_orientation, yaw_selection = _choose_horizontal_orientation(
-        kinematics, anchors[:, 4:], home_pose, level_reference
+    base_anchors = demonstrated_route[[0, middle_index, len(demonstrated_route) - 1]].copy()
+    base_anchors[:, 6] = np.linspace(base_anchors[0, 6], base_anchors[-1, 6], 3)
+    candidate_reports = []
+    selected = None
+    lift_values = np.arange(
+        0.0,
+        float(maximum_low_route_lift_m) + 0.5 * float(low_route_search_step_m),
+        float(low_route_search_step_m),
     )
-    anchors[:, :4] = fixed_orientation
-    first_half = _append_linear_pose_path(
-        anchors[0], anchors[1], maximum_cartesian_step_m
-    )
-    second_half = _append_linear_pose_path(
-        anchors[1], anchors[2], maximum_cartesian_step_m
-    )
-    route = np.vstack((first_half, second_half[1:]))
-    route, maximum_tilt = _level_path(
-        route, level_reference, fixed_orientation=fixed_orientation
-    )
-    approach = _append_linear_pose_path(home_pose, route[0], maximum_cartesian_step_m)
-    retreat = _append_linear_pose_path(route[-1], home_pose, maximum_cartesian_step_m)
-    # Remove duplicate endpoints while retaining exact checkpoint indices.
-    poses = np.vstack((approach, route[1:], retreat[1:]))
-    source_index = len(approach) - 1
-    midpoint_index = source_index + (len(route) - 1) // 2
-    arrival_index = source_index + len(route) - 1
-    q_path, ik_reports = kinematics.solve_path(
-        poses, seed_q=home_q, level_reference=level_reference
-    )
-    audit = audit_joint_path(
-        planning_model,
-        side,
+    for added_lift_m in lift_values:
+        anchors = base_anchors.copy()
+        anchors[:, 6] += float(added_lift_m)
+        try:
+            fixed_orientation, yaw_selection = _choose_horizontal_orientation(
+                kinematics, anchors[:, 4:], home_pose, level_reference
+            )
+            anchors[:, :4] = fixed_orientation
+            first_half = _append_linear_pose_path(
+                anchors[0], anchors[1], maximum_cartesian_step_m
+            )
+            second_half = _append_linear_pose_path(
+                anchors[1], anchors[2], maximum_cartesian_step_m
+            )
+            route = np.vstack((first_half, second_half[1:]))
+            route, maximum_tilt = _level_path(
+                route, level_reference, fixed_orientation=fixed_orientation
+            )
+            approach = _append_linear_pose_path(
+                home_pose, route[0], maximum_cartesian_step_m
+            )
+            retreat = _append_linear_pose_path(
+                route[-1], home_pose, maximum_cartesian_step_m
+            )
+            poses = np.vstack((approach, route[1:], retreat[1:]))
+            source_index = len(approach) - 1
+            arrival_index = source_index + len(route) - 1
+            q_path, ik_reports = kinematics.solve_path(
+                poses,
+                seed_q=home_q,
+                level_reference=level_reference,
+                allow_multistart=False,
+            )
+            audit = audit_joint_path(
+                planning_model,
+                side,
+                q_path,
+                dish_radius_m=dish_radius_m,
+                dish_thickness_m=dish_thickness_m,
+                dish_center_offset_ee_m=dish_center_offset_ee_m,
+                ignored_environment_bodies=ignored_environment_bodies,
+                carrying_sample_range=(source_index, arrival_index),
+                minimum_dish_clearance_m=minimum_dish_clearance_m,
+            )
+            audit["maximum_ik_position_error_m"] = max(
+                report["position_error_m"] for report in ik_reports
+            )
+            audit["maximum_ik_rotation_error_deg"] = max(
+                report["rotation_error_deg"] for report in ik_reports
+            )
+            audit["horizontal_yaw_selection"] = yaw_selection
+            carrying_ik_reports = ik_reports[source_index : arrival_index + 1]
+            audit["maximum_ik_proxy_jaw_tilt_deg"] = max(
+                report["actual_jaw_level"]["combined_tilt_deg"]
+                for report in carrying_ik_reports
+            )
+            audit["ik_proxy_jaw_level_accepted"] = all(
+                report["actual_jaw_level"]["accepted"]
+                for report in carrying_ik_reports
+            )
+            audit["ik_proxy_jaw_level_scope"] = (
+                "source_lifted_through_arrival_hover"
+            )
+            audit["maximum_ik_joint_step_rad"] = float(
+                np.max(np.abs(np.diff(q_path, axis=0)))
+            )
+            audit["maximum_allowed_ik_joint_step_rad"] = float(
+                maximum_ik_joint_step_rad
+            )
+            audit["ik_branch_continuity_accepted"] = bool(
+                audit["maximum_ik_joint_step_rad"]
+                <= float(maximum_ik_joint_step_rad)
+            )
+            accepted = bool(
+                audit["accepted"]
+                and audit["ik_proxy_jaw_level_accepted"]
+                and audit["ik_branch_continuity_accepted"]
+            )
+            candidate_reports.append(
+                {
+                    "added_lift_m": float(added_lift_m),
+                    "accepted": accepted,
+                    "minimum_dish_environment_distance_m": audit[
+                        "minimum_dish_environment_distance_m"
+                    ],
+                    "minimum_dish_environment_pair": audit[
+                        "minimum_dish_environment_pair"
+                    ],
+                    "minimum_dish_environment_sample": audit[
+                        "minimum_dish_environment_sample"
+                    ],
+                    "maximum_ik_joint_step_rad": audit[
+                        "maximum_ik_joint_step_rad"
+                    ],
+                    "horizontal_yaw_selection": audit[
+                        "horizontal_yaw_selection"
+                    ],
+                    "first_disallowed_sample": audit[
+                        "first_disallowed_sample"
+                    ],
+                    "non_attachment_contacts": audit[
+                        "non_attachment_contacts"
+                    ],
+                }
+            )
+            if accepted:
+                selected = (
+                    poses,
+                    q_path,
+                    route,
+                    source_index,
+                    arrival_index,
+                    maximum_tilt,
+                    audit,
+                    float(added_lift_m),
+                )
+                break
+        except ValueError as error:
+            candidate_reports.append(
+                {
+                    "added_lift_m": float(added_lift_m),
+                    "accepted": False,
+                    "error": str(error),
+                }
+            )
+    if selected is None:
+        raise ValueError(
+            f"{name}: no low horizontal route passed clearance/IK/collision gates; "
+            f"candidates={candidate_reports}"
+        )
+    (
+        poses,
         q_path,
-        dish_radius_m=dish_radius_m,
-        dish_thickness_m=dish_thickness_m,
-        dish_center_offset_ee_m=dish_center_offset_ee_m,
-        ignored_environment_bodies=ignored_environment_bodies,
+        route,
+        source_index,
+        arrival_index,
+        maximum_tilt,
+        audit,
+        selected_lift_m,
+    ) = selected
+    checkpoint_names = (
+        "departure",
+        "quarter",
+        "midpoint",
+        "three_quarters",
+        "arrival",
     )
-    audit["maximum_ik_position_error_m"] = max(
-        report["position_error_m"] for report in ik_reports
+    checkpoint_indices = tuple(
+        source_index + int(round(fraction * (arrival_index - source_index)))
+        for fraction in (0.0, 0.25, 0.5, 0.75, 1.0)
     )
-    audit["maximum_ik_rotation_error_deg"] = max(
-        report["rotation_error_deg"] for report in ik_reports
-    )
-    audit["horizontal_yaw_selection"] = yaw_selection
-    carrying_ik_reports = ik_reports[source_index : arrival_index + 1]
-    audit["maximum_ik_proxy_jaw_tilt_deg"] = max(
-        report["actual_jaw_level"]["combined_tilt_deg"]
-        for report in carrying_ik_reports
-    )
-    audit["ik_proxy_jaw_level_accepted"] = all(
-        report["actual_jaw_level"]["accepted"] for report in carrying_ik_reports
-    )
-    audit["ik_proxy_jaw_level_scope"] = "source_lifted_through_arrival_hover"
-    audit["maximum_ik_joint_step_rad"] = float(
-        np.max(np.abs(np.diff(q_path, axis=0)))
-    )
-    audit["ik_branch_continuity_accepted"] = bool(
-        audit["maximum_ik_joint_step_rad"] <= 0.35
-    )
+    audit["low_route_search"] = {
+        "selected_added_lift_m": selected_lift_m,
+        "step_m": float(low_route_search_step_m),
+        "maximum_lift_m": float(maximum_low_route_lift_m),
+        "candidates": candidate_reports,
+    }
     audit["rejected_demonstrations"] = rejected
     if require_collision_free and not audit["accepted"]:
         raise ValueError(f"{name}: collision audit rejected route: {audit}")
@@ -871,23 +1084,329 @@ def build_transport_plan(
         coordinate_retarget=coordinate_retarget,
         poses_wxyz_xyz=poses,
         q_physical_rad=q_path,
-        checkpoint_indices=(source_index, midpoint_index, arrival_index),
-        checkpoint_names=("source_lifted", "route_midpoint", "arrival_hover"),
+        checkpoint_indices=checkpoint_indices,
+        checkpoint_names=checkpoint_names,
         maximum_planned_tilt_deg=maximum_tilt,
         collision_audit=audit,
     )
 
 
 def split_checkpoint_chunks(plan: TransportPlan) -> tuple[np.ndarray, ...]:
-    """Return approach, first half, second half, and home-return pose chunks."""
+    """Split at every checkpoint and append the audited home-return chunk."""
 
-    source, midpoint, arrival = plan.checkpoint_indices
+    indices = tuple(int(value) for value in plan.checkpoint_indices)
+    if len(indices) < 2 or any(b <= a for a, b in zip(indices, indices[1:])):
+        raise ValueError("checkpoint indices must be strictly increasing")
     poses = plan.poses_wxyz_xyz
-    return (
-        poses[: source + 1],
-        poses[source : midpoint + 1],
-        poses[midpoint : arrival + 1],
-        poses[arrival:],
+    chunks = [poses[: indices[0] + 1]]
+    chunks.extend(poses[first : second + 1] for first, second in zip(indices, indices[1:]))
+    chunks.append(poses[indices[-1] :])
+    return tuple(chunks)
+
+
+def _audit_coordinated_samples(
+    planning_model: str | Path,
+    samples: Sequence[tuple[np.ndarray, np.ndarray, bool, str]],
+    *,
+    dish_radius_m: float,
+    dish_thickness_m: float,
+    dish_center_offset_ee_m: Sequence[float],
+    ignored_environment_bodies: Sequence[str],
+    minimum_dish_clearance_m: float,
+    calibration_baseline_samples: Sequence[tuple[np.ndarray, np.ndarray]] = (),
+    maximum_baseline_penetration_increase_m: float = 0.003,
+) -> dict:
+    """Audit a sequential two-arm schedule with a right-carried virtual dish."""
+
+    import mujoco
+
+    scene = Path(planning_model).resolve()
+    generated = _insert_virtual_dish(scene, dish_radius_m, dish_thickness_m)
+    try:
+        model = mujoco.MjModel.from_xml_path(str(generated))
+    finally:
+        generated.unlink(missing_ok=True)
+    data = mujoco.MjData(model)
+    qids = {
+        side: np.asarray(
+            [
+                model.joint(f"{SEMANTIC_BRANCH[side]}/joint{index}").qposadr[0]
+                for index in range(1, 7)
+            ]
+        )
+        for side in ("left", "right")
+    }
+    offsets = {
+        side: physical_to_semantic_model_q_offset(side)
+        for side in ("left", "right")
+    }
+    ignored = {str(value) for value in ignored_environment_bodies}
+    dish_body = model.body("virtual-carried-dish")
+    dish_geom_id = int(model.geom("virtual-carried-dish-collision").id)
+    mocap_id = int(dish_body.mocapid[0])
+    right_ee_site = model.site(f"{SEMANTIC_BRANCH['right']}/ee")
+    tool_offset = np.asarray(dish_center_offset_ee_m, dtype=float).reshape(3)
+
+    def set_q(left_q, right_q):
+        data.qpos[qids["left"]] = np.asarray(left_q, dtype=float) + offsets["left"]
+        data.qpos[qids["right"]] = np.asarray(right_q, dtype=float) + offsets["right"]
+        data.mocap_pos[mocap_id] = np.asarray([0.0, 0.0, 2.0])
+        mujoco.mj_forward(model, data)
+
+    def contact_pairs():
+        result = {}
+        for contact_index in range(data.ncon):
+            contact = data.contact[contact_index]
+            first = model.geom(int(contact.geom1))
+            second = model.geom(int(contact.geom2))
+            body1 = model.body(int(first.bodyid[0])).name
+            body2 = model.body(int(second.bodyid[0])).name
+            if body1 in ignored or body2 in ignored:
+                continue
+            names = tuple(sorted((first.name or body1, second.name or body2)))
+            result[names] = min(result.get(names, float("inf")), float(contact.dist))
+        return result
+
+    set_q(physical_home_q("left"), physical_home_q("right"))
+    baseline = contact_pairs()
+    calibration_baseline_count = 0
+    for left_q, right_q in calibration_baseline_samples:
+        set_q(left_q, right_q)
+        for pair, distance in contact_pairs().items():
+            baseline[pair] = min(baseline.get(pair, float("inf")), distance)
+        calibration_baseline_count += 1
+    disallowed = {}
+    minimum_clearance = float("inf")
+    first_disallowed_stage = None
+    for left_q, right_q, carrying, stage in samples:
+        set_q(left_q, right_q)
+        if carrying:
+            rotation = np.asarray(
+                data.site_xmat[right_ee_site.id], dtype=float
+            ).reshape(3, 3)
+            data.mocap_pos[mocap_id] = (
+                data.site_xpos[right_ee_site.id] + rotation @ tool_offset
+            )
+            data.mocap_quat[mocap_id] = np.asarray([1.0, 0.0, 0.0, 0.0])
+            mujoco.mj_forward(model, data)
+            for geom_id in range(model.ngeom):
+                if geom_id == dish_geom_id:
+                    continue
+                geom = model.geom(geom_id)
+                body_name = model.body(int(geom.bodyid[0])).name
+                if (
+                    body_name in ignored
+                    or body_name.startswith("right/")
+                    or (
+                        int(model.geom_contype[geom_id]) == 0
+                        and int(model.geom_conaffinity[geom_id]) == 0
+                    )
+                ):
+                    continue
+                minimum_clearance = min(
+                    minimum_clearance,
+                    float(
+                        mujoco.mj_geomDistance(
+                            model, data, dish_geom_id, geom_id, 1.0, None
+                        )
+                    ),
+                )
+        for pair, distance in contact_pairs().items():
+            if "virtual-carried-dish-collision" in pair:
+                other = pair[0] if pair[1] == "virtual-carried-dish-collision" else pair[1]
+                if other.startswith("right/"):
+                    continue
+            if pair in baseline and distance >= (
+                baseline[pair] - float(maximum_baseline_penetration_increase_m)
+            ):
+                continue
+            disallowed[pair] = min(disallowed.get(pair, float("inf")), distance)
+            if first_disallowed_stage is None:
+                first_disallowed_stage = stage
+    clearance = None if math.isinf(minimum_clearance) else float(minimum_clearance)
+    clearance_accepted = bool(
+        clearance is not None and clearance >= float(minimum_dish_clearance_m)
+    )
+    return {
+        "accepted": bool(not disallowed and clearance_accepted),
+        "sample_count": len(samples),
+        "first_disallowed_stage": first_disallowed_stage,
+        "non_attachment_contacts": [list(pair) for pair in sorted(disallowed)],
+        "non_attachment_contact_minimum_distance_m": [
+            {"geoms": list(pair), "distance_m": distance}
+            for pair, distance in sorted(disallowed.items())
+        ],
+        "minimum_dish_environment_distance_m": clearance,
+        "minimum_required_dish_clearance_m": float(minimum_dish_clearance_m),
+        "dish_clearance_accepted": clearance_accepted,
+        "motion_policy": "one_arm_moves_while_the_other_holds",
+        "accepted_calibration_baseline_sample_count": calibration_baseline_count,
+        "accepted_calibration_baseline_contacts": [
+            {"geoms": list(pair), "distance_m": distance}
+            for pair, distance in sorted(baseline.items())
+        ],
+    }
+
+
+def build_stopped_observer_plan(
+    carrier_plan: TransportPlan,
+    *,
+    production_model: str | Path,
+    planning_model: str | Path,
+    reference_observer_pose_wxyz_xyz: Sequence[float],
+    reference_carrier_pose_wxyz_xyz: Sequence[float],
+    safe_waypoint_pose_wxyz_xyz: Sequence[float] | None = None,
+    maximum_cartesian_step_m: float,
+    maximum_ik_joint_step_rad: float,
+    dish_radius_m: float,
+    dish_thickness_m: float,
+    dish_center_offset_ee_m: Sequence[float],
+    ignored_environment_bodies: Sequence[str] = (),
+    minimum_dish_clearance_m: float = 0.010,
+) -> StoppedObserverPlan:
+    """Plan relative-pose left observations without simultaneous arm motion."""
+
+    if carrier_plan.physical_arm != "right":
+        raise ValueError("stopped observer currently requires physical right carrier")
+    observer_side = "left"
+    kinematics = ProductionArmKinematics(production_model, observer_side)
+    home_q = physical_home_q(observer_side)
+    home_pose = kinematics.pose(home_q)
+    reference_observer = np.asarray(reference_observer_pose_wxyz_xyz, dtype=float).reshape(7)
+    reference_carrier = np.asarray(reference_carrier_pose_wxyz_xyz, dtype=float).reshape(7)
+    checkpoint_poses = []
+    for checkpoint_index in carrier_plan.checkpoint_indices:
+        carrier_pose = carrier_plan.poses_wxyz_xyz[checkpoint_index]
+        target = reference_observer.copy()
+        # Follow the carrier on the bench plane while retaining the physically
+        # verified observer height.  Copying the carrier's lower transport Z
+        # drove the observer down into the microscope in both the semantic
+        # audit and the earlier lab trial.
+        target[4:6] += carrier_pose[4:6] - reference_carrier[4:6]
+        checkpoint_poses.append(target)
+    checkpoint_poses = np.asarray(checkpoint_poses)
+
+    transition_pose_paths = []
+    transition_q_paths = []
+    checkpoint_q = []
+    current_pose = home_pose
+    current_q = home_q
+    for checkpoint_number, target in enumerate(checkpoint_poses):
+        if checkpoint_number == 0 and safe_waypoint_pose_wxyz_xyz is not None:
+            waypoint = np.asarray(safe_waypoint_pose_wxyz_xyz, dtype=float).reshape(7)
+            first = _append_linear_pose_path(
+                current_pose, waypoint, maximum_cartesian_step_m
+            )
+            second = _append_linear_pose_path(
+                waypoint, target, maximum_cartesian_step_m
+            )
+            pose_path = np.vstack((first, second[1:]))
+        else:
+            pose_path = _append_linear_pose_path(
+                current_pose, target, maximum_cartesian_step_m
+            )
+        q_path, _ = kinematics.solve_path(
+            pose_path,
+            seed_q=current_q,
+            allow_multistart=False,
+            maximum_position_error_m=0.012,
+        )
+        if checkpoint_number == 0:
+            # The Cartesian chord from home to the side-view pose crosses the
+            # coarse microscope volume.  Interpolate the verified continuous
+            # joint branch, then send its FK poses through the same Cartesian
+            # teleop RPC used everywhere else.
+            joint_count = max(
+                2,
+                int(
+                    math.ceil(
+                        float(np.max(np.abs(q_path[-1] - current_q))) / 0.04
+                    )
+                )
+                + 1,
+            )
+            q_path = np.linspace(current_q, q_path[-1], joint_count)
+            pose_path = np.asarray([kinematics.pose(q) for q in q_path])
+        transition_pose_paths.append(pose_path)
+        transition_q_paths.append(q_path)
+        checkpoint_q.append(q_path[-1].copy())
+        current_pose = target
+        current_q = q_path[-1]
+    return_pose_path = _append_linear_pose_path(
+        current_pose, home_pose, maximum_cartesian_step_m
+    )
+    return_q_path, _ = kinematics.solve_path(
+        return_pose_path,
+        seed_q=current_q,
+        allow_multistart=False,
+        maximum_position_error_m=0.012,
+    )
+    return_count = max(
+        2,
+        int(math.ceil(float(np.max(np.abs(home_q - current_q))) / 0.04)) + 1,
+    )
+    return_q_path = np.linspace(current_q, home_q, return_count)
+    return_pose_path = np.asarray([kinematics.pose(q) for q in return_q_path])
+
+    maximum_step = max(
+        float(np.max(np.abs(np.diff(path, axis=0))))
+        for path in (*transition_q_paths, return_q_path)
+        if len(path) > 1
+    )
+    samples = []
+    right_q = carrier_plan.q_physical_rad
+    first_checkpoint = carrier_plan.checkpoint_indices[0]
+    for q in right_q[: first_checkpoint + 1]:
+        samples.append((home_q, q, False, "right_approach"))
+    for q in transition_q_paths[0]:
+        samples.append((q, right_q[first_checkpoint], True, "left_observer_0"))
+    for number in range(1, len(carrier_plan.checkpoint_indices)):
+        first = carrier_plan.checkpoint_indices[number - 1]
+        second = carrier_plan.checkpoint_indices[number]
+        held_left = checkpoint_q[number - 1]
+        for q in right_q[first : second + 1]:
+            samples.append((held_left, q, True, f"right_carry_{number}"))
+        for q in transition_q_paths[number]:
+            samples.append((q, right_q[second], True, f"left_observer_{number}"))
+    arrival = carrier_plan.checkpoint_indices[-1]
+    for q in return_q_path:
+        samples.append((q, right_q[arrival], True, "left_return_home"))
+    for q in right_q[arrival:]:
+        samples.append((home_q, q, False, "right_return_home"))
+    audit = _audit_coordinated_samples(
+        planning_model,
+        samples,
+        dish_radius_m=dish_radius_m,
+        dish_thickness_m=dish_thickness_m,
+        dish_center_offset_ee_m=dish_center_offset_ee_m,
+        ignored_environment_bodies=ignored_environment_bodies,
+        minimum_dish_clearance_m=minimum_dish_clearance_m,
+        # The first target differs from the operator-verified reference by only
+        # the checkpoint XY retarget.  Treat its scene-only microscope overlap
+        # as the calibrated model mismatch baseline, then reject any new pair
+        # or penetration worsening during subsequent following motion.
+        calibration_baseline_samples=(
+            (transition_q_paths[0][-1], right_q[first_checkpoint]),
+        ),
+    )
+    audit["maximum_ik_joint_step_rad"] = maximum_step
+    audit["maximum_allowed_ik_joint_step_rad"] = float(maximum_ik_joint_step_rad)
+    audit["ik_branch_continuity_accepted"] = bool(
+        maximum_step <= float(maximum_ik_joint_step_rad)
+    )
+    audit["accepted"] = bool(
+        audit["accepted"] and audit["ik_branch_continuity_accepted"]
+    )
+    return StoppedObserverPlan(
+        physical_arm=observer_side,
+        carrier_arm="right",
+        checkpoint_poses_wxyz_xyz=checkpoint_poses,
+        checkpoint_q_physical_rad=np.asarray(checkpoint_q),
+        transition_pose_paths=tuple(transition_pose_paths),
+        transition_q_paths=tuple(transition_q_paths),
+        return_pose_path=return_pose_path,
+        return_q_path=return_q_path,
+        audit=audit,
     )
 
 

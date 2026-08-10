@@ -1,127 +1,103 @@
 # Horizontal dish air-transport rehearsal
 
-This pipeline rehearses three independent, dish-sized transport motions without
-a dish:
+This pipeline rehearses dish-sized station transfers without a dish. It
+intentionally excludes grasp, release, and handoff; air success is not evidence
+that a real dish can be retained.
 
-1. physical right arm: incubator to microscope;
-2. physical left arm: microscope to bench;
-3. physical right arm: bench to incubator.
+## Planning
 
-It intentionally excludes grasp, release, and handoff.  Air success is not
-evidence that a real dish can be grasped or retained.
+`src/run_dish_transport_rehearsal.py` filters clean open-close-open recordings,
+selects the route medoid, and uses its station positions and obstacle-avoiding
+XY bend. It deliberately discards the human's high middle Z. Starting 15 mm
+above the recorded station poses, it raises the route in 5 mm increments until
+MuJoCo reports no new contact and at least 10 mm virtual-dish clearance. The
+first passing candidate is the lowest route at that resolution.
 
-## What is automatic
-
-`src/run_dish_transport_rehearsal.py` compiles every clean successful
-open-close-open demonstration for a task, rejects recordings with extra
-gripper transitions, resamples route shape by arc length, and selects the
-route medoid.  It removes the low grasp/place portions and creates a shortest
-path through source, a demonstrated high-clearance waypoint, and destination.
-The commanded jaw plane is horizontal for the complete path.
-
-The physical/model arm-name bridges are fixed in one module:
+The physical/model arm bridge is fixed in one module:
 
 - physical right = production `left_arm_*` = semantic scene `right/*`;
 - physical left = production `right_arm_*` = semantic scene `left/*`.
 
-The planner solves a continuous physical joint proxy and audits both that arm
-and a horizontal 90 x 14 mm virtual dish in
-`robot/pasteur-calibrated-scene/scene.mjcf`.  Contacts already present in the
-canonical/model-normalized start pose are recorded as calibration mismatch;
-new contacts or materially deeper penetration fail the audit.
+The virtual dish is 90 x 14 mm and its centre is 75 mm along physical
+fingertip-outward **EE -X**. Using +X puts it behind the wrist and invalidates
+the clearance audit.
 
-Because no verified left-arm station demonstrations exist, the middle segment
-uses the right demonstration's motion translated by the measured difference
-between physical home EE positions.  This is an operator-reviewed *air-only*
-retarget, not a calibrated object transport transform.  At the time of writing
-the semantic scene reports a substantial left-arm/microscope collision, so
-normal execution remains blocked for that segment.
+The commanded jaw plane stays horizontal. IK is seeded only from the preceding
+solution after branch selection; a failed seed cannot silently switch to a
+wrist-roll multistart. Consecutive planning samples must differ by at most
+0.12 rad. Arm and virtual-dish swept geometry are checked in
+`robot/pasteur-calibrated-scene/scene.mjcf`.
 
 ## Dry run
 
-The default command never connects to the robot:
+The default command does not connect to the robot. `--segment` filters before
+planning, so an unrelated failing segment cannot block the requested route:
 
 ```bash
-/home/admin/miniforge3/envs/robot-test/bin/python \
-  src/run_dish_transport_rehearsal.py
+PYTHONPATH=. /home/admin/miniforge3/envs/robot-test/bin/python \
+  src/run_dish_transport_rehearsal.py \
+  --segment incubator_to_microscope
 ```
 
 It writes `plan.json` and `plan_preview.html` under
 `data/runs/pasteur/dish_transport_rehearsal/<timestamp>/`.
 
+## Stopped left observer
+
+For a physical-right transfer, the left wrist camera follows the carrier only
+at the five stops: departure, 25%, midpoint, 75%, and arrival. The carrier is
+held before any left command; the two arms are never commanded simultaneously.
+The observer keeps the operator-verified height and follows only bench-plane
+XY, avoiding the earlier mistake of descending into the microscope.
+
+The left image must contain positive blue jaw shape matching the saved side
+view. Dark silhouettes and shadows cannot be targets. The coordinated schedule
+is audited with both arms and the carried virtual dish. A contact already
+present at the operator-verified observer pose is retained only as a calibrated
+model mismatch; any new pair or penetration worsening is rejected.
+
 ## Deliberate execution
 
-Execution uses the same `set_{side}_ee_target` Cartesian RPC path as teleop,
-at 30 Hz with a 50 ms preview.  It does not rewrite controller gains or CAN
-mode.  Both arms are first sent to canonical home.  The air gripper remains
-fully open.  Every chunk republishes its final target for 0.8 seconds before
-reading and holding the measured pose; this prevents preview/tracking lag from
-being frozen as a false endpoint tilt.
-
-If the measured jaw is still outside the normal checkpoint gate, a bounded
-endpoint refinement applies the inverse measured roll/pitch residual while
-rejecting coupled XYZ drift.  Each correction is at most 5 degrees, total correction
-is at most 8 degrees, and at most three attempts are allowed.  Translation
-residual is fed back with at most 5 mm of command correction per attempt.  A
-checkpoint still requires at most 5 mm final drift; 15 mm is the hard stop.
-The transport refinement target is intentionally tighter than the ordinary
-pre-grasp gate: 0.25 degrees for both horizontal tool axes and 0.5 mm between
-the open fingertips.  This prevents a visually obvious upward pitch from
-being accepted merely because it is below the generic 3-degree grasp limit.
+Execution uses the teleop `set_{side}_ee_target` RPC at 30 Hz, 0.03 m/s for the
+carrier and 0.02 m/s for the observer. Both arms start at canonical home and the
+air gripper remains fully open. Torque is warning-only; communication loss,
+tracking failure, IK discontinuity, camera failure, or collision prediction
+holds the current measured pose.
 
 ```bash
-/home/admin/miniforge3/envs/robot-test/bin/python \
-  src/run_dish_transport_rehearsal.py --execute
+PYTHONPATH=. /home/admin/miniforge3/envs/robot-test/bin/python \
+  src/run_dish_transport_rehearsal.py --execute \
+  --segment incubator_to_microscope
 ```
 
-The command refuses to move if any MuJoCo route has collision warnings.  The
-override is intentionally separate and visible:
+At every stop the process:
 
-```bash
-... --execute --allow-audit-warnings
-```
+1. holds the right carrier;
+2. moves the left observer alone;
+3. checks right-jaw level (1 degree maximum);
+4. captures head RGB-D and both wrist RGB images within 150 ms;
+5. checks the positive-blue left side view;
+6. displays all three images and metrics on the phone UI at port 8097;
+7. waits for continue, abort-and-hold, or abort-and-home.
 
-Do not use that override until the reported physical left/microscope mismatch
-has been inspected or recalibrated.
+Departure alone may run bounded level refinement. Later stops measure and hold;
+they do not repeatedly nudge the object path. After arrival the left observer
+returns home while the right holds, then the right reverses its audited path.
 
-Collision-clean segments can be exercised without overriding a different
-segment's warning:
+## Artifacts and current gate
 
-```bash
-... --execute --segment incubator_to_microscope
-```
+Every run retains the demo hash, commands, joint proxies, MuJoCo contacts,
+clearance, head depth, three RGB views, side-view decision, timing skew,
+operator decisions, and final home result.
 
-At each of the nine stops (source lift, midpoint, arrival for every segment),
-the process:
+The current right `incubator_to_microscope` route passes: the lowest candidate
+adds 5 mm, has about 80 mm minimum modelled dish clearance, and a 0.0375 rad
+maximum IK step. The stopped left-observer schedule remains blocked because
+the semantic scene reports its approach crossing the microscope. Execution
+therefore remains prohibited until the microscope/left-arm alignment is fixed
+or a collision-clean observer approach is found. `--allow-audit-warnings` is
+not a substitute for resolving this two-arm collision.
 
-1. holds the measured pose;
-2. checks measured jaw level;
-3. captures head and active-wrist Record3D frames concurrently;
-4. rejects a pair whose host timestamps differ by more than 150 ms;
-5. saves raw checkpoint evidence and a side-by-side image;
-6. waits on the phone UI at port 8097.
-
-The UI offers continue, abort-and-hold, and abort-and-home.  Continue is
-disabled when the measured 3-degree jaw-level gate fails.  Images are held in
-memory until the next checkpoint, so they do not disappear after one poll.
-
-Torque telemetry is warning-only, matching the currently accepted loose
-teleop behavior.  Invalid tracking, a missed command deadline, camera failure,
-or a failed level checkpoint still stops progress and holds the measured pose.
-
-## Artifacts
-
-Every run retains:
-
-- the chosen demo path and SHA-256;
-- all commanded Cartesian poses and physical joint proxies;
-- MuJoCo contacts and virtual-dish dimensions;
-- measured checkpoint pose and jaw-level metrics;
-- head/wrist timestamps and skew;
-- separate and combined checkpoint JPEGs;
-- every operator decision and final home result.
-
-The implementation is task-name agnostic.  New station transfers can be added
-as config segments backed by at least three clean successful demonstrations.
-Real-object use must add live object localization, pre-grasp, retention, and
-release gates; it must not promote this air-rehearsal result directly.
+New station transfers require at least three clean demonstrations. Real-object
+use must additionally provide localization, pre-grasp, retention, and release
+gates; an air result must not be promoted directly.

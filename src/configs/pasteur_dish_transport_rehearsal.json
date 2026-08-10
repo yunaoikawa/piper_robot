@@ -18,7 +18,7 @@
   "geometry": {
     "dish_diameter_m": 0.09,
     "dish_thickness_m": 0.014,
-    "dish_center_offset_ee_m": [0.075, 0.0, 0.0],
+    "dish_center_offset_ee_m": [-0.075, 0.0, 0.0],
     "ignored_absent_scene_bodies": [
       "culture_media_bottle-1",
       "petri_dish-1",
@@ -26,12 +26,23 @@
     ]
   },
   "planning": {
-    "source_lift_m": 0.05,
-    "arrival_hover_m": 0.03,
+    "source_lift_m": 0.015,
+    "arrival_hover_m": 0.015,
     "route_samples": 61,
-    "maximum_cartesian_step_m": 0.012,
-    "require_collision_free": false,
+    "maximum_cartesian_step_m": 0.006,
+    "minimum_dish_clearance_m": 0.01,
+    "low_route_search_step_m": 0.005,
+    "maximum_low_route_lift_m": 0.12,
+    "maximum_ik_joint_step_rad": 0.12,
+    "require_collision_free": true,
     "left_retarget_policy": "operator_confirmed_air_rehearsal_home_relative_translation"
+  },
+  "observer": {
+    "enabled": true,
+    "physical_arm": "left",
+    "carrier_arm": "right",
+    "motion_policy": "move_only_while_carrier_is_stopped",
+    "reference_config": "src/configs/pasteur_right_jaw_side_view_reference.json"
   },
   "execution": {
     "control_hz": 30.0,
@@ -51,11 +62,13 @@
       "maximum_xyz_command_offset_m": 0.012,
       "hard_xyz_drift_m": 0.015
     },
-    "speed_m_s": 0.04,
+    "speed_m_s": 0.03,
+    "observer_speed_m_s": 0.02,
+    "maximum_checkpoint_tilt_deg": 1.0,
     "air_gripper_open_ratio": 1.0,
     "tracking_check_interval": 15,
-    "maximum_tracking_position_error_m": 0.10,
-    "maximum_tracking_rotation_error_rad": 1.5,
+    "maximum_tracking_position_error_m": 0.015,
+    "maximum_tracking_rotation_error_rad": 0.0872664626,
     "maximum_camera_timestamp_skew_s": 0.15,
     "camera_timeout_s": 10.0,
     "home_before_start": true,

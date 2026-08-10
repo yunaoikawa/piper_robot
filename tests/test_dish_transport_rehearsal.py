@@ -119,6 +119,29 @@ def test_checkpoint_chunks_overlap_only_at_stops():
     assert np.allclose(chunks[2][-1], chunks[3][0])
 
 
+def test_five_checkpoint_chunks_cover_route_and_return():
+    poses = np.tile([1, 0, 0, 0, 0, 0, 1], (21, 1)).astype(float)
+    poses[:, 4] = np.arange(21)
+    plan = TransportPlan(
+        name="x",
+        source="a",
+        destination="b",
+        physical_arm="right",
+        medoid_hdf5="demo.hdf5",
+        medoid_sha256="abc",
+        coordinate_retarget="recorded",
+        poses_wxyz_xyz=poses,
+        q_physical_rad=np.zeros((21, 6)),
+        checkpoint_indices=(4, 7, 10, 13, 16),
+        checkpoint_names=("departure", "quarter", "midpoint", "three_quarters", "arrival"),
+        maximum_planned_tilt_deg=0.0,
+        collision_audit={"accepted": True},
+    )
+    chunks = split_checkpoint_chunks(plan)
+    assert [len(value) for value in chunks] == [5, 4, 4, 4, 4, 5]
+    assert all(np.allclose(first[-1], second[0]) for first, second in zip(chunks, chunks[1:]))
+
+
 class _Clock:
     def __init__(self):
         self.now = 0.0
@@ -217,7 +240,8 @@ def test_ui_rejects_continue_when_level_gate_failed():
         physical_arm="right",
         metrics={},
         head_bgr=image,
-        wrist_bgr=image,
+        left_bgr=image,
+        right_bgr=image,
         continue_allowed=False,
     )
     with pytest.raises(ValueError, match="水平姿勢ゲート"):

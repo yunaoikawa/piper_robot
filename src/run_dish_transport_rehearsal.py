@@ -15,6 +15,7 @@ from dataclasses import replace
 import json
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -29,14 +30,21 @@ if str(ROOT) not in sys.path:
 from robot.arm.home import physical_home_q
 from robot.camera_id import load_camera_map
 from robot.rpc import RPCClient
-from rollout.camera import USBWristCameraFeedManager
+from rollout.camera import CameraFeedManager, USBWristCameraFeedManager
 from rollout.dish_transport_rehearsal import (
     CartesianAirTransportStreamer,
+    StoppedObserverPlan,
     TransportPlan,
+    build_stopped_observer_plan,
     build_transport_plan,
     split_checkpoint_chunks,
 )
 from rollout.gripper_level import JawLevelReference, assess_jaw_level
+from rollout.wrist_observer_tracking import (
+    blue_components,
+    compare_side_view_shape,
+    describe_blue_component,
+)
 from src.dish_transport_rehearsal_ui import CheckpointApprovalStore, make_server
 
 
@@ -78,13 +86,17 @@ def _level_reference(path: str | Path) -> JawLevelReference:
     return JawLevelReference(**kwargs)
 
 
-def compile_plans(config: dict) -> list[TransportPlan]:
+def compile_plans(
+    config: dict, *, selected_names: set[str] | None = None
+) -> list[TransportPlan]:
     planning = config["planning"]
     geometry = config["geometry"]
     demo_directory = _resolve(config["demonstration_directory"])
     level = _level_reference(config["level_config"])
     plans = []
     for segment in config["segments"]:
+        if selected_names and segment["name"] not in selected_names:
+            continue
         demonstrations = sorted(demo_directory.glob(segment["demonstration_glob"]))
         plans.append(
             build_transport_plan(
@@ -109,9 +121,69 @@ def compile_plans(config: dict) -> list[TransportPlan]:
                     "ignored_absent_scene_bodies", []
                 ),
                 require_collision_free=bool(planning["require_collision_free"]),
+                minimum_dish_clearance_m=float(
+                    planning["minimum_dish_clearance_m"]
+                ),
+                low_route_search_step_m=float(
+                    planning["low_route_search_step_m"]
+                ),
+                maximum_low_route_lift_m=float(
+                    planning["maximum_low_route_lift_m"]
+                ),
+                maximum_ik_joint_step_rad=float(
+                    planning["maximum_ik_joint_step_rad"]
+                ),
             )
         )
     return plans
+
+
+def compile_observer_plans(
+    config: dict, plans: list[TransportPlan]
+) -> dict[str, StoppedObserverPlan]:
+    observer = config.get("observer", {})
+    if not observer.get("enabled", False):
+        return {}
+    reference = _load_json(observer["reference_config"])
+    safe_waypoint = (
+        _load_json(observer["safe_waypoint_config"])["ee_pose_wxyz_xyz"]
+        if observer.get("safe_waypoint_config")
+        else None
+    )
+    planning = config["planning"]
+    geometry = config["geometry"]
+    result = {}
+    for plan in plans:
+        if plan.physical_arm != "right":
+            continue
+        result[plan.name] = build_stopped_observer_plan(
+            plan,
+            production_model=_resolve(config["production_model"]),
+            planning_model=_resolve(config["planning_model"]),
+            reference_observer_pose_wxyz_xyz=reference[
+                "observer_pose_wxyz_xyz"
+            ],
+            reference_carrier_pose_wxyz_xyz=reference[
+                "observed_right_pose_wxyz_xyz"
+            ],
+            safe_waypoint_pose_wxyz_xyz=safe_waypoint,
+            maximum_cartesian_step_m=float(
+                planning["maximum_cartesian_step_m"]
+            ),
+            maximum_ik_joint_step_rad=float(
+                planning["maximum_ik_joint_step_rad"]
+            ),
+            dish_radius_m=float(geometry["dish_diameter_m"]) / 2.0,
+            dish_thickness_m=float(geometry["dish_thickness_m"]),
+            dish_center_offset_ee_m=geometry["dish_center_offset_ee_m"],
+            ignored_environment_bodies=geometry.get(
+                "ignored_absent_scene_bodies", []
+            ),
+            minimum_dish_clearance_m=float(
+                planning["minimum_dish_clearance_m"]
+            ),
+        )
+    return result
 
 
 def _json_default(value):
@@ -175,22 +247,31 @@ def _write_plan_preview(path: Path, plans: list[TransportPlan]) -> None:
     path.write_text(html)
 
 
-class SynchronizedCameraPair:
-    """Keep head and active wrist alive together and return timestamp-matched RGB."""
+class SynchronizedCameraSet:
+    """Keep head and both wrists alive and return one timestamp-matched capture."""
 
-    def __init__(self, head_name: str, wrist_name: str):
+    def __init__(self, head_name: str, left_name: str, right_name: str):
         camera_map = load_camera_map()
-        self.events = {name: threading.Event() for name in (head_name, wrist_name)}
+        names = (head_name, left_name, right_name)
+        if len(set(names)) != 3:
+            raise ValueError("head/left/right camera names must be distinct")
+        self.events = {name: threading.Event() for name in names}
         self.managers = {
-            name: USBWristCameraFeedManager(
+            head_name: CameraFeedManager(
+                self.events[head_name], display=False, head_stream=False
+            ),
+            **{
+                name: USBWristCameraFeedManager(
                 self.events[name],
                 device_index=int(camera_map[name]),
                 label=f"dish rehearsal {name}",
             )
-            for name in (head_name, wrist_name)
+                for name in (left_name, right_name)
+            },
         }
         self.head_name = head_name
-        self.wrist_name = wrist_name
+        self.left_name = left_name
+        self.right_name = right_name
 
     def __enter__(self):
         for manager in self.managers.values():
@@ -218,22 +299,26 @@ class SynchronizedCameraPair:
         latest = {}
         while time.monotonic() < deadline:
             for name, manager in self.managers.items():
-                rgb, timestamp, _ = manager.get_latest_frame()
+                rgb, timestamp, depth = manager.get_latest_frame()
                 if rgb is not None and timestamp is not None and timestamp >= started:
-                    latest[name] = (rgb, float(timestamp))
-            if len(latest) == 2:
-                skew = abs(latest[self.head_name][1] - latest[self.wrist_name][1])
+                    latest[name] = (rgb, float(timestamp), depth)
+            if len(latest) == 3:
+                timestamps = [latest[name][1] for name in self.managers]
+                skew = max(timestamps) - min(timestamps)
                 if skew <= maximum_skew_s:
                     return {
                         "head_bgr": self._bgr(latest[self.head_name][0]),
-                        "wrist_bgr": self._bgr(latest[self.wrist_name][0]),
+                        "left_bgr": self._bgr(latest[self.left_name][0]),
+                        "right_bgr": self._bgr(latest[self.right_name][0]),
+                        "head_depth_m": latest[self.head_name][2],
                         "head_timestamp_s": latest[self.head_name][1],
-                        "wrist_timestamp_s": latest[self.wrist_name][1],
+                        "left_timestamp_s": latest[self.left_name][1],
+                        "right_timestamp_s": latest[self.right_name][1],
                         "timestamp_skew_s": skew,
                     }
             time.sleep(0.02)
         raise RuntimeError(
-            f"head/{self.wrist_name} did not yield a fresh synchronized pair"
+            "head/left/right did not yield a fresh synchronized capture"
         )
 
 
@@ -271,27 +356,88 @@ def _save_checkpoint_images(
     capture: dict,
     *,
     lines: list[str],
-) -> tuple[np.ndarray, np.ndarray, dict]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     directory.mkdir(parents=True, exist_ok=True)
     head = _annotate(capture["head_bgr"], ["HEAD", *lines])
-    wrist = _annotate(capture["wrist_bgr"], ["ACTIVE WRIST", *lines])
+    left = _annotate(capture["left_bgr"], ["LEFT OBSERVER", *lines])
+    right = _annotate(capture["right_bgr"], ["RIGHT CARRIER", *lines])
     head_path = directory / f"{prefix}_head.jpg"
-    wrist_path = directory / f"{prefix}_wrist.jpg"
+    left_path = directory / f"{prefix}_left.jpg"
+    right_path = directory / f"{prefix}_right.jpg"
+    depth_path = directory / f"{prefix}_head_depth.npy"
     cv2.imwrite(str(head_path), head)
-    cv2.imwrite(str(wrist_path), wrist)
-    target_height = max(head.shape[0], wrist.shape[0])
+    cv2.imwrite(str(left_path), left)
+    cv2.imwrite(str(right_path), right)
+    if capture.get("head_depth_m") is not None:
+        np.save(depth_path, np.asarray(capture["head_depth_m"], dtype=np.float32))
+    target_height = max(head.shape[0], left.shape[0], right.shape[0])
 
     def fit(image):
         scale = target_height / image.shape[0]
         return cv2.resize(image, (int(round(image.shape[1] * scale)), target_height))
 
-    montage = np.hstack((fit(head), fit(wrist)))
-    montage_path = directory / f"{prefix}_head_wrist.jpg"
+    montage = np.hstack((fit(head), fit(left), fit(right)))
+    montage_path = directory / f"{prefix}_head_left_right.jpg"
     cv2.imwrite(str(montage_path), montage)
-    return head, wrist, {
+    return head, left, right, {
         "head_image": str(head_path),
-        "wrist_image": str(wrist_path),
+        "left_image": str(left_path),
+        "right_image": str(right_path),
+        "head_depth": str(depth_path) if depth_path.exists() else None,
         "montage_image": str(montage_path),
+    }
+
+
+def _assess_left_side_view(left_bgr: np.ndarray, reference: dict) -> dict:
+    """Select positive blue jaw evidence and reject dark shadows."""
+
+    components = blue_components(left_bgr)
+    expected = reference["shape_reference"]
+    from rollout.wrist_observer_tracking import BlueShapeDescriptor
+
+    expected_descriptor = BlueShapeDescriptor(
+        principal_axis_deg=float(expected["principal_axis_deg"]),
+        elongation=float(expected["elongation"]),
+        fill_fraction=float(expected["fill_fraction"]),
+        area_fraction=float(expected["area_fraction"]),
+        centroid_normalized_xy=tuple(expected["centroid_normalized_xy"]),
+        bbox_normalized_xywh=tuple(expected["bbox_normalized_xywh"]),
+    )
+    candidates = []
+    for component in components:
+        descriptor = describe_blue_component(left_bgr, component)
+        match = compare_side_view_shape(descriptor, expected_descriptor)
+        score = (
+            match.principal_axis_difference_deg / 5.0
+            + match.elongation_log_ratio / 0.35
+            + match.fill_fraction_difference / 0.20
+        )
+        candidates.append(
+            {
+                "accepted": match.accepted,
+                "score": float(score),
+                "bbox_xywh": list(component.bbox_xywh),
+                "area_fraction": descriptor.area_fraction,
+                "principal_axis_difference_deg": (
+                    match.principal_axis_difference_deg
+                ),
+                "elongation_log_ratio": match.elongation_log_ratio,
+                "fill_fraction_difference": match.fill_fraction_difference,
+                "reasons": list(match.reasons),
+            }
+        )
+    if not candidates:
+        return {
+            "accepted": False,
+            "positive_blue_component_count": 0,
+            "reason": "no_positive_blue_jaw_evidence",
+        }
+    selected = min(candidates, key=lambda value: value["score"])
+    return {
+        "accepted": bool(selected["accepted"]),
+        "positive_blue_component_count": len(candidates),
+        "selected": selected,
+        "policy": "positive_blue_shape_only_dark_shadow_never_target",
     }
 
 
@@ -337,11 +483,22 @@ def _ui_url(port: int) -> str:
 def execute_plans(
     config: dict,
     plans: list[TransportPlan],
+    observer_plans: dict[str, StoppedObserverPlan],
     run_directory: Path,
     *,
     allow_audit_warnings: bool,
 ) -> dict:
     rejected = [plan.name for plan in plans if not _plan_execution_ready(plan)]
+    observer_rejected = [
+        f"{name}/left_observer"
+        for name, observer in observer_plans.items()
+        if not observer.audit.get("accepted", False)
+    ]
+    if observer_rejected:
+        raise RuntimeError(
+            "coordinated two-arm collision audit blocks execution for "
+            f"{observer_rejected}; this gate has no warning override"
+        )
     if rejected and not allow_audit_warnings:
         raise RuntimeError(
             "MuJoCo collision audit warning blocks execution for "
@@ -368,6 +525,9 @@ def execute_plans(
         "started_at_s": time.time(),
         "allow_audit_warnings": bool(allow_audit_warnings),
         "plans": [plan.to_dict() for plan in plans],
+        "observer_plans": {
+            name: observer.to_dict() for name, observer in observer_plans.items()
+        },
         "checkpoints": [],
         "status": "running",
     }
@@ -376,9 +536,21 @@ def execute_plans(
         if execution["home_before_start"]:
             report["initial_home"] = _home_both(rpc, execution)
         level = _level_reference(config["level_config"])
+        checkpoint_level = replace(
+            level,
+            maximum_checkpoint_tilt_deg=float(
+                execution["maximum_checkpoint_tilt_deg"]
+            ),
+        )
+        side_view_reference = (
+            _load_json(config["observer"]["reference_config"])
+            if config.get("observer", {}).get("enabled", False)
+            else None
+        )
         camera_names = config["camera_names"]
         for segment_number, plan in enumerate(plans, start=1):
             chunks = split_checkpoint_chunks(plan)
+            observer_plan = observer_plans.get(plan.name)
             streamer = CartesianAirTransportStreamer(
                 rpc,
                 plan.physical_arm,
@@ -395,10 +567,31 @@ def execute_plans(
                 ),
                 final_settle_s=float(execution["endpoint_settle_s"]),
             )
-            with SynchronizedCameraPair(
-                camera_names["head"], camera_names[plan.physical_arm]
+            observer_streamer = (
+                CartesianAirTransportStreamer(
+                    rpc,
+                    "left",
+                    torque_limit_nm=execution["torque_limits_nm"]["left"],
+                    torque_samples=int(execution["torque_consecutive_samples"]),
+                    control_hz=float(execution["control_hz"]),
+                    preview_time_s=float(execution["preview_time_s"]),
+                    tracking_interval=int(execution["tracking_check_interval"]),
+                    maximum_tracking_position_error_m=float(
+                        execution["maximum_tracking_position_error_m"]
+                    ),
+                    maximum_tracking_rotation_error_rad=float(
+                        execution["maximum_tracking_rotation_error_rad"]
+                    ),
+                    final_settle_s=float(execution["endpoint_settle_s"]),
+                )
+                if observer_plan is not None
+                else None
+            )
+            with SynchronizedCameraSet(
+                camera_names["head"], camera_names["left"], camera_names["right"]
             ) as cameras:
-                for checkpoint_number in range(3):
+                checkpoint_count = len(plan.checkpoint_indices)
+                for checkpoint_number in range(checkpoint_count):
                     checkpoint = plan.checkpoint(checkpoint_number)
                     motion = streamer.execute(
                         chunks[checkpoint_number],
@@ -406,9 +599,22 @@ def execute_plans(
                         gripper_open_ratio=float(execution["air_gripper_open_ratio"]),
                         stage=f"{plan.name}/{checkpoint.name}",
                     )
+                    observer_motion = None
+                    if observer_plan is not None:
+                        observer_motion = observer_streamer.execute(
+                            observer_plan.transition_pose_paths[checkpoint_number],
+                            speed_m_s=float(execution["observer_speed_m_s"]),
+                            gripper_open_ratio=float(
+                                execution["air_gripper_open_ratio"]
+                            ),
+                            stage=f"{plan.name}/{checkpoint.name}/left_observer",
+                        )
                     refinement_config = execution["jaw_level_refinement"]
                     refinement = None
-                    if refinement_config.get("enabled", True):
+                    if (
+                        checkpoint_number == 0
+                        and refinement_config.get("enabled", True)
+                    ):
                         try:
                             refinement_level = replace(
                                 level,
@@ -460,15 +666,24 @@ def execute_plans(
                             streamer.hold_measured()
                             raise
                     measured = streamer.measured_pose()
-                    jaw = assess_jaw_level(measured, level, planned=False)
+                    jaw = assess_jaw_level(
+                        measured, checkpoint_level, planned=False
+                    )
                     capture = cameras.capture(
                         timeout_s=float(execution["camera_timeout_s"]),
                         maximum_skew_s=float(
                             execution["maximum_camera_timestamp_skew_s"]
                         ),
                     )
+                    side_view = (
+                        _assess_left_side_view(
+                            capture["left_bgr"], side_view_reference
+                        )
+                        if observer_plan is not None
+                        else {"accepted": True, "policy": "observer_disabled"}
+                    )
                     prefix = f"{segment_number:02d}_{checkpoint_number + 1:02d}_{checkpoint.name}"
-                    head, wrist, images = _save_checkpoint_images(
+                    head, left, right, images = _save_checkpoint_images(
                         run_directory / "checkpoints",
                         prefix,
                         capture,
@@ -482,13 +697,15 @@ def execute_plans(
                         "checkpoint": checkpoint.to_dict(),
                         "physical_arm": plan.physical_arm,
                         "motion": motion,
+                        "observer_motion": observer_motion,
                         "jaw_level_refinement": refinement,
                         "measured_pose_wxyz_xyz": measured.tolist(),
                         "jaw_level": jaw.to_dict(),
+                        "left_side_view": side_view,
                         "camera": {
                             key: value
                             for key, value in capture.items()
-                            if not key.endswith("_bgr")
+                            if not key.endswith("_bgr") and key != "head_depth_m"
                         },
                         **images,
                     }
@@ -496,17 +713,30 @@ def execute_plans(
                     _write_json(run_directory / "run.json", report)
                     store.publish(
                         segment=f"{segment_number}/{len(plans)} {plan.source} → {plan.destination}",
-                        checkpoint=f"{checkpoint_number + 1}/3 {checkpoint.name}",
+                        checkpoint=(
+                            f"{checkpoint_number + 1}/{checkpoint_count} "
+                            f"{checkpoint.name}"
+                        ),
                         physical_arm=plan.physical_arm,
                         metrics={
                             "jaw_level": jaw.to_dict(),
+                            "left_side_view": side_view,
                             "camera_timestamp_skew_s": capture["timestamp_skew_s"],
-                            "preflight_audit": _plan_execution_ready(plan),
+                            "preflight_audit": bool(
+                                _plan_execution_ready(plan)
+                                and (
+                                    observer_plan is None
+                                    or observer_plan.audit.get("accepted", False)
+                                )
+                            ),
                             "torque_warning_count": motion["torque_warning_count"],
                         },
                         head_bgr=head,
-                        wrist_bgr=wrist,
-                        continue_allowed=jaw.accepted,
+                        left_bgr=left,
+                        right_bgr=right,
+                        continue_allowed=bool(
+                            jaw.accepted and side_view["accepted"]
+                        ),
                     )
                     decision = store.wait(
                         float(execution["operator_approval_timeout_s"])
@@ -518,12 +748,32 @@ def execute_plans(
                         if decision == "abort_home":
                             report["abort_home"] = _home_both(rpc, execution)
                         return report
+                # Move the observer home while the carrier holds at arrival;
+                # only then return the carrier, preserving one-arm-at-a-time.
+                if observer_plan is not None:
+                    report.setdefault("observer_returns", []).append(
+                        observer_streamer.execute(
+                            observer_plan.return_pose_path,
+                            speed_m_s=float(execution["observer_speed_m_s"]),
+                            gripper_open_ratio=float(
+                                execution["air_gripper_open_ratio"]
+                            ),
+                            stage=f"{plan.name}/left_observer_return_home",
+                        )
+                    )
+                    rpc.home_left_arm()
+                    _wait_home(
+                        rpc,
+                        "left",
+                        float(execution["home_joint_tolerance_rad"]),
+                        float(execution["home_timeout_s"]),
+                    )
                 # Each air segment is independent; return along the audited
                 # path, then restore the physical canonical home before the
                 # other arm/next demonstration is selected.
                 report.setdefault("returns", []).append(
                     streamer.execute(
-                        chunks[3],
+                        chunks[-1],
                         speed_m_s=float(execution["speed_m_s"]),
                         gripper_open_ratio=float(execution["air_gripper_open_ratio"]),
                         stage=f"{plan.name}/return_home",
@@ -565,7 +815,14 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
     config = _load_json(args.config)
-    plans = compile_plans(config)
+    known_segments = {segment["name"] for segment in config["segments"]}
+    missing = sorted(set(args.segment) - known_segments)
+    if missing:
+        parser.error(f"unknown --segment values: {missing}")
+    plans = compile_plans(
+        config, selected_names=set(args.segment) if args.segment else None
+    )
+    observer_plans = compile_observer_plans(config, plans)
     output = (
         _resolve(args.output)
         if args.output
@@ -580,28 +837,42 @@ def main(argv=None) -> int:
         "created_at_s": time.time(),
         "execution_requested": bool(args.execute),
         "plans": [plan.to_dict() for plan in plans],
+        "observer_plans": {
+            name: observer.to_dict() for name, observer in observer_plans.items()
+        },
     }
     _write_json(output / "plan.json", manifest)
     _write_plan_preview(output / "plan_preview.html", plans)
+    video_path = output / "plan_preview.mp4"
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "src/render_dish_transport_plan.py"),
+            "--plan",
+            str(output / "plan.json"),
+            "--output",
+            str(video_path),
+        ],
+        check=True,
+    )
     print(f"plan: {output / 'plan.json'}")
     print(f"preview: {output / 'plan_preview.html'}")
+    print(f"video: {video_path}")
     for plan in plans:
+        observer = observer_plans.get(plan.name)
+        ready = bool(
+            _plan_execution_ready(plan)
+            and (observer is None or observer.audit.get("accepted", False))
+        )
         print(
             f"{plan.name}: arm={plan.physical_arm}, medoid={Path(plan.medoid_hdf5).name}, "
-            f"preflight={'OK' if _plan_execution_ready(plan) else 'WARNING'}"
+            f"preflight={'OK' if ready else 'BLOCKED'}"
         )
     if args.execute:
-        selected = (
-            [plan for plan in plans if plan.name in set(args.segment)]
-            if args.segment
-            else plans
-        )
-        missing = sorted(set(args.segment) - {plan.name for plan in selected})
-        if missing:
-            parser.error(f"unknown --segment values: {missing}")
         report = execute_plans(
             config,
-            selected,
+            plans,
+            observer_plans,
             output,
             allow_audit_warnings=bool(args.allow_audit_warnings),
         )

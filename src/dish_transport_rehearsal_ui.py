@@ -33,11 +33,16 @@ class CheckpointApprovalStore:
         physical_arm: str,
         metrics: dict,
         head_bgr: np.ndarray,
-        wrist_bgr: np.ndarray,
+        left_bgr: np.ndarray,
+        right_bgr: np.ndarray,
         continue_allowed: bool = True,
     ) -> int:
         encoded = {}
-        for name, image in (("head", head_bgr), ("wrist", wrist_bgr)):
+        for name, image in (
+            ("head", head_bgr),
+            ("left", left_bgr),
+            ("right", right_bgr),
+        ):
             ok, data = cv2.imencode(
                 ".jpg", np.asarray(image), [cv2.IMWRITE_JPEG_QUALITY, 93]
             )
@@ -98,12 +103,12 @@ HTML = """<!doctype html><html lang=ja><meta charset=utf-8>
 <title>水平搬送チェック</title><style>
 body{margin:0;background:#101114;color:#f4f4f4;font-family:-apple-system,sans-serif}
 main{max-width:920px;margin:auto;padding:12px}.card{background:#202228;border-radius:14px;padding:12px;margin:10px 0}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}img{width:100%;height:auto;background:#000;border-radius:9px}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}img{width:100%;height:auto;background:#000;border-radius:9px}
 button{width:100%;font-size:19px;padding:14px;margin:6px 0;border:0;border-radius:11px;color:white;background:#2677ff}
 .hold{background:#d98b18}.home{background:#c83232}pre{white-space:pre-wrap;word-break:break-word;font-size:12px}
 @media(max-width:650px){.grid{grid-template-columns:1fr}}
 </style><main><h2>皿の水平エアー搬送</h2><div class=card id=status>接続中…</div>
-<div class=grid><div><b>Head</b><img id=head></div><div><b id=wristName>Wrist</b><img id=wrist></div></div>
+<div class=grid><div><b>Head RGB-D</b><img id=head></div><div><b>Left observer</b><img id=left></div><div><b>Right carrier</b><img id=right></div></div>
 <div class=card><pre id=metrics></pre></div>
 <button id=go>写真と姿勢を確認：次へ</button>
 <button class=hold id=hold>中止して現在位置で保持</button>
@@ -112,8 +117,7 @@ let current=null;
 async function refresh(){let r=await fetch('/api/state',{cache:'no-store'}),s=await r.json();
 current=s;document.querySelector('#status').textContent=s.status==='awaiting_operator'?`${s.segment} / ${s.checkpoint} / ${s.physical_arm}手`:`状態: ${s.status}`;
 document.querySelector('#metrics').textContent=JSON.stringify(s.metrics||{},null,2);
-document.querySelector('#wristName').textContent=(s.physical_arm||'')+' wrist';
-if(s.revision){document.querySelector('#head').src='/image/head?r='+s.revision;document.querySelector('#wrist').src='/image/wrist?r='+s.revision}
+if(s.revision){for(let name of ['head','left','right'])document.querySelector('#'+name).src='/image/'+name+'?r='+s.revision}
 let enabled=s.status==='awaiting_operator';document.querySelector('#go').disabled=!enabled||!s.continue_allowed;
 for(let id of ['hold','home'])document.querySelector('#'+id).disabled=!enabled}
 async function decide(decision){if(!current||!current.revision)return;let r=await fetch('/api/decision',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({revision:current.revision,decision})});let j=await r.json();if(!r.ok)alert(j.error);await refresh()}
@@ -146,7 +150,7 @@ def handler_for(store: CheckpointApprovalStore):
                 return self._send(200, HTML.encode(), "text/html; charset=utf-8")
             if self.path == "/api/state":
                 return self._json(store.snapshot())
-            for name in ("head", "wrist"):
+            for name in ("head", "left", "right"):
                 if self.path.startswith(f"/image/{name}"):
                     image = store.image(name)
                     if image is None:
