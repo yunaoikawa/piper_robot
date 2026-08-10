@@ -2,25 +2,25 @@
   "schema": "piper_robot.jaw_side_view_reference/v1",
   "physical_arm": "right",
   "observer_arm": "left",
-  "source": "pasteur_20260810_left_wrist_operator_confirmed",
-  "operator_label": "approximately_level",
-  "strict_geometry_accepted": false,
-  "use_as_strict_level_reference": false,
-  "image_sha256": "08b95c87d2dc136f3869701296db279ba7b758b759d7c5de0e01061ef5345878",
+  "source": "pasteur_20260810_right_gripper_geometry_leveled",
+  "operator_label": "strictly_level",
+  "strict_geometry_accepted": true,
+  "use_as_strict_level_reference": true,
+  "image_sha256": "a8e4e3f30d6385321af52e2d3edb0eefe038a71e9e0a3f2ad34ca1266209b723",
   "shape_reference": {
-    "principal_axis_deg": 155.25707560811546,
-    "elongation": 4.053917494554553,
-    "fill_fraction": 0.4265673374613003,
-    "area_fraction": 0.014322916666666666,
+    "principal_axis_deg": 158.4905004694431,
+    "elongation": 4.102513581782578,
+    "fill_fraction": 0.4505541346973572,
+    "area_fraction": 0.013733723958333333,
     "centroid_normalized_xy": [
-      0.7361015625,
-      0.4111339962121212
+      0.7308255807063285,
+      0.3756118155961128
     ],
     "bbox_normalized_xywh": [
-      0.63125,
-      0.33541666666666664,
+      0.6265625,
+      0.30833333333333335,
       0.2125,
-      0.15833333333333333
+      0.14375
     ]
   },
   "observer_pose_wxyz_xyz": [
@@ -33,26 +33,23 @@
     0.9709089576042311
   ],
   "observed_right_pose_wxyz_xyz": [
-    0.7105191022697582,
-    0.6883758106666177,
-    0.12851727710052854,
-    0.06917122295810747,
-    0.3274589287026829,
-    0.264371405176379,
-    0.9151995719968304
+    0.7010739020199799,
+    0.6985628037489704,
+    0.09968292272221582,
+    0.10280422190948871,
+    0.3265636560284054,
+    0.26586583532123714,
+    0.918564678329786
   ],
   "geometry_assessment": {
-    "accepted": false,
-    "combined_tilt_deg": 5.134268020913323,
-    "tip_baseline_tilt_deg": 1.1026740956590766,
-    "approach_tilt_deg": 5.0138395835399585,
-    "tip_height_difference_m": 0.002597954249450647,
+    "accepted": true,
+    "combined_tilt_deg": 0.3246013600274639,
+    "tip_baseline_tilt_deg": 0.2375861259767224,
+    "approach_tilt_deg": 0.22117485145612445,
+    "tip_height_difference_m": 0.0005597975167024477,
     "maximum_tilt_deg": 3.0,
     "maximum_tip_height_difference_m": 0.0017,
-    "reasons": [
-      "jaw_plane_not_parallel_to_support",
-      "left_right_fingertip_height_mismatch"
-    ]
+    "reasons": []
   },
   "runtime_policy": {
     "shape_reference_checks_view_repeatability_only": true,

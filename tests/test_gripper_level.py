@@ -1,6 +1,9 @@
+import math
 from pathlib import Path
 
 import numpy as np
+import pytest
+from scipy.spatial.transform import Rotation
 
 from robot.arm.home import physical_home_q
 from rollout.gripper_level import (
@@ -8,6 +11,7 @@ from rollout.gripper_level import (
     RightJawLevelCheckpoint,
     assess_jaw_level,
     leveled_pose,
+    signed_outward_tip_pitch_deg,
 )
 from rollout.teleop_trajectory_stream import ProductionRightFK
 
@@ -45,6 +49,18 @@ def test_leveled_pose_preserves_position_and_removes_tip_height_difference():
     assert assessment.combined_tilt_deg < 1e-6
     assert assessment.tip_height_difference_m < 1e-9
     assert np.allclose(result[4:], source[4:])
+
+
+def test_signed_tip_pitch_uses_physical_outward_not_approach_axis():
+    reference = JawLevelReference()
+    angle = math.radians(10.0)
+    approach = np.array([math.cos(angle), 0.0, -math.sin(angle)])
+    up = np.array([math.sin(angle), 0.0, math.cos(angle)])
+    baseline = np.array([0.0, -1.0, 0.0])
+    rotation = Rotation.from_matrix(np.column_stack((approach, up, baseline)))
+    xyzw = rotation.as_quat()
+    pose = np.r_[xyzw[[3, 0, 1, 2]], np.zeros(3)]
+    assert signed_outward_tip_pitch_deg(pose, reference) == pytest.approx(10.0)
 
 
 class _PoseRPC:

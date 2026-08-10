@@ -2,9 +2,11 @@
 
 The production EE convention is not the semantic NYU mesh convention.  For
 the physical right arm, the vector between the two open fingertips is EE
-local-Z and the finger approach direction is EE local-X.  At canonical home
-both are horizontal and EE local-Y points up.  Keep that bridge explicit so a
-semantic local-Z "up" assertion cannot silently authorize tilted hardware.
+local-Z and the motion-approach axis is EE local-X.  The physical outward
+direction from wrist to fingertips is therefore local negative-X.  At
+canonical home both are horizontal and EE local-Y points up.  Keep that bridge
+explicit so a semantic local-Z "up" assertion or an inverted approach-axis
+sign cannot silently authorize or misreport tilted hardware.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from scipy.spatial.transform import Rotation
 
 PHYSICAL_RIGHT_TIP_BASELINE_EE = np.asarray([0.0, 0.0, 1.0])
 PHYSICAL_RIGHT_APPROACH_EE = np.asarray([1.0, 0.0, 0.0])
+PHYSICAL_RIGHT_OUTWARD_TIP_EE = -PHYSICAL_RIGHT_APPROACH_EE
 PHYSICAL_RIGHT_UP_EE = np.asarray([0.0, 1.0, 0.0])
 
 
@@ -74,6 +77,23 @@ class JawLevelAssessment:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def signed_outward_tip_pitch_deg(
+    pose_wxyz_xyz: Sequence[float],
+    reference: JawLevelReference,
+) -> float:
+    """Return physical fingertip pitch: positive is tips-up, negative down."""
+
+    pose = np.asarray(pose_wxyz_xyz, dtype=float).reshape(7)
+    if not np.all(np.isfinite(pose)):
+        raise ValueError("EE pose must be finite wxyz+xyz")
+    rotation = mink.SE3(pose).as_matrix()[:3, :3]
+    up = _unit(reference.support_up_robot, "support up")
+    outward = rotation @ PHYSICAL_RIGHT_OUTWARD_TIP_EE
+    return math.degrees(
+        math.asin(float(np.clip(outward @ up, -1.0, 1.0)))
+    )
 
 
 def assess_jaw_level(
