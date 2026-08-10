@@ -35,6 +35,27 @@ python src/run_rgbd_gripper_level.py \
   --output-dir data/runs/pasteur/rgbd_gripper_level/observe
 ```
 
+## Side-view repeatability reference
+
+Once an observer wrist has acquired a user-confirmed side view, save its blue
+jaw silhouette and both measured EE poses. The clicked component is converted
+to scale-independent axis, elongation, and fill features; absolute pixels and
+area are never a horizontal gate. A future run reacquires the view with a
+locally measured image Jacobian, then compares the normalized silhouette.
+
+The side-view reference proves that the observation geometry is repeatable. It
+does not by itself prove strict horizontal level. Strict authorization still
+comes from `assess_jaw_level`, so an operator label of `approximately_level`
+cannot accidentally become a production pass condition.
+
+```bash
+python src/save_jaw_side_view_reference.py \
+  --image /path/to/left_wrist.jpg \
+  --target-x 471 --target-y 197 \
+  --operator-label approximately_level \
+  --output src/configs/pasteur_right_jaw_side_view_reference.json
+```
+
 Explicitly authorized probe and correction:
 
 ```bash

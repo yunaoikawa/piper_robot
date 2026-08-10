@@ -6,6 +6,8 @@ from rollout.wrist_observer_tracking import (
     JointDirectionMonitor,
     assess_command_direction,
     blue_components,
+    compare_side_view_shape,
+    describe_blue_component,
     fit_local_image_jacobian,
     image_servo_step,
     require_joint_limits,
@@ -131,3 +133,23 @@ def test_image_jacobian_rejects_unexcited_probe_axis():
             [[1.0, 0.0], [2.0, 0.0]],
             motion_axes=("world_y_m", "world_z_m"),
         )
+
+
+def test_side_view_shape_is_scale_independent_and_rejects_rotation():
+    reference_image = np.zeros((240, 320, 3), np.uint8)
+    cv2.rectangle(reference_image, (90, 90), (230, 120), (255, 150, 0), -1)
+    reference_component = blue_components(reference_image)[0]
+    reference = describe_blue_component(reference_image, reference_component)
+
+    smaller = np.zeros((120, 160, 3), np.uint8)
+    cv2.rectangle(smaller, (45, 45), (115, 60), (255, 150, 0), -1)
+    current = describe_blue_component(smaller, blue_components(smaller)[0])
+    assert compare_side_view_shape(current, reference).accepted
+
+    rotated = np.zeros_like(reference_image)
+    box = cv2.boxPoints(((160, 105), (140, 30), 15)).astype(np.int32)
+    cv2.fillConvexPoly(rotated, box, (255, 150, 0))
+    rotated_shape = describe_blue_component(rotated, blue_components(rotated)[0])
+    result = compare_side_view_shape(rotated_shape, reference)
+    assert not result.accepted
+    assert "jaw_side_view_axis_changed" in result.reasons

@@ -10,6 +10,7 @@ stopped before a long trajectory is streamed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import cv2
 import numpy as np
@@ -37,6 +38,27 @@ class ImageServoStep:
     motion_delta: np.ndarray
     predicted_pixel_delta: np.ndarray
     residual_pixel_error: np.ndarray
+
+
+@dataclass(frozen=True)
+class BlueShapeDescriptor:
+    """Scale-independent silhouette features for one blue jaw component."""
+
+    principal_axis_deg: float
+    elongation: float
+    fill_fraction: float
+    area_fraction: float
+    centroid_normalized_xy: tuple[float, float]
+    bbox_normalized_xywh: tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
+class SideViewShapeMatch:
+    accepted: bool
+    principal_axis_difference_deg: float
+    elongation_log_ratio: float
+    fill_fraction_difference: float
+    reasons: tuple[str, ...]
 
 
 def blue_components(
@@ -110,6 +132,92 @@ def target_blue_components(
         for component in blue_components(bgr, **component_kwargs)
         if component_intersection_fraction(component, self_mask)
         <= maximum_self_intersection
+    )
+
+
+def describe_blue_component(
+    bgr: np.ndarray,
+    component: ColourComponent,
+    *,
+    hue_range: tuple[int, int] = (78, 115),
+    minimum_saturation: int = 70,
+    minimum_value: int = 35,
+) -> BlueShapeDescriptor:
+    """Describe a selected jaw silhouette without absolute pixel thresholds."""
+
+    image = np.asarray(bgr)
+    if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
+        raise ValueError("bgr must be a uint8 HxWx3 image")
+    x, y, width, height = component.bbox_xywh
+    if width <= 0 or height <= 0:
+        raise ValueError("component bounding box must be non-empty")
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(
+        hsv,
+        np.array([hue_range[0], minimum_saturation, minimum_value], np.uint8),
+        np.array([hue_range[1], 255, 255], np.uint8),
+    )
+    crop = mask[y : y + height, x : x + width]
+    rows, columns = np.nonzero(crop)
+    if len(columns) < 3:
+        raise ValueError("blue component is too sparse for a shape descriptor")
+    coordinates = np.c_[columns, rows].astype(float)
+    centered = coordinates - np.mean(coordinates, axis=0)
+    _, singular_values, vectors = np.linalg.svd(centered, full_matrices=False)
+    axis = vectors[0]
+    angle = float(np.degrees(np.arctan2(axis[1], axis[0])) % 180.0)
+    elongation = float(singular_values[0] / max(singular_values[1], 1e-9))
+    image_height, image_width = image.shape[:2]
+    return BlueShapeDescriptor(
+        principal_axis_deg=angle,
+        elongation=elongation,
+        fill_fraction=float(len(columns)) / float(width * height),
+        area_fraction=float(component.area_px) / float(image_width * image_height),
+        centroid_normalized_xy=(
+            float(component.centroid_xy[0]) / image_width,
+            float(component.centroid_xy[1]) / image_height,
+        ),
+        bbox_normalized_xywh=(
+            float(x) / image_width,
+            float(y) / image_height,
+            float(width) / image_width,
+            float(height) / image_height,
+        ),
+    )
+
+
+def compare_side_view_shape(
+    current: BlueShapeDescriptor,
+    reference: BlueShapeDescriptor,
+    *,
+    maximum_axis_difference_deg: float = 5.0,
+    maximum_elongation_log_ratio: float = 0.35,
+    maximum_fill_fraction_difference: float = 0.20,
+) -> SideViewShapeMatch:
+    """Check a jaw against a confirmed side-view silhouette.
+
+    Position and raw area are deliberately diagnostic only: the observer can
+    track or stand at a different distance.  The gate uses normalized shape
+    and a 180-degree-symmetric principal axis.
+    """
+
+    axis_delta = abs(current.principal_axis_deg - reference.principal_axis_deg)
+    axis_delta = min(axis_delta, 180.0 - axis_delta)
+    elongation_delta = abs(math.log(current.elongation / reference.elongation))
+    fill_delta = abs(current.fill_fraction - reference.fill_fraction)
+    reasons = []
+    if axis_delta > maximum_axis_difference_deg:
+        reasons.append("jaw_side_view_axis_changed")
+    if elongation_delta > maximum_elongation_log_ratio:
+        reasons.append("jaw_side_view_elongation_changed")
+    if fill_delta > maximum_fill_fraction_difference:
+        reasons.append("jaw_side_view_fill_changed")
+    return SideViewShapeMatch(
+        accepted=not reasons,
+        principal_axis_difference_deg=float(axis_delta),
+        elongation_log_ratio=float(elongation_delta),
+        fill_fraction_difference=float(fill_delta),
+        reasons=tuple(reasons),
     )
 
 
