@@ -5,7 +5,7 @@
   "ee_frame": "left_arm_ee",
   "support_up_robot": [0.0, 0.0, 1.0],
   "tip_baseline_ee": [0.0, 0.0, 1.0],
-  "approach_axis_ee": [1.0, 0.0, 0.0],
+  "approach_axis_ee": [0.998811503, 0.048739928, 0.0],
   "open_tip_span_m": 0.135,
   "maximum_planned_tilt_deg": 2.0,
   "maximum_checkpoint_tilt_deg": 3.0,
@@ -30,6 +30,8 @@
     "open_only_after_clearance": true
   },
   "calibration_sources": {
+    "physical_attachment_pitch_offset_deg": 2.793699,
+    "physical_attachment_pitch_source": "pasteur_rgbd_three_burst_consensus_20260810",
     "canonical_home_q_rad": [0.0, 1.58, -0.58, 0.0, -0.91, 2.35],
     "verified_success_preclose_q_rad": [
       -0.2213601023,

@@ -1,3 +1,4 @@
+import json
 import math
 from pathlib import Path
 
@@ -61,6 +62,61 @@ def test_signed_tip_pitch_uses_physical_outward_not_approach_axis():
     xyzw = rotation.as_quat()
     pose = np.r_[xyzw[[3, 0, 1, 2]], np.zeros(3)]
     assert signed_outward_tip_pitch_deg(pose, reference) == pytest.approx(10.0)
+
+
+def test_calibrated_physical_approach_offset_corrects_attachment_pitch():
+    offset_deg = 2.8
+    reference = JawLevelReference(
+        approach_axis_ee=(
+            math.cos(math.radians(offset_deg)),
+            math.sin(math.radians(offset_deg)),
+            0.0,
+        )
+    )
+    pose_pitch_deg = 5.0
+    angle = math.radians(pose_pitch_deg)
+    approach = np.array([math.cos(angle), 0.0, -math.sin(angle)])
+    up = np.array([math.sin(angle), 0.0, math.cos(angle)])
+    baseline = np.array([0.0, -1.0, 0.0])
+    rotation = Rotation.from_matrix(np.column_stack((approach, up, baseline)))
+    xyzw = rotation.as_quat()
+    pose = np.r_[xyzw[[3, 0, 1, 2]], np.zeros(3)]
+    assert signed_outward_tip_pitch_deg(pose, reference) == pytest.approx(
+        2.2, abs=0.02
+    )
+    leveled = leveled_pose(pose, reference)
+    assessment = assess_jaw_level(leveled, reference)
+    assert assessment.accepted
+    assert assessment.combined_tilt_deg < 1e-6
+    assert abs(signed_outward_tip_pitch_deg(leveled, reference)) < 1e-6
+
+
+def test_saved_pasteur_attachment_axis_matches_rgbd_consensus():
+    level_config = json.loads(
+        (ROOT / "src/configs/pasteur_fast_lid_grasp_level.json").read_text()
+    )
+    calibration = json.loads(
+        (ROOT / "src/configs/pasteur_right_physical_gripper_level.json").read_text()
+    )
+    reference = JawLevelReference(
+        support_up_robot=level_config["support_up_robot"],
+        tip_baseline_ee=level_config["tip_baseline_ee"],
+        approach_axis_ee=level_config["approach_axis_ee"],
+        open_tip_span_m=level_config["open_tip_span_m"],
+        maximum_checkpoint_tilt_deg=level_config[
+            "maximum_checkpoint_tilt_deg"
+        ],
+        maximum_planned_tilt_deg=level_config["maximum_planned_tilt_deg"],
+        maximum_tip_height_difference_m=level_config[
+            "maximum_tip_height_difference_m"
+        ],
+    )
+    pose = calibration["calibrated_pose_wxyz_xyz_audit_only"]
+    physical_pitch = signed_outward_tip_pitch_deg(pose, reference)
+    assert physical_pitch == pytest.approx(
+        calibration["level_consensus"]["median_angle_deg"], abs=1e-6
+    )
+    assert assess_jaw_level(pose, reference).accepted
 
 
 class _PoseRPC:

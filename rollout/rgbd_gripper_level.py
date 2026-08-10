@@ -57,6 +57,76 @@ class RGBDGripperLevelMeasurement:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class RGBDLevelConsensus:
+    """Independent stopped bursts agreeing that the physical jaw is level."""
+
+    accepted: bool
+    sample_count: int
+    median_angle_deg: float
+    interburst_range_deg: float
+    maximum_individual_mad_deg: float
+    maximum_accepted_angle_deg: float
+    maximum_allowed_interburst_range_deg: float
+    reasons: tuple[str, ...]
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def confirm_stopped_level_bursts(
+    signed_angles_deg,
+    burst_mads_deg,
+    *,
+    minimum_bursts: int = 3,
+    maximum_accepted_angle_deg: float = 0.25,
+    maximum_interburst_range_deg: float = 0.75,
+    maximum_individual_mad_deg: float = 0.60,
+) -> RGBDLevelConsensus:
+    """Require a consensus across independent stopped RGB-D connections.
+
+    A low MAD inside one burst does not catch a coherent depth/PCA branch
+    change between Record3D connections.  The independent-burst range closes
+    that gap while the median prevents one noisy connection from deciding the
+    physical level state.
+    """
+
+    angles = np.asarray(signed_angles_deg, dtype=float).reshape(-1)
+    mads = np.asarray(burst_mads_deg, dtype=float).reshape(-1)
+    if angles.shape != mads.shape:
+        raise ValueError("angle and MAD lists must have the same length")
+    if len(angles) < int(minimum_bursts):
+        raise ValueError(
+            f"physical level confirmation needs at least {int(minimum_bursts)} bursts"
+        )
+    if not np.all(np.isfinite(angles)) or not np.all(np.isfinite(mads)):
+        raise ValueError("physical level confirmation values must be finite")
+    if np.any(mads < 0.0):
+        raise ValueError("burst MAD values must be non-negative")
+    median = float(np.median(angles))
+    interburst_range = float(np.max(angles) - np.min(angles))
+    maximum_mad = float(np.max(mads))
+    reasons = []
+    if abs(median) > float(maximum_accepted_angle_deg):
+        reasons.append("physical_blue_jaw_consensus_not_horizontal")
+    if interburst_range > float(maximum_interburst_range_deg):
+        reasons.append("independent_rgbd_bursts_disagree")
+    if maximum_mad > float(maximum_individual_mad_deg):
+        reasons.append("individual_rgbd_burst_unstable")
+    return RGBDLevelConsensus(
+        accepted=not reasons,
+        sample_count=int(len(angles)),
+        median_angle_deg=median,
+        interburst_range_deg=interburst_range,
+        maximum_individual_mad_deg=maximum_mad,
+        maximum_accepted_angle_deg=float(maximum_accepted_angle_deg),
+        maximum_allowed_interburst_range_deg=float(
+            maximum_interburst_range_deg
+        ),
+        reasons=tuple(reasons),
+    )
+
+
 def _camera_matrix_for_depth(camera_matrix_rgb, rgb_shape, depth_shape):
     matrix = np.asarray(camera_matrix_rgb, dtype=float).reshape(3, 3).copy()
     scale_x = float(depth_shape[1]) / float(rgb_shape[1])

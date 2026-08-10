@@ -90,7 +90,10 @@ def signed_outward_tip_pitch_deg(
         raise ValueError("EE pose must be finite wxyz+xyz")
     rotation = mink.SE3(pose).as_matrix()[:3, :3]
     up = _unit(reference.support_up_robot, "support up")
-    outward = rotation @ PHYSICAL_RIGHT_OUTWARD_TIP_EE
+    # The removable physical jaw can have a calibrated pitch offset relative
+    # to the production EE mesh.  ``approach_axis_ee`` is the measured inward
+    # physical axis, so its negative is the wrist-to-tip direction.
+    outward = rotation @ -_unit(reference.approach_axis_ee, "approach axis")
     return math.degrees(
         math.asin(float(np.clip(outward @ up, -1.0, 1.0)))
     )
@@ -109,7 +112,14 @@ def assess_jaw_level(
     up = _unit(reference.support_up_robot, "support up")
     baseline = rotation @ _unit(reference.tip_baseline_ee, "tip baseline")
     approach = rotation @ _unit(reference.approach_axis_ee, "approach axis")
-    ee_up = rotation @ PHYSICAL_RIGHT_UP_EE
+    physical_up_ee = _unit(
+        np.cross(
+            _unit(reference.tip_baseline_ee, "tip baseline"),
+            _unit(reference.approach_axis_ee, "approach axis"),
+        ),
+        "physical jaw up",
+    )
+    ee_up = rotation @ physical_up_ee
     tip_sine = float(np.clip(abs(baseline @ up), 0.0, 1.0))
     approach_sine = float(np.clip(abs(approach @ up), 0.0, 1.0))
     tip_tilt = math.degrees(math.asin(tip_sine))
@@ -154,10 +164,18 @@ def leveled_pose(
     approach = rotation @ _unit(reference.approach_axis_ee, "approach axis")
     approach = approach - float(approach @ up) * up
     approach = _unit(approach, "projected approach")
-    # Columns are physical EE local X (approach), local Y (up), and local Z
-    # (the left/right fingertip baseline).  x cross y = z.
     baseline = _unit(np.cross(approach, up), "horizontal tip baseline")
-    desired = np.column_stack((approach, up, baseline))
+    physical_approach_ee = _unit(reference.approach_axis_ee, "approach axis")
+    physical_baseline_ee = _unit(reference.tip_baseline_ee, "tip baseline")
+    physical_up_ee = _unit(
+        np.cross(physical_baseline_ee, physical_approach_ee),
+        "physical jaw up",
+    )
+    physical_basis_ee = np.column_stack(
+        (physical_approach_ee, physical_up_ee, physical_baseline_ee)
+    )
+    desired_physical_world = np.column_stack((approach, up, baseline))
+    desired = desired_physical_world @ physical_basis_ee.T
     xyzw = Rotation.from_matrix(desired).as_quat()
     result = pose.copy()
     result[:4] = xyzw[[3, 0, 1, 2]]

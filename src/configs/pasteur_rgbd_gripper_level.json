@@ -1,8 +1,9 @@
 {
   "schema": "piper_robot.rgbd_physical_gripper_level/v1",
   "arm": "right",
-  "automatic_correction_enabled": false,
+  "automatic_correction_enabled": true,
   "production_model": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",
+  "level_config": "src/configs/pasteur_fast_lid_grasp_level.json",
   "rpc": {"host": "127.0.0.1", "port": 8081, "timeout_ms": 10000},
   "measurement": {
     "blue_hue_range": [82, 112],
@@ -18,23 +19,30 @@
     "target_angle_deg": 1.2,
     "maximum_joint_delta_deg": 2.0,
     "duration_s": 0.8,
-    "return_duration_s": 0.8,
+    "return_duration_s": 1.2,
     "minimum_observed_change_deg": 0.6,
     "maximum_return_angle_error_deg": 0.75,
     "maximum_return_joint_error_deg": 1.0
   },
   "correction": {
-    "maximum_angle_per_run_deg": 1.5,
+    "maximum_iterations": 4,
+    "maximum_angle_per_iteration_deg": 1.5,
     "maximum_joint_delta_deg": 3.0,
     "duration_s": 1.0,
     "minimum_improvement_deg": 0.12
   },
+  "confirmation": {
+    "independent_bursts": 3,
+    "trigger_absolute_angle_deg": 1.0,
+    "maximum_interburst_range_deg": 0.75
+  },
   "motion": {
     "rate_hz": 30.0,
+    "maximum_torque_nm": 8.0,
     "maximum_tracking_error_deg": 8.0,
     "endpoint_tolerance_deg": 0.5,
     "endpoint_consecutive_samples": 4,
-    "endpoint_timeout_s": 3.5,
+    "endpoint_timeout_s": 5.0,
     "endpoint_integral_gain": 0.12,
     "maximum_endpoint_bias_deg": 3.0
   }
