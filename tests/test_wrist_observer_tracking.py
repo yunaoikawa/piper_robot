@@ -6,6 +6,8 @@ from rollout.wrist_observer_tracking import (
     JointDirectionMonitor,
     assess_command_direction,
     blue_components,
+    fit_local_image_jacobian,
+    image_servo_step,
     require_joint_limits,
     target_blue_components,
 )
@@ -95,3 +97,37 @@ def test_stream_direction_rejects_sustained_material_reverse_motion():
     result = monitor.observe(command, measured)
     assert not result.accepted
     assert result.reverse_joint_indices == (4,)
+
+
+def test_measured_image_jacobian_learns_camera_signs_and_bounded_step():
+    # This camera happens to map robot -Y to image-right and +Z to image-up.
+    true_jacobian = np.array([[-1500.0, 80.0], [120.0, -1100.0]])
+    probes = np.array(
+        [[0.04, 0.0], [-0.04, 0.0], [0.0, 0.03], [0.0, -0.03]]
+    )
+    calibration = fit_local_image_jacobian(
+        probes,
+        probes @ true_jacobian.T,
+        motion_axes=("world_y_m", "world_z_m"),
+    )
+    assert calibration.matrix_px_per_unit == pytest.approx(true_jacobian)
+    step = image_servo_step(
+        np.array([300.0, -220.0]),
+        calibration,
+        maximum_abs_motion=np.array([0.05, 0.05]),
+    )
+    assert step.motion_delta[0] < 0.0
+    assert step.motion_delta[1] > 0.0
+    assert np.max(np.abs(step.motion_delta)) <= 0.05
+    assert np.linalg.norm(step.residual_pixel_error) < np.linalg.norm(
+        [300.0, -220.0]
+    )
+
+
+def test_image_jacobian_rejects_unexcited_probe_axis():
+    with pytest.raises(ValueError, match="independently excite"):
+        fit_local_image_jacobian(
+            [[0.01, 0.0], [0.02, 0.0]],
+            [[1.0, 0.0], [2.0, 0.0]],
+            motion_axes=("world_y_m", "world_z_m"),
+        )

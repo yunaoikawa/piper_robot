@@ -22,6 +22,23 @@ class ColourComponent:
     centroid_xy: tuple[float, float]
 
 
+@dataclass(frozen=True)
+class LocalImageJacobian:
+    """Locally measured pixel motion for each enabled Cartesian control axis."""
+
+    matrix_px_per_unit: np.ndarray
+    motion_axes: tuple[str, ...]
+    residual_rms_px: float
+    condition_number: float
+
+
+@dataclass(frozen=True)
+class ImageServoStep:
+    motion_delta: np.ndarray
+    predicted_pixel_delta: np.ndarray
+    residual_pixel_error: np.ndarray
+
+
 def blue_components(
     bgr: np.ndarray,
     *,
@@ -93,6 +110,93 @@ def target_blue_components(
         for component in blue_components(bgr, **component_kwargs)
         if component_intersection_fraction(component, self_mask)
         <= maximum_self_intersection
+    )
+
+
+def fit_local_image_jacobian(
+    motion_deltas,
+    observed_pixel_deltas,
+    *,
+    motion_axes: tuple[str, ...],
+) -> LocalImageJacobian:
+    """Fit camera-specific motion signs from small, measured probe moves.
+
+    Rows in ``motion_deltas`` are robot-frame commands and matching rows in
+    ``observed_pixel_deltas`` are feature displacement ``(du, dv)``.  No
+    camera orientation or left/right sign is assumed, which prevents a camera
+    remount or mirrored stream from silently reversing visual pursuit.
+    """
+
+    motion = np.asarray(motion_deltas, dtype=float)
+    pixels = np.asarray(observed_pixel_deltas, dtype=float)
+    if motion.ndim != 2 or pixels.ndim != 2 or pixels.shape[1] != 2:
+        raise ValueError("probe deltas must be two-dimensional arrays")
+    if motion.shape[0] != pixels.shape[0] or motion.shape[1] != len(motion_axes):
+        raise ValueError("probe rows and motion-axis count must agree")
+    if (
+        motion.shape[0] < motion.shape[1]
+        or np.linalg.matrix_rank(motion) < motion.shape[1]
+    ):
+        raise ValueError("probe motions do not independently excite every axis")
+    if not np.all(np.isfinite(motion)) or not np.all(np.isfinite(pixels)):
+        raise ValueError("probe deltas must be finite")
+    if len(set(motion_axes)) != len(motion_axes):
+        raise ValueError("motion_axes must be unique")
+
+    coefficients, _, _, singular_values = np.linalg.lstsq(
+        motion, pixels, rcond=None
+    )
+    prediction = motion @ coefficients
+    residual = pixels - prediction
+    rms = float(np.sqrt(np.mean(np.square(residual))))
+    condition = float(singular_values[0] / singular_values[-1])
+    return LocalImageJacobian(
+        matrix_px_per_unit=coefficients.T.copy(),
+        motion_axes=tuple(motion_axes),
+        residual_rms_px=rms,
+        condition_number=condition,
+    )
+
+
+def image_servo_step(
+    pixel_error,
+    calibration: LocalImageJacobian,
+    *,
+    maximum_abs_motion,
+    damping: float = 1e-6,
+) -> ImageServoStep:
+    """Return a bounded motion that reduces a measured two-pixel error.
+
+    All axes are scaled together when one reaches its bound.  This preserves
+    the learned image-space direction instead of clipping axes independently.
+    """
+
+    error = np.asarray(pixel_error, dtype=float)
+    jacobian = np.asarray(calibration.matrix_px_per_unit, dtype=float)
+    bounds = np.asarray(maximum_abs_motion, dtype=float)
+    axis_count = len(calibration.motion_axes)
+    if error.shape != (2,) or jacobian.shape != (2, axis_count):
+        raise ValueError("pixel error or calibrated Jacobian has the wrong shape")
+    if bounds.shape != (axis_count,) or np.any(bounds <= 0.0):
+        raise ValueError("maximum_abs_motion must contain positive per-axis bounds")
+    if not np.all(np.isfinite(error)) or not np.all(np.isfinite(jacobian)):
+        raise ValueError("servo inputs must be finite")
+    if not np.isfinite(damping) or damping < 0.0:
+        raise ValueError("damping must be finite and non-negative")
+
+    normal = jacobian.T @ jacobian + float(damping) * np.eye(axis_count)
+    motion = np.linalg.solve(normal, jacobian.T @ error)
+    scale = float(np.max(np.abs(motion) / bounds))
+    if scale > 1.0:
+        motion = motion / scale
+    predicted = jacobian @ motion
+    residual = error - predicted
+    if float(predicted @ error) <= 0.0 and np.linalg.norm(error) > 0.0:
+        raise RuntimeError("calibrated step does not reduce the requested pixel error")
+    return ImageServoStep(
+        motion_delta=motion,
+        predicted_pixel_delta=predicted,
+        residual_pixel_error=residual,
     )
 
 
