@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import tempfile
 
 import h5py
@@ -17,6 +18,7 @@ from rollout.dish_transport_rehearsal import (
     split_checkpoint_chunks,
 )
 from src.dish_transport_rehearsal_ui import CheckpointApprovalStore
+from src.run_dish_transport_rehearsal import _validate_scene_layout_contract
 from rollout.gripper_level import JawLevelReference
 
 
@@ -47,12 +49,76 @@ def test_episode_requires_exact_open_close_open():
         )
         assert episode.close_frame == 2
         assert episode.release_frame == 5
+        assert episode.arrival_hover_frame == 5
         noisy = Path(directory) / "noisy.hdf5"
         _write_episode(noisy, [1, 0, 1, 0, 1])
         with pytest.raises(ValueError, match="exactly close then release"):
             load_transport_episode(
                 noisy, source_lift_m=0.05, arrival_hover_m=0.03
             )
+
+
+def test_round_trip_destination_is_turnaround_not_release():
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "round_trip.hdf5"
+        gripper = [1, 1, 0, 0, 0, 0, 0, 1]
+        positions = np.asarray(
+            [
+                [0.30, 0.05, 0.85],
+                [0.30, 0.05, 0.85],
+                [0.30, 0.05, 0.85],
+                [0.20, 0.10, 0.86],
+                [0.10, 0.20, 0.87],  # named station / turnaround
+                [0.20, 0.10, 0.86],
+                [0.29, 0.05, 0.85],
+                [0.30, 0.05, 0.85],
+            ]
+        )
+        with h5py.File(path, "w") as recording:
+            recording.create_dataset("right_ee_pos", data=positions)
+            recording.create_dataset(
+                "right_ee_quat", data=np.tile([1.0, 0.0, 0.0, 0.0], (8, 1))
+            )
+            recording.create_dataset("right_gripper", data=np.asarray(gripper))
+            recording.create_dataset(
+                "right_joint_positions", data=np.zeros((8, 6), dtype=float)
+            )
+        episode = load_transport_episode(
+            path, source_lift_m=0.05, arrival_hover_m=0.03
+        )
+        assert episode.close_frame == 2
+        assert episode.release_frame == 7
+        assert episode.arrival_hover_frame == 4
+        assert len(episode.transport_poses) == 3
+        np.testing.assert_allclose(episode.transport_poses[-1, 4:], positions[4])
+
+
+def test_scene_layout_contract_rejects_mirrored_microscope(tmp_path):
+    report = {
+        "objects": [
+            {
+                "semantic_name": "microscope",
+                "geometry": {"center_xyz_m": [0.8, 1.2, 0.0]},
+            }
+        ],
+        "robot_placement": {
+            "base_xyz_level_m": {
+                "left/base_link": [-0.5, 0.5, 0.0],
+                "right/base_link": [0.5, 0.5, 0.0],
+            }
+        },
+    }
+    path = tmp_path / "scene.json"
+    path.write_text(json.dumps(report))
+    with pytest.raises(ValueError, match="mirrored/stale"):
+        _validate_scene_layout_contract(
+            {
+                "semantic_scene_report": str(path),
+                "scene_layout_contract": {
+                    "station_in_front_of_arm": {"microscope": "left"}
+                },
+            }
+        )
 
 
 def _episode(name: str, lateral: float) -> TransportEpisode:

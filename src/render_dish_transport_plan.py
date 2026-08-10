@@ -28,7 +28,8 @@ def render(plan_path: Path, output: Path, *, width: int, height: int, fps: int) 
     if not manifest.get("plans"):
         raise ValueError("plan manifest contains no transport")
     plan = manifest["plans"][0]
-    scene = Path(json.loads(Path(manifest["config"]).read_text())["planning_model"])
+    config = json.loads(Path(manifest["config"]).read_text())
+    scene = Path(config["planning_model"])
     if not scene.is_absolute():
         scene = ROOT / scene
     dish = plan["collision_audit"]["virtual_dish"]
@@ -40,6 +41,20 @@ def render(plan_path: Path, output: Path, *, width: int, height: int, fps: int) 
     finally:
         generated.unlink(missing_ok=True)
     data = mujoco.MjData(model)
+    # Current-scene geometry may retain uncertain dish/lid hypotheses from a
+    # previous capture.  They are explicitly absent for an air rehearsal and
+    # must not be displayed as mysterious extra carried objects.
+    hidden_bodies = set(
+        config.get("geometry", {}).get("ignored_absent_scene_bodies", [])
+    )
+    for geom_id in range(model.ngeom):
+        body_name = model.body(int(model.geom_bodyid[geom_id])).name
+        if body_name in hidden_bodies:
+            model.geom_rgba[geom_id, 3] = 0.0
+        elif body_name == "measured-static-scene-observed":
+            # Retain the measured context without letting a nearly black mesh
+            # occlude the robot, microscope, and route on a phone screen.
+            model.geom_rgba[geom_id, 3] = min(model.geom_rgba[geom_id, 3], 0.08)
     q_path = np.asarray(plan["q_physical_rad"], dtype=float)
     checkpoint_indices = [item["pose_index"] for item in plan["checkpoints"]]
     carry_start, carry_stop = checkpoint_indices[0], checkpoint_indices[-1]
@@ -66,7 +81,9 @@ def render(plan_path: Path, output: Path, *, width: int, height: int, fps: int) 
     camera.type = mujoco.mjtCamera.mjCAMERA_FREE
     camera.lookat[:] = [-0.14, 0.82, -0.28]
     camera.distance = 1.45
-    camera.azimuth = 45
+    # Physical arm side looking toward the opposite wall: incubator on the
+    # right and microscope in front of the left arm.
+    camera.azimuth = 90
     camera.elevation = -24
 
     output.parent.mkdir(parents=True, exist_ok=True)

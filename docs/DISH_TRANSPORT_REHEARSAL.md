@@ -6,9 +6,12 @@ that a real dish can be retained.
 
 ## Planning
 
-`src/run_dish_transport_rehearsal.py` filters clean open-close-open recordings,
-selects the route medoid, and uses its station positions and obstacle-avoiding
-XY bend. It deliberately discards the human's high middle Z. Starting 15 mm
+`src/run_dish_transport_rehearsal.py` filters clean open-close-open recordings.
+For recordings that return before opening, it treats the furthest carried pose
+as the destination turnaround instead of incorrectly treating release back at
+the source as the destination. It selects the outbound-route medoid and uses
+its station positions and obstacle-avoiding XY bend. It deliberately discards
+the human's high middle Z. Starting 15 mm
 above the recorded station poses, it raises the route in 5 mm increments until
 MuJoCo reports no new contact and at least 10 mm virtual-dish clearance. The
 first passing candidate is the lowest route at that resolution.
@@ -26,7 +29,10 @@ The commanded jaw plane stays horizontal. IK is seeded only from the preceding
 solution after branch selection; a failed seed cannot silently switch to a
 wrist-roll multistart. Consecutive planning samples must differ by at most
 0.12 rad. Arm and virtual-dish swept geometry are checked in
-`robot/pasteur-calibrated-scene/scene.mjcf`.
+the reviewed current scene at
+`data/runs/pasteur/current_scene_automatic_20260731/current_scene/scene.mjcf`.
+That reconstruction is display-ready but not motion-ready; a passing preview
+is therefore visualization evidence only and cannot authorize execution.
 
 ## Dry run
 

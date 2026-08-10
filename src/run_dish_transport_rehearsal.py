@@ -86,9 +86,46 @@ def _level_reference(path: str | Path) -> JawLevelReference:
     return JawLevelReference(**kwargs)
 
 
+def _validate_scene_layout_contract(config: dict) -> None:
+    """Reject a mirrored/stale display scene before any route is compiled."""
+
+    report_path = config.get("semantic_scene_report")
+    contract = config.get("scene_layout_contract")
+    if not report_path or not contract:
+        return
+    report = _load_json(report_path)
+    objects = {
+        value["semantic_name"]: np.asarray(
+            value["geometry"]["center_xyz_m"], dtype=float
+        )
+        for value in report["objects"]
+    }
+    bases = {
+        side.split("/")[0]: np.asarray(xyz, dtype=float)
+        for side, xyz in report["robot_placement"]["base_xyz_level_m"].items()
+    }
+    for station, expected_side in contract["station_in_front_of_arm"].items():
+        if station not in objects or expected_side not in bases:
+            raise ValueError(f"scene contract is missing {station}/{expected_side}")
+        other_side = "right" if expected_side == "left" else "left"
+        expected_distance = float(np.linalg.norm(objects[station][:2] - bases[expected_side][:2]))
+        other_distance = float(np.linalg.norm(objects[station][:2] - bases[other_side][:2]))
+        if expected_distance >= other_distance:
+            raise ValueError(
+                f"scene is mirrored/stale: {station} is not in front of "
+                f"physical {expected_side} arm"
+            )
+        if objects[station][1] <= bases[expected_side][1]:
+            raise ValueError(
+                f"scene is reversed: {station} is not forward of physical "
+                f"{expected_side} arm"
+            )
+
+
 def compile_plans(
     config: dict, *, selected_names: set[str] | None = None
 ) -> list[TransportPlan]:
+    _validate_scene_layout_contract(config)
     planning = config["planning"]
     geometry = config["geometry"]
     demo_directory = _resolve(config["demonstration_directory"])

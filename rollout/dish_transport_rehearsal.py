@@ -262,12 +262,22 @@ def load_transport_episode(
     if open_state[close_frame] or not open_state[release_frame]:
         raise ValueError(f"{path}: gripper transitions are not open-close-open")
     carry = positions[close_frame : release_frame + 1]
-    # Route-medoid selection must use the whole carried motion.  Filtering by
-    # whether a human happened to lift exactly 50/30 mm biased the medoid and
-    # selected a looping run.  The rehearsal synthesizes those two clearances
-    # after medoid selection, so every clean open-close-open success remains.
+    # A transport recording may include the return trip before the operator
+    # opens the gripper.  In that common teleop pattern, release is back near
+    # the source and is not the named destination.  The destination is the
+    # turnaround: the carried pose furthest from the grasp pose.  This also
+    # reduces to the release frame for a one-way recording whose displacement
+    # grows monotonically, so the rule is station-name independent.
+    destination_offset = int(
+        np.argmax(np.linalg.norm(carry - carry[0], axis=1))
+    )
+    arrival_frame = close_frame + destination_offset
+    if arrival_frame <= close_frame:
+        raise ValueError(f"{path}: carried motion has no distinct destination")
+    # Route-medoid selection uses only the outbound carried motion.  Including
+    # a differently timed return leg makes a medoid look like a small loop and
+    # can place the destination back at the source.
     source_frame = close_frame
-    arrival_frame = release_frame
     return TransportEpisode(
         path=path,
         close_frame=close_frame,
@@ -880,7 +890,7 @@ def build_transport_plan(
     demonstrated_route = _resample_pose_path(medoid.transport_poses, route_samples)
     demonstrated_route[0, 4:] = medoid.positions_m[medoid.close_frame]
     demonstrated_route[0, 6] += float(source_lift_m)
-    demonstrated_route[-1, 4:] = medoid.positions_m[medoid.release_frame]
+    demonstrated_route[-1, 4:] = medoid.positions_m[medoid.arrival_hover_frame]
     demonstrated_route[-1, 6] += float(arrival_hover_m)
 
     kinematics = ProductionArmKinematics(production_model, side)
@@ -941,11 +951,31 @@ def build_transport_plan(
             poses = np.vstack((approach, route[1:], retreat[1:]))
             source_index = len(approach) - 1
             arrival_index = source_index + len(route) - 1
-            q_path, ik_reports = kinematics.solve_path(
-                poses,
+            # Horizontal level is a carried-object invariant, not a homing
+            # invariant.  Enforcing it on the interpolated home approach and
+            # retreat makes otherwise valid routes fail while the wrist is
+            # intentionally rotating into/out of the transport attitude.
+            approach_q, approach_reports = kinematics.solve_path(
+                approach,
                 seed_q=home_q,
+                level_reference=None,
+                allow_multistart=False,
+            )
+            route_q, route_reports = kinematics.solve_path(
+                route,
+                seed_q=approach_q[-1],
                 level_reference=level_reference,
                 allow_multistart=False,
+            )
+            retreat_q, retreat_reports = kinematics.solve_path(
+                retreat,
+                seed_q=route_q[-1],
+                level_reference=None,
+                allow_multistart=False,
+            )
+            q_path = np.vstack((approach_q, route_q[1:], retreat_q[1:]))
+            ik_reports = (
+                approach_reports + route_reports[1:] + retreat_reports[1:]
             )
             audit = audit_joint_path(
                 planning_model,
