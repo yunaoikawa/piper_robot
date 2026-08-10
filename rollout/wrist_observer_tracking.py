@@ -104,6 +104,72 @@ class DirectionCheck:
     maximum_tracking_error_rad: float
 
 
+@dataclass(frozen=True)
+class DirectionMonitorState:
+    accepted: bool
+    reverse_joint_indices: tuple[int, ...]
+    reverse_counts: tuple[int, ...]
+
+
+class JointDirectionMonitor:
+    """Debounce genuinely reversed motion during a streamed joint path.
+
+    Each observation is compared with the command sent at that sample, not
+    with the eventual endpoint. This keeps initial compliance or static
+    friction from looking like a controller/encoder sign inversion.
+    """
+
+    def __init__(
+        self,
+        start_q,
+        *,
+        minimum_command_excursion_rad: float = 0.07,
+        reverse_excursion_rad: float = 0.02,
+        consecutive_reverse_samples: int = 4,
+    ):
+        self.start_q = np.asarray(start_q, dtype=float)
+        if self.start_q.shape != (6,) or not np.all(np.isfinite(self.start_q)):
+            raise ValueError("start_q must contain six finite values")
+        self.minimum_command_excursion_rad = float(
+            minimum_command_excursion_rad
+        )
+        self.reverse_excursion_rad = float(reverse_excursion_rad)
+        self.consecutive_reverse_samples = int(consecutive_reverse_samples)
+        if (
+            self.minimum_command_excursion_rad <= 0.0
+            or self.reverse_excursion_rad <= 0.0
+            or self.consecutive_reverse_samples <= 0
+        ):
+            raise ValueError("direction-monitor thresholds must be positive")
+        self._reverse_counts = np.zeros(6, dtype=int)
+
+    def observe(self, commanded_q, measured_q) -> DirectionMonitorState:
+        commanded = np.asarray(commanded_q, dtype=float)
+        measured = np.asarray(measured_q, dtype=float)
+        if any(value.shape != (6,) for value in (commanded, measured)):
+            raise ValueError("joint vectors must all have shape (6,)")
+        if not np.all(np.isfinite(commanded)) or not np.all(np.isfinite(measured)):
+            raise ValueError("joint vectors must be finite")
+        command_excursion = commanded - self.start_q
+        measured_excursion = measured - self.start_q
+        material = (
+            np.abs(command_excursion) >= self.minimum_command_excursion_rad
+        )
+        reverse = material & (
+            measured_excursion * np.sign(command_excursion)
+            <= -self.reverse_excursion_rad
+        )
+        self._reverse_counts = np.where(reverse, self._reverse_counts + 1, 0)
+        tripped = self._reverse_counts >= self.consecutive_reverse_samples
+        return DirectionMonitorState(
+            accepted=not bool(np.any(tripped)),
+            reverse_joint_indices=tuple(
+                np.flatnonzero(tripped).astype(int).tolist()
+            ),
+            reverse_counts=tuple(self._reverse_counts.astype(int).tolist()),
+        )
+
+
 def assess_command_direction(
     start_q,
     target_q,

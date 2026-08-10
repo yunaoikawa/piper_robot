@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from rollout.wrist_observer_tracking import (
+    JointDirectionMonitor,
     assess_command_direction,
     blue_components,
     require_joint_limits,
@@ -55,3 +56,42 @@ def test_joint_limit_gate_is_fail_closed():
             -np.ones(6),
             np.ones(6),
         )
+
+
+def test_stream_direction_uses_current_command_and_debounces_compliance():
+    monitor = JointDirectionMonitor(
+        np.zeros(6),
+        minimum_command_excursion_rad=0.07,
+        reverse_excursion_rad=0.02,
+        consecutive_reverse_samples=3,
+    )
+    for _ in range(5):
+        state = monitor.observe(
+            np.array([0, 0, 0, 0, 0.03, 0]),
+            np.array([0, 0, 0, 0, -0.03, 0]),
+        )
+        assert state.accepted
+    state = monitor.observe(
+        np.array([0, 0, 0, 0, 0.10, 0]),
+        np.array([0, 0, 0, 0, -0.03, 0]),
+    )
+    assert state.accepted
+    state = monitor.observe(
+        np.array([0, 0, 0, 0, 0.11, 0]),
+        np.array([0, 0, 0, 0, 0.02, 0]),
+    )
+    assert state.accepted
+    assert state.reverse_counts[4] == 0
+
+
+def test_stream_direction_rejects_sustained_material_reverse_motion():
+    monitor = JointDirectionMonitor(
+        np.zeros(6), consecutive_reverse_samples=3
+    )
+    command = np.array([0, 0, 0, 0, 0.12, 0])
+    measured = np.array([0, 0, 0, 0, -0.04, 0])
+    assert monitor.observe(command, measured).accepted
+    assert monitor.observe(command, measured).accepted
+    result = monitor.observe(command, measured)
+    assert not result.accepted
+    assert result.reverse_joint_indices == (4,)
