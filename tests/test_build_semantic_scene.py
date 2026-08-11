@@ -45,7 +45,9 @@ def test_sparse_observed_object_can_keep_a_visual_only_semantic_completion(
         "collision_boxes": [],
     }
     profile = {
-        "observed_surface_objects": ["instrument"],
+        # completion=observed_mesh alone must prevent a filled AABB even when
+        # the profile does not repeat the semantic name in a side list.
+        "observed_surface_objects": [],
         "semantic_visual_templates": {
             "instrument": {
                 "collision_authority": False,

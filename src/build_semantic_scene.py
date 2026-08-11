@@ -1360,7 +1360,10 @@ def _write_mjcf(
             # robot collision geometry.
             continue
         if (
-            record.get("semantic_name") in observed_surface_objects
+            (
+                record.get("semantic_name") in observed_surface_objects
+                or record.get("completion") == "observed_mesh"
+            )
             and record.get("observed_mesh")
         ):
             instance_id = str(record["instance_id"])
@@ -1536,7 +1539,10 @@ def _write_mobile_view(
     }
     for record in objects:
         if (
-            record.get("semantic_name") in observed_surface_names
+            (
+                record.get("semantic_name") in observed_surface_names
+                or record.get("completion") == "observed_mesh"
+            )
             and record.get("observed_mesh")
         ):
             visual_parts = _semantic_visual_parts(record, visual_profile)
@@ -1592,12 +1598,17 @@ def _write_mobile_view(
     for surface in observed:
         vertices = surface["vertices"]
         faces = surface["faces"]
+        is_static_background = (
+            surface["semantic_name"] == "measured_static_scene"
+        )
         traces.append(
             go.Mesh3d(
                 x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2],
                 i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
                 name=f"observed: {surface['semantic_name']}",
-                color="#1f2937", opacity=0.28, flatshading=False,
+                color=("#64748b" if is_static_background else "#1f2937"),
+                opacity=(0.08 if is_static_background else 0.28),
+                flatshading=False,
                 visible=True,
             )
         )
