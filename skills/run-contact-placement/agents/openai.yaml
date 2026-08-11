@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Contact Placement"
+  short_description: "Plan and verify pressure-guarded object placement"
+  default_prompt: "Use $run-contact-placement to plan and run a generalized pressure-guarded object placement with fresh mobile evidence."
