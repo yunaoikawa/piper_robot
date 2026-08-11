@@ -16,8 +16,68 @@ from src.build_semantic_scene import (
     _install_configured_end_effectors,
     _position_articulated_model,
     _robot_environment_penetrations,
+    _semantic_visual_parts,
+    _write_mjcf,
     build,
 )
+
+
+def test_sparse_observed_object_can_keep_a_visual_only_semantic_completion(
+    tmp_path,
+):
+    observed = tmp_path / "observed.obj"
+    observed.write_text(
+        "v 0 0 0\nv 0.1 0 0\nv 0 0.1 0\nv 0 0 0.1\n"
+        "f 1 2 3\nf 1 2 4\nf 1 3 4\nf 2 3 4\n"
+    )
+    record = {
+        "instance_id": "instrument-1",
+        "semantic_name": "instrument",
+        "geometry": {
+            "kind": "box",
+            "center_xyz_m": [1.0, 2.0, 0.3],
+            "size_xyz_m": [0.4, 0.3, 0.5],
+            "yaw_rad": np.pi / 2,
+        },
+        "completion": "observed_mesh",
+        "observed_mesh": str(observed),
+        "color": "#e333d1",
+        "collision_boxes": [],
+    }
+    profile = {
+        "observed_surface_objects": ["instrument"],
+        "semantic_visual_templates": {
+            "instrument": {
+                "collision_authority": False,
+                "parts": [
+                    {
+                        "name": "stage",
+                        "kind": "box",
+                        "size_xyz_m": [0.2, 0.1, 0.02],
+                        "center_xy_offset_m": [0.1, 0.0],
+                        "center_z_fraction": 0.5,
+                    }
+                ],
+            }
+        },
+    }
+    parts = _semantic_visual_parts(record, profile)
+    assert len(parts) == 1
+    assert parts[0]["inferred_visual_only"]
+    assert np.allclose(parts[0]["geometry"]["center_xyz_m"], [1, 2.1, 0.3])
+
+    output = tmp_path / "scene.xml"
+    _write_mjcf(output, [record], profile)
+    xml = output.read_text()
+    assert 'name="instrument-1-observed"' in xml
+    assert 'name="instrument-1-inferred-stage"' in xml
+    inferred = ET.fromstring(xml).find(
+        ".//body[@name='instrument-1-inferred-stage']/geom"
+    )
+    assert inferred is not None
+    assert inferred.get("contype") == "0"
+    assert inferred.get("conaffinity") == "0"
+    mujoco.MjModel.from_xml_path(str(output))
 
 
 def _fixture(tmp_path: Path):

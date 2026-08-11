@@ -126,6 +126,64 @@ def _primitive_mesh(record: dict):
     return (rotation @ vertices.T).T + center, faces
 
 
+def _semantic_visual_parts(record: dict, profile: dict) -> list[dict]:
+    """Expand a catalog visual template without changing collision geometry.
+
+    The measured mesh remains the accuracy/collision source.  These parts only
+    complete sparse RGB-D observations into a recognizable operator display.
+    """
+
+    template = profile.get("semantic_visual_templates", {}).get(
+        record.get("semantic_name")
+    )
+    if not template:
+        return []
+    geometry = record["geometry"]
+    center = np.asarray(geometry["center_xyz_m"], dtype=float)
+    extent = np.asarray(geometry["size_xyz_m"], dtype=float)
+    yaw = float(geometry["yaw_rad"])
+    rotation_xy = np.array(
+        [[np.cos(yaw), -np.sin(yaw)], [np.sin(yaw), np.cos(yaw)]]
+    )
+    bottom = center[2] - extent[2] / 2
+    top = center[2] + extent[2] / 2
+    result = []
+    for raw in template.get("parts", ()):
+        local_xy = np.asarray(raw.get("center_xy_offset_m", [0.0, 0.0]), float)
+        part_center = center.copy()
+        part_center[:2] += rotation_xy @ local_xy
+        if "center_z_from_bottom_m" in raw:
+            part_center[2] = bottom + float(raw["center_z_from_bottom_m"])
+        elif "center_z_from_top_m" in raw:
+            part_center[2] = top + float(raw["center_z_from_top_m"])
+        else:
+            part_center[2] = bottom + float(raw["center_z_fraction"]) * extent[2]
+        if "size_xyz_m" in raw:
+            size = np.asarray(raw["size_xyz_m"], dtype=float)
+        else:
+            size = np.r_[
+                np.asarray(raw["size_xy_m"], dtype=float),
+                float(raw["height_fraction"]) * extent[2],
+            ]
+        if size.shape != (3,) or np.any(size <= 0) or not np.all(np.isfinite(size)):
+            raise ValueError("semantic visual template part size must be positive 3D")
+        result.append(
+            {
+                "instance_id": f"{record['instance_id']}-inferred-{raw['name']}",
+                "semantic_name": record["semantic_name"],
+                "geometry": {
+                    "kind": str(raw["kind"]),
+                    "center_xyz_m": part_center.tolist(),
+                    "size_xyz_m": size.tolist(),
+                    "yaw_rad": yaw,
+                },
+                "color": record.get("color", "#8b9bb4"),
+                "inferred_visual_only": True,
+            }
+        )
+    return result
+
+
 def _hex_rgba(color: str, alpha: float = 0.84) -> list[float]:
     value = str(color).lstrip("#")
     if len(value) != 6:
@@ -1323,6 +1381,29 @@ def _write_mjcf(
                 'conaffinity="0"/>\n'
                 "    </body>"
             )
+            for part in _semantic_visual_parts(record, profile):
+                part_geometry = part["geometry"]
+                part_center = part_geometry["center_xyz_m"]
+                part_size = part_geometry["size_xyz_m"]
+                if part_geometry["kind"] == "cylinder":
+                    part_geom = (
+                        f'<geom type="cylinder" size="{part_size[0] / 2:.8f} '
+                        f'{part_size[2] / 2:.8f}"'
+                    )
+                else:
+                    part_geom = (
+                        f'<geom type="box" size="{part_size[0] / 2:.8f} '
+                        f'{part_size[1] / 2:.8f} {part_size[2] / 2:.8f}"'
+                    )
+                geoms.append(
+                    f'    <body name="{escape(part["instance_id"])}" '
+                    f'pos="{part_center[0]:.8f} {part_center[1]:.8f} '
+                    f'{part_center[2]:.8f}" euler="0 0 '
+                    f'{part_geometry["yaw_rad"]:.8f}">\n'
+                    f'      {part_geom} rgba="{rgba_text}" group="2" '
+                    'contype="0" conaffinity="0"/>\n'
+                    "    </body>"
+                )
             for index, box in enumerate(
                 record.get("collision_boxes", ())
             ):
@@ -1446,25 +1527,33 @@ def _write_mobile_view(
     supports: list[dict] | None = None,
     camera_eye: tuple[float, float, float] = (-1.55, 0.0, 0.95),
     observed_surface_objects: tuple[str, ...] = (),
+    semantic_visual_templates: dict | None = None,
 ) -> None:
     traces = []
     observed_surface_names = set(observed_surface_objects)
+    visual_profile = {
+        "semantic_visual_templates": semantic_visual_templates or {}
+    }
     for record in objects:
         if (
             record.get("semantic_name") in observed_surface_names
             and record.get("observed_mesh")
         ):
-            continue
-        vertices, faces = _primitive_mesh(record)
-        traces.append(
-            go.Mesh3d(
-                x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2],
-                i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
-                name=f"inferred: {record['semantic_name']}",
-                color=record["color"], opacity=0.72, flatshading=False,
-                visible=True,
+            visual_parts = _semantic_visual_parts(record, visual_profile)
+        else:
+            visual_parts = [record]
+        for part_index, part in enumerate(visual_parts):
+            vertices, faces = _primitive_mesh(part)
+            traces.append(
+                go.Mesh3d(
+                    x=vertices[:, 0], y=vertices[:, 1], z=vertices[:, 2],
+                    i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
+                    name=(f"inferred: {record['semantic_name']}" if part_index == 0
+                          else f"inferred: {record['semantic_name']} part"),
+                    color=record["color"], opacity=0.82, flatshading=False,
+                    visible=True, showlegend=part_index == 0,
+                )
             )
-        )
     for support in supports or []:
         observed_mesh = support.get("observed_mesh")
         if observed_mesh:
@@ -2101,6 +2190,9 @@ def _resume_confirmed(args) -> dict:
         observed_surface_objects=tuple(
             profile.get("observed_surface_objects", ())
         ),
+        semantic_visual_templates=profile.get(
+            "semantic_visual_templates", {}
+        ),
     )
     mesh = _canonicalize_mesh(
         load_organized_mesh(scene["inputs"]["mesh"]["path"]),
@@ -2423,6 +2515,9 @@ def build(args) -> dict:
         camera_eye=_viewer_camera_eye(profile),
         observed_surface_objects=tuple(
             profile.get("observed_surface_objects", ())
+        ),
+        semantic_visual_templates=profile.get(
+            "semantic_visual_templates", {}
         ),
     )
     _write_mjcf(
