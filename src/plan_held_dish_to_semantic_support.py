@@ -208,8 +208,9 @@ def main() -> int:
         type=float,
         default=1.0,
         help=(
-            "Execute only this fraction of the high horizontal leg (0, 1]. "
-            "Fractions below one deliberately omit the destination descent."
+            "Execute this fraction of the high horizontal leg [-1, 1], excluding "
+            "zero. Negative values make a short Cartesian retreat away from the "
+            "destination. Fractions below one omit the destination descent."
         ),
     )
     parser.add_argument(
@@ -257,8 +258,12 @@ def main() -> int:
     hover_destination = destination_center.copy()
     hover_destination[2] = transit_z
     if args.horizontal_first:
-        if not 0.0 < args.horizontal_fraction <= 1.0:
-            raise ValueError("--horizontal-fraction must be in (0, 1]")
+        if not -1.0 <= args.horizontal_fraction <= 1.0 or abs(
+            args.horizontal_fraction
+        ) < 1e-9:
+            raise ValueError(
+                "--horizontal-fraction must be in [-1, 1] and non-zero"
+            )
         transit_z = max(float(start_center[2]), float(transit_z))
         full_horizontal_destination = destination_center.copy()
         full_horizontal_destination[2] = transit_z
