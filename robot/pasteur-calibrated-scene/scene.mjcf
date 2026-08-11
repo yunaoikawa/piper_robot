@@ -15,6 +15,26 @@
     <body name="microscope-1-observed">
       <geom name="microscope-1-visual" type="mesh" mesh="microscope-1-observed-mesh" rgba="0.8902 0.2000 0.8196 0.8400" group="2" contype="0" conaffinity="0"/>
     </body>
+    <!-- Semantic completion is visual-only. The measured cells below remain
+         the collision authority used by planning. -->
+    <body name="microscope-1-inferred-base" pos="-0.34051409 1.24945203 -0.69415369" euler="0 0 0.89189218">
+      <geom type="box" size="0.13000000 0.10000000 0.02500000" rgba="0.8902 0.2000 0.8196 0.8400" group="2" contype="0" conaffinity="0"/>
+    </body>
+    <body name="microscope-1-inferred-stage" pos="-0.34051409 1.24945203 -0.54915369" euler="0 0 0.89189218">
+      <geom type="box" size="0.11000000 0.09000000 0.01800000" rgba="0.8902 0.2000 0.8196 0.8400" group="2" contype="0" conaffinity="0"/>
+    </body>
+    <body name="microscope-1-inferred-column" pos="-0.29027884 1.31171293 -0.51771049" euler="0 0 0.89189218">
+      <geom type="box" size="0.03500000 0.04500000 0.15309684" rgba="0.8902 0.2000 0.8196 0.8400" group="2" contype="0" conaffinity="0"/>
+    </body>
+    <body name="microscope-1-inferred-head" pos="-0.34051409 1.24945203 -0.37626728" euler="0 0 0.89189218">
+      <geom type="box" size="0.10000000 0.07000000 0.05500000" rgba="0.8902 0.2000 0.8196 0.8400" group="2" contype="0" conaffinity="0"/>
+    </body>
+    <body name="microscope-1-inferred-eyepiece_left" pos="-0.36775323 1.27142995 -0.27626728" euler="0 0 0.89189218">
+      <geom type="cylinder" size="0.01800000 0.07000000" rgba="0.8902 0.2000 0.8196 0.8400" group="2" contype="0" conaffinity="0"/>
+    </body>
+    <body name="microscope-1-inferred-eyepiece_right" pos="-0.31327494 1.22747411 -0.27626728" euler="0 0 0.89189218">
+      <geom type="cylinder" size="0.01800000 0.07000000" rgba="0.8902 0.2000 0.8196 0.8400" group="2" contype="0" conaffinity="0"/>
+    </body>
     <body name="microscope-1-cell-0" pos="-0.64500000 0.79500000 -0.43500000">
       <geom name="microscope-1-collision-0" type="box" size="0.01500000 0.01500000 0.01500000" rgba="0 0 0 0" group="3" contype="1" conaffinity="1"/>
     </body>

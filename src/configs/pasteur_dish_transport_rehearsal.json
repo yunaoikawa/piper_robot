@@ -2,7 +2,7 @@
   "schema": "piper_robot.dish_transport_air_rehearsal_profile/v1",
   "profile_name": "pasteur_horizontal_dish_air_transport",
   "production_model": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",
-  "planning_model": "data/runs/pasteur/current_scene_automatic_20260731/current_scene/scene.mjcf",
+  "planning_model": "robot/pasteur-calibrated-scene/scene.mjcf",
   "semantic_scene_report": "data/runs/pasteur/current_scene_automatic_20260731/base_scene/scene.json",
   "scene_layout_contract": {
     "station_in_front_of_arm": {

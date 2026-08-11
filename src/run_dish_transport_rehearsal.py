@@ -843,6 +843,14 @@ def main(argv=None) -> int:
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--output", default=None)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument(
+        "--carrier-only",
+        action="store_true",
+        help=(
+            "keep the observer arm at home and execute only the audited "
+            "carrier path (air rehearsal only)"
+        ),
+    )
     parser.add_argument("--allow-audit-warnings", action="store_true")
     parser.add_argument(
         "--segment",
@@ -859,7 +867,9 @@ def main(argv=None) -> int:
     plans = compile_plans(
         config, selected_names=set(args.segment) if args.segment else None
     )
-    observer_plans = compile_observer_plans(config, plans)
+    observer_plans = (
+        {} if args.carrier_only else compile_observer_plans(config, plans)
+    )
     output = (
         _resolve(args.output)
         if args.output
@@ -873,6 +883,7 @@ def main(argv=None) -> int:
         "config": str(_resolve(args.config)),
         "created_at_s": time.time(),
         "execution_requested": bool(args.execute),
+        "carrier_only": bool(args.carrier_only),
         "plans": [plan.to_dict() for plan in plans],
         "observer_plans": {
             name: observer.to_dict() for name, observer in observer_plans.items()

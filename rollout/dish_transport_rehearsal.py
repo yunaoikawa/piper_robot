@@ -346,6 +346,7 @@ class ProductionArmKinematics:
         maximum_rotation_error_rad: float = math.radians(8.0),
         level_reference: JawLevelReference | None = None,
         allow_multistart: bool = True,
+        maximum_joint_delta_rad: float | None = None,
     ) -> tuple[np.ndarray, dict]:
         target = np.asarray(target_pose_wxyz_xyz, dtype=float).reshape(7)
         seed = np.asarray(seed_q_physical_rad, dtype=float).reshape(6)
@@ -381,10 +382,19 @@ class ProductionArmKinematics:
             )
         candidates = []
         for start_index, start in enumerate(starts):
+            lower = self.lower
+            upper = self.upper
+            if maximum_joint_delta_rad is not None:
+                delta = float(maximum_joint_delta_rad)
+                if not np.isfinite(delta) or delta <= 0:
+                    raise ValueError("maximum joint delta must be positive")
+                lower = np.maximum(lower, seed - delta)
+                upper = np.minimum(upper, seed + delta)
+                start = np.clip(start, lower, upper)
             result = least_squares(
                 residual,
                 start,
-                bounds=(self.lower, self.upper),
+                bounds=(lower, upper),
                 max_nfev=240,
                 xtol=1e-9,
                 ftol=1e-9,
@@ -445,6 +455,7 @@ class ProductionArmKinematics:
             "optimizer_success": bool(result.success),
             "optimizer_cost": float(result.cost),
             "multistart_index": int(start_index),
+            "maximum_joint_delta_rad": maximum_joint_delta_rad,
             "actual_jaw_level": (
                 None if level_assessment is None else level_assessment.to_dict()
             ),
@@ -462,6 +473,7 @@ class ProductionArmKinematics:
         allow_multistart: bool = False,
         maximum_position_error_m: float = 0.008,
         maximum_rotation_error_rad: float = math.radians(8.0),
+        maximum_joint_delta_rad: float | None = None,
     ) -> tuple[np.ndarray, list[dict]]:
         seed = physical_home_q(self.physical_arm) if seed_q is None else np.asarray(seed_q)
         q_path = []
@@ -475,6 +487,7 @@ class ProductionArmKinematics:
                     allow_multistart=allow_multistart,
                     maximum_position_error_m=maximum_position_error_m,
                     maximum_rotation_error_rad=maximum_rotation_error_rad,
+                    maximum_joint_delta_rad=maximum_joint_delta_rad,
                 )
             except ValueError as error:
                 raise ValueError(f"IK path sample {index} rejected: {error}") from error
@@ -520,6 +533,19 @@ def _append_linear_pose_path(first, second, maximum_step_m: float) -> np.ndarray
         Rotation.from_quat(np.asarray([first, second])[:, [1, 2, 3, 0]]),
     )(alpha).as_quat()
     return np.c_[rotations[:, [3, 0, 1, 2]], position]
+
+
+def _append_joint_branch_path(first, second, maximum_step_rad: float) -> np.ndarray:
+    """Interpolate one already-selected IK branch without re-solving it."""
+
+    first = np.asarray(first, dtype=float).reshape(6)
+    second = np.asarray(second, dtype=float).reshape(6)
+    count = max(
+        2,
+        int(math.ceil(np.max(np.abs(second - first)) / maximum_step_rad)) + 1,
+    )
+    alpha = np.linspace(0.0, 1.0, count)
+    return first + alpha[:, None] * (second - first)
 
 
 def _choose_horizontal_orientation(
@@ -580,6 +606,7 @@ def _choose_horizontal_orientation(
                 "maximum_proxy_tilt_deg": proxy_tilt,
                 "maximum_proxy_position_error_m": proxy_position,
                 "joint_travel_rad": joint_travel,
+                "anchor_q_physical_rad": np.asarray(q_values).tolist(),
             }
         )
     accepted = [candidate for candidate in candidates if candidate["accepted"]]
@@ -591,10 +618,15 @@ def _choose_horizontal_orientation(
     report = {
         key: value
         for key, value in selected.items()
-        if key not in {"quaternion_wxyz", "score"}
+        if key not in {"quaternion_wxyz", "score", "anchor_q_physical_rad"}
     }
     report["candidate_count"] = len(candidates)
-    return np.asarray(selected["quaternion_wxyz"], dtype=float), report
+    report["branch_seed_source"] = "selected_horizontal_anchor_solution"
+    return (
+        np.asarray(selected["quaternion_wxyz"], dtype=float),
+        np.asarray(selected["anchor_q_physical_rad"], dtype=float),
+        report,
+    )
 
 
 def _insert_virtual_dish(scene_path: Path, radius_m: float, thickness_m: float) -> Path:
@@ -928,7 +960,11 @@ def build_transport_plan(
         anchors = base_anchors.copy()
         anchors[:, 6] += float(added_lift_m)
         try:
-            fixed_orientation, yaw_selection = _choose_horizontal_orientation(
+            (
+                fixed_orientation,
+                horizontal_anchor_q,
+                yaw_selection,
+            ) = _choose_horizontal_orientation(
                 kinematics, anchors[:, 4:], home_pose, level_reference
             )
             anchors[:, :4] = fixed_orientation
@@ -942,41 +978,36 @@ def build_transport_plan(
             route, maximum_tilt = _level_path(
                 route, level_reference, fixed_orientation=fixed_orientation
             )
-            approach = _append_linear_pose_path(
-                home_pose, route[0], maximum_cartesian_step_m
+            # Horizontal level is a carried-object invariant, not a homing
+            # invariant. First solve the branch-selected carried route.
+            route_q, route_reports = kinematics.solve_path(
+                route,
+                seed_q=horizontal_anchor_q[0],
+                level_reference=level_reference,
+                allow_multistart=False,
+                maximum_joint_delta_rad=maximum_ik_joint_step_rad,
             )
-            retreat = _append_linear_pose_path(
-                route[-1], home_pose, maximum_cartesian_step_m
+            # Connect home to that exact branch in joint space, then export
+            # its FK poses to the same Cartesian teleop streamer used by the
+            # operator. Re-solving a Cartesian home approach discarded the
+            # selected wrist branch and produced a false 4--7 degree tilt.
+            branch_step_rad = min(0.04, float(maximum_ik_joint_step_rad))
+            approach_q = _append_joint_branch_path(
+                home_q, route_q[0], branch_step_rad
             )
+            # Do not cut diagonally from the destination to home: at the
+            # microscope this crosses the front support. Retrace the audited
+            # low transport branch to the source, then reverse the collision-
+            # checked home approach.
+            retreat_q = np.vstack(
+                (route_q[::-1], approach_q[-2::-1])
+            )
+            approach = np.asarray([kinematics.pose(q) for q in approach_q])
+            retreat = np.asarray([kinematics.pose(q) for q in retreat_q])
             poses = np.vstack((approach, route[1:], retreat[1:]))
             source_index = len(approach) - 1
             arrival_index = source_index + len(route) - 1
-            # Horizontal level is a carried-object invariant, not a homing
-            # invariant.  Enforcing it on the interpolated home approach and
-            # retreat makes otherwise valid routes fail while the wrist is
-            # intentionally rotating into/out of the transport attitude.
-            approach_q, approach_reports = kinematics.solve_path(
-                approach,
-                seed_q=home_q,
-                level_reference=None,
-                allow_multistart=False,
-            )
-            route_q, route_reports = kinematics.solve_path(
-                route,
-                seed_q=approach_q[-1],
-                level_reference=level_reference,
-                allow_multistart=False,
-            )
-            retreat_q, retreat_reports = kinematics.solve_path(
-                retreat,
-                seed_q=route_q[-1],
-                level_reference=None,
-                allow_multistart=False,
-            )
             q_path = np.vstack((approach_q, route_q[1:], retreat_q[1:]))
-            ik_reports = (
-                approach_reports + route_reports[1:] + retreat_reports[1:]
-            )
             audit = audit_joint_path(
                 planning_model,
                 side,
@@ -989,13 +1020,13 @@ def build_transport_plan(
                 minimum_dish_clearance_m=minimum_dish_clearance_m,
             )
             audit["maximum_ik_position_error_m"] = max(
-                report["position_error_m"] for report in ik_reports
+                report["position_error_m"] for report in route_reports
             )
             audit["maximum_ik_rotation_error_deg"] = max(
-                report["rotation_error_deg"] for report in ik_reports
+                report["rotation_error_deg"] for report in route_reports
             )
             audit["horizontal_yaw_selection"] = yaw_selection
-            carrying_ik_reports = ik_reports[source_index : arrival_index + 1]
+            carrying_ik_reports = route_reports
             audit["maximum_ik_proxy_jaw_tilt_deg"] = max(
                 report["actual_jaw_level"]["combined_tilt_deg"]
                 for report in carrying_ik_reports

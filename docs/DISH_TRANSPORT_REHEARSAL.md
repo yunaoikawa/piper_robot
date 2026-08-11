@@ -28,9 +28,11 @@ the clearance audit.
 The commanded jaw plane stays horizontal. IK is seeded only from the preceding
 solution after branch selection; a failed seed cannot silently switch to a
 wrist-roll multistart. Consecutive planning samples must differ by at most
-0.12 rad. Arm and virtual-dish swept geometry are checked in
-the reviewed current scene at
-`data/runs/pasteur/current_scene_automatic_20260731/current_scene/scene.mjcf`.
+0.12 rad. Arm and virtual-dish swept geometry are checked in the reviewed,
+portable, semantic-completed scene at
+`robot/pasteur-calibrated-scene/scene.mjcf`. The same file supplies the preview:
+its inferred microscope is visual-only while measured RGB-D cells remain the
+collision authority. Do not point planning and display at different MJCFs.
 That reconstruction is display-ready but not motion-ready; a passing preview
 is therefore visualization evidence only and cannot authorize execution.
 
