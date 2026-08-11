@@ -49,6 +49,24 @@ def _dense(path: np.ndarray, maximum_step_rad: float) -> np.ndarray:
     return np.vstack(pieces)
 
 
+def _reverse_path_from_nearest(
+    sparse: np.ndarray, measured_q: np.ndarray, stop_index: int
+) -> tuple[np.ndarray, int, float]:
+    """Build an inclusive reverse path, including the valid zero endpoint."""
+
+    sparse = np.asarray(sparse, dtype=float)
+    measured_q = np.asarray(measured_q, dtype=float).reshape(6)
+    nearest_index = int(np.argmin(np.linalg.norm(sparse - measured_q, axis=1)))
+    nearest_error = float(np.max(np.abs(sparse[nearest_index] - measured_q)))
+    if stop_index > nearest_index:
+        raise ValueError("reverse stop-index follows the nearest source-plan sample")
+    # Slicing with [nearest:stop-1:-1] is empty specifically for stop==0,
+    # because -1 is normalized to the last item.  Slice forward inclusively
+    # and reverse instead so the homing/segment-zero endpoint is never lost.
+    reverse_sparse = sparse[stop_index : nearest_index + 1][::-1]
+    return np.vstack((measured_q, reverse_sparse)), nearest_index, nearest_error
+
+
 def _capture(
     output: Path,
     camera_names: dict,
@@ -271,6 +289,14 @@ def main() -> int:
         action="store_true",
         help="Return from the nearest source-plan sample to stop-index.",
     )
+    parser.add_argument(
+        "--skip-jaw-level-refinement",
+        action="store_true",
+        help=(
+            "Preserve the audited orientation during a visibility-search move. "
+            "Level refinement remains available for the final placement stage."
+        ),
+    )
     args = parser.parse_args()
 
     manifest = json.loads(args.plan.read_text())
@@ -290,12 +316,8 @@ def main() -> int:
     nearest_index = None
     nearest_error = None
     if args.reverse_from_nearest:
-        nearest_index = int(np.argmin(np.linalg.norm(sparse - measured_q, axis=1)))
-        nearest_error = float(np.max(np.abs(sparse[nearest_index] - measured_q)))
-        if args.stop_index > nearest_index:
-            raise ValueError("reverse stop-index follows the nearest source-plan sample")
-        selected = np.vstack(
-            (measured_q, sparse[nearest_index : args.stop_index - 1 : -1])
+        selected, nearest_index, nearest_error = _reverse_path_from_nearest(
+            sparse, measured_q, args.stop_index
         )
     else:
         selected = np.vstack((measured_q, sparse[: args.stop_index + 1]))
@@ -416,7 +438,14 @@ def main() -> int:
         )
         refinement_config = execution.get("jaw_level_refinement", {})
         report["jaw_level_refinement"] = None
-        if not jaw.accepted and refinement_config.get("enabled", True):
+        report["jaw_level_refinement_skipped_for_visibility_search"] = bool(
+            args.skip_jaw_level_refinement
+        )
+        if (
+            not jaw.accepted
+            and refinement_config.get("enabled", True)
+            and not args.skip_jaw_level_refinement
+        ):
             refinement_streamer = CartesianAirTransportStreamer(
                 rpc,
                 "right",
