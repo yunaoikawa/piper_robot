@@ -1,0 +1,35 @@
+{
+  "schema": "piper_robot.agent_collection_config/v1",
+  "control_frequency_hz": 30,
+  "observation_frequency_hz": 30,
+  "policy": {
+    "type": "ACT",
+    "action_mode": "absolute",
+    "prediction_horizon": 40,
+    "replan_at_remaining": 12,
+    "active_arm": "right"
+  },
+  "tasks": {
+    "lid_open": {
+      "checkpoint": "outputs/lab/act/horizon/lid_open/ep100/checkpoints/last/pretrained_model",
+      "initial_right_xyz_bias_m": [0.0, 0.0, -0.03],
+      "pilot_success_target": 10
+    },
+    "lid_close": {
+      "checkpoint": "outputs/lab/act/horizon/lid_close/ep100/checkpoints/last/pretrained_model",
+      "initial_right_xyz_bias_m": [0.0, 0.0, -0.03],
+      "pilot_success_target": 10
+    }
+  },
+  "intervention": {
+    "steps_mm": [1, 2, 5],
+    "maximum_absolute_bias_m": 0.06,
+    "pause_excluded_from_training_time": true,
+    "resume_requires_fresh_observation": true
+  },
+  "storage": {
+    "root": "data/vla_agent/lid_bias",
+    "success_is_training_eligible": true,
+    "failure_reasons": ["grasp_miss", "jam", "drop", "wrong_placement", "abort"]
+  }
+}

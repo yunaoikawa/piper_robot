@@ -6,6 +6,7 @@ import time
 import mink
 import numpy as np
 import threading
+import hashlib
 from pathlib import Path
 from scipy.spatial.transform import Rotation as R
 
@@ -19,6 +20,11 @@ from .episode import EpisodeManager
 from .keyboard import KeyboardController
 from .manipulability import ManipulabilityCalculator
 from .safety import SafetyLayer
+from .agent_collection import (
+    AgentEpisodeRecorder, AgentRecordingSample, ControllerClaim,
+    FAILURE_REASONS, InterventionState,
+)
+from .agent_collection_ui import AgentCollectionUI
 
 DATA_DIR = Path("./your_save_dir_here")
 DEFAULT_TASK = "put the flask in the incubator"
@@ -46,10 +52,29 @@ class PolicyController:
     def __init__(self, hpc_host="192.168.1.50", obs_port=5555, action_port=5556,
                  enable_recording=False, save_dir=None, autonomous_mode=False,
                  episode_timeout=600.0, manipulability_threshold=0.05,
-                 task=DEFAULT_TASK, safety_config=None, bias_port=5560):
+                 task=DEFAULT_TASK, safety_config=None, bias_port=5560,
+                 agent_collection=False, agent_task=None,
+                 agent_ui_host="0.0.0.0", agent_ui_port=8780,
+                 agent_ui_token="", controller_lock="/tmp/piper_robot_right_arm_controller.lock"):
         self.stop_event = threading.Event()
         self.policy_active = False
         self.task = task
+        self.agent_collection = bool(agent_collection)
+        self.agent_task = agent_task
+        if self.agent_collection and agent_task not in {"lid_open", "lid_close"}:
+            raise ValueError("--agent-task must be lid_open or lid_close")
+        self.controller_claim = ControllerClaim(controller_lock) if self.agent_collection else None
+        if self.controller_claim:
+            self.controller_claim.acquire()
+        self.intervention = InterventionState() if self.agent_collection else None
+        self._resume_after_obs_timestamp = None
+        self._agent_sample_index = 0
+        self._last_action_record = {
+            "policy": np.full(16, np.nan), "commanded": np.full(16, np.nan),
+            "chunk_index": -1, "generation": -1, "obs_timestamp": np.nan,
+        }
+        self._action_record_lock = threading.Lock()
+        self._latest_ui_frames = {}
 
         # Per-arm EE offset in robot frame, applied in apply_action(). This
         # replaces the server-side --z-bias so the bias exists in exactly one
@@ -106,7 +131,10 @@ class PolicyController:
         self.camera.wrist_camera = self.right_wrist_camera
         self.camera.left_wrist_camera = self.left_wrist_camera
 
-        self.recorder = DataRecorder(save_path, self.stop_event) if enable_recording else None
+        if self.agent_collection:
+            self.recorder = AgentEpisodeRecorder(save_path, self.stop_event, fps=30)
+        else:
+            self.recorder = DataRecorder(save_path, self.stop_event) if enable_recording else None
 
         self.episode_manager = EpisodeManager(
             recorder=self.recorder, robot_rpc=self.cone_e,
@@ -114,10 +142,26 @@ class PolicyController:
             episode_timeout=episode_timeout, manipulability_threshold=manipulability_threshold
         )
 
-        self.keyboard = KeyboardController(
-            self.stop_event, self.episode_manager, enable_recording, autonomous_mode
-        )
-        self.keyboard.start()
+        self.keyboard = None
+        if not self.agent_collection:
+            self.keyboard = KeyboardController(
+                self.stop_event, self.episode_manager, enable_recording, autonomous_mode
+            )
+            self.keyboard.start()
+
+        self.agent_ui = None
+        if self.agent_collection:
+            self.set_bias("right", [0.0, 0.0, -0.03])
+            self.intervention.set_bias("right", self.xyz_bias["right"])
+            self.intervention.latest_metrics["task"] = agent_task
+            self.intervention.latest_metrics["pilot_success_target"] = 10
+            self.intervention.latest_metrics["success_count"] = self.recorder.success_count(agent_task)
+            self.agent_ui = AgentCollectionUI(
+                agent_ui_host, agent_ui_port, agent_ui_token, self.intervention,
+                self._submit_agent_command, self._agent_frame_provider,
+            )
+            self.agent_ui.start()
+            print(f"Agent collection UI: http://{agent_ui_host}:{self.agent_ui.port}/")
 
         self.manipulability_calc = ManipulabilityCalculator(self.obs_cone_e, self.obs_rpc_lock)
 
@@ -157,7 +201,9 @@ class PolicyController:
 
                 if name == 'set_bias':
                     arm = cmd.get('arm', 'right')
-                    if arm not in self.xyz_bias:
+                    if self.agent_collection:
+                        reply = {'status': 'error', 'message': 'use the audited agent phone UI'}
+                    elif arm not in self.xyz_bias:
                         reply = {'status': 'error', 'message': f"unknown arm '{arm}'"}
                     else:
                         applied = self.set_bias(arm, cmd.get('bias', [0, 0, 0]))
@@ -225,13 +271,15 @@ class PolicyController:
         rgb_frame = _rotate_and_resize(rgb_frame)
 
         left_wrist_frame = None
+        left_wrist_timestamp = np.nan
         if self.left_wrist_camera is not None:
-            left_wrist_frame, _, _ = self.left_wrist_camera.get_latest_frame()
+            left_wrist_frame, left_wrist_timestamp, _ = self.left_wrist_camera.get_latest_frame()
             left_wrist_frame = _rotate_and_resize(left_wrist_frame)
 
         right_wrist_frame = None
+        right_wrist_timestamp = np.nan
         if self.right_wrist_camera is not None:
-            right_wrist_frame, _, _ = self.right_wrist_camera.get_latest_frame()
+            right_wrist_frame, right_wrist_timestamp, _ = self.right_wrist_camera.get_latest_frame()
             right_wrist_frame = _rotate_and_resize(right_wrist_frame)
 
         blank = np.zeros((TARGET_H, TARGET_W, 3), dtype=np.uint8)
@@ -261,7 +309,58 @@ class PolicyController:
             "task": self.task,
         }
 
-        if self.recorder and self.recorder.is_recording:
+        def frame_id(camera_timestamp):
+            try:
+                value = float(camera_timestamp)
+            except (TypeError, ValueError):
+                value = timestamp
+            if not np.isfinite(value):
+                value = timestamp
+            return int(value * 1e9)
+
+        def finite_timestamp(camera_timestamp):
+            try:
+                return float(camera_timestamp)
+            except (TypeError, ValueError):
+                return np.nan
+
+        self._latest_ui_frames = {
+            "head": (observation["images"]["cam_high"], frame_id(rgb_timestamp)),
+            "left": (observation["images"]["cam_left_wrist"], frame_id(left_wrist_timestamp)),
+            "right": (observation["images"]["cam_right_wrist"], frame_id(right_wrist_timestamp)),
+        }
+
+        if self.agent_collection and self.recorder.is_recording and self.intervention.mode != "paused":
+            with self._action_record_lock:
+                action_record = {
+                    key: value.copy() if isinstance(value, np.ndarray) else value
+                    for key, value in self._last_action_record.items()
+                }
+            sample = AgentRecordingSample(
+                wall_timestamp=timestamp,
+                active_timestamp=self._agent_sample_index / 30.0,
+                left_ee_pose=ee_pose_left, right_ee_pose=ee_pose_right,
+                left_gripper_exact=left_gripper, right_gripper_exact=right_gripper,
+                left_gripper=left_gripper_binary, right_gripper=right_gripper_binary,
+                left_joint_positions=np.asarray(left_joint_positions),
+                right_joint_positions=np.asarray(right_joint_positions),
+                head_rgb=self.camera.latest_rgb_frame.copy() if self.camera.latest_rgb_frame is not None else None,
+                left_rgb=self.left_wrist_camera.latest_rgb.copy() if (self.left_wrist_camera and self.left_wrist_camera.latest_rgb is not None) else None,
+                right_rgb=self.right_wrist_camera.latest_rgb.copy() if (self.right_wrist_camera and self.right_wrist_camera.latest_rgb is not None) else None,
+                camera_timestamps=(finite_timestamp(rgb_timestamp), finite_timestamp(left_wrist_timestamp), finite_timestamp(right_wrist_timestamp)),
+                camera_frame_ids=tuple(self._latest_ui_frames[name][1] for name in ("head", "left", "right")),
+                policy_action_quat16=action_record["policy"],
+                commanded_target_quat16=action_record["commanded"],
+                xyz_bias_left_right=np.concatenate([self.xyz_bias["left"], self.xyz_bias["right"]]),
+                chunk_index=int(action_record["chunk_index"]),
+                action_generation=int(action_record["generation"]),
+                action_observation_timestamp=float(action_record["obs_timestamp"]),
+                intervention_revision=self.intervention.correction_revision,
+                safety_rejected_count=self.safety.rejected_count,
+            )
+            self.recorder.record_sample(sample)
+            self._agent_sample_index += 1
+        elif (not self.agent_collection) and self.recorder and self.recorder.is_recording:
             sample = RecordingSample(
                 timestamp=timestamp,
                 left_ee_pose=ee_pose_left, right_ee_pose=ee_pose_right,
@@ -293,9 +392,11 @@ class PolicyController:
 
     def _observation_publishing_loop(self):
         print("Observation publishing thread started")
-        rate_limiter = RateLimiter(2)
+        observation_rate = 30 if self.agent_collection else 2
+        rate_limiter = RateLimiter(observation_rate)
 
         while not self.stop_event.is_set():
+            started = time.monotonic()
             try:
                 observation = self.get_observation()
                 self.obs_socket.send_pyobj(observation, flags=zmq.NOBLOCK)
@@ -308,9 +409,158 @@ class PolicyController:
             self.camera.is_episode_active = self.episode_manager.is_active()
             self.camera.episode_start_time = self.episode_manager.get_start_time()
             self.camera.is_recording = self.recorder.is_recording if self.recorder else False
+            if (self.agent_collection and self.recorder.is_recording
+                    and time.monotonic() - started > 1.5 / observation_rate):
+                self.recorder.note_deadline_miss()
             rate_limiter.sleep()
 
         print("Observation publishing thread stopped")
+
+    def _agent_frame_provider(self, camera):
+        return self._latest_ui_frames.get(camera, (None, None))
+
+    def _submit_agent_command(self, command, payload):
+        allowed = {"select_target", "start", "pause", "nudge", "resume", "success", "failure"}
+        if command not in allowed:
+            raise ValueError(f"unknown command {command!r}")
+        request_id = self.intervention.submit(command, payload)
+        return self.intervention.wait(
+            request_id, timeout_s=12.0 if command in {"success", "failure"} else 4.0
+        )
+
+    def _clear_actions_after(self, minimum_obs_timestamp):
+        self.control_socket.send_pyobj({
+            "command": "clear_queue",
+            "minimum_obs_timestamp": float(minimum_obs_timestamp),
+        })
+        response = self.control_socket.recv_pyobj()
+        if response.get("status") != "ok":
+            raise RuntimeError(response.get("message", "failed to clear action queue"))
+
+    @staticmethod
+    def _action_quat16(action):
+        output = np.full(16, np.nan, dtype=float)
+        if action.get("left_ee_pose") is not None:
+            output[:7] = np.asarray(action["left_ee_pose"], dtype=float)
+        if action.get("right_ee_pose") is not None:
+            output[7:14] = np.asarray(action["right_ee_pose"], dtype=float)
+        if action.get("left_gripper") is not None:
+            output[14] = float(action["left_gripper"])
+        if action.get("right_gripper") is not None:
+            output[15] = float(action["right_gripper"])
+        return output
+
+    def _process_agent_command(self):
+        if not self.agent_collection:
+            return
+        with self.intervention.lock:
+            command = self.intervention.requested
+            payload = dict(self.intervention.request_payload)
+            request_id = self.intervention.request_id
+        if command is None:
+            return
+        try:
+            mode = self.intervention.mode
+            metrics = {}
+            if command == "select_target":
+                if mode != "idle":
+                    raise RuntimeError("target can only be selected while idle")
+                u, v = float(payload["u"]), float(payload["v"])
+                if not (0 <= u <= 1 and 0 <= v <= 1):
+                    raise ValueError("target u/v must be normalized to [0,1]")
+                frame, frame_id = self._agent_frame_provider("head")
+                selection = {
+                    "camera": "head", "u": u, "v": v,
+                    "frame_id": int(frame_id) if frame_id is not None else None,
+                    "frame_sha256": hashlib.sha256(frame.tobytes()).hexdigest() if frame is not None else None,
+                    "selected_at": time.time(),
+                }
+                with self.intervention.lock:
+                    self.intervention.target_selection = selection
+                metrics["target_selected"] = True
+            elif command == "start":
+                if mode != "idle" or self.episode_manager.is_active():
+                    raise RuntimeError("episode is not idle")
+                if self.intervention.target_selection is None:
+                    raise RuntimeError("tap the target in the head image first")
+                task = payload.get("task", self.agent_task)
+                if task != self.agent_task:
+                    raise RuntimeError(f"controller is configured for {self.agent_task}, not {task}")
+                self.set_bias("right", [0.0, 0.0, -0.03])
+                self.intervention.set_bias("right", self.xyz_bias["right"])
+                self.recorder.configure_episode({
+                    "task": task,
+                    "target_selection": dict(self.intervention.target_selection),
+                    "initial_bias_m": {arm: bias.tolist() for arm, bias in self.xyz_bias.items()},
+                    "policy_mode": "absolute", "control_frequency_hz": 30,
+                })
+                self._agent_sample_index = 0
+                self.intervention.correction_revision = 0
+                with self._action_record_lock:
+                    self._last_action_record = {
+                        "policy": np.full(16, np.nan),
+                        "commanded": np.full(16, np.nan),
+                        "chunk_index": -1, "generation": -1,
+                        "obs_timestamp": np.nan,
+                    }
+                self.episode_manager.start_episode()
+                mode = "running"
+            elif command == "pause":
+                if mode not in {"running", "awaiting_fresh_action"}:
+                    raise RuntimeError("pause requires a running episode")
+                with self.intervention.lock:
+                    self.intervention.mode = "paused"
+                pose = self.cone_e.get_right_ee_pose()
+                gripper = self.cone_e.get_right_gripper_exact()
+                self.cone_e.set_right_ee_target(ee_target=pose, gripper_target=gripper, preview_time=0.05)
+                self.episode_manager.clear_action_queue()
+                self.recorder.log_event("paused", bias=self.xyz_bias["right"].tolist())
+                mode = "paused"
+            elif command == "nudge":
+                if mode != "paused":
+                    raise RuntimeError("nudge is accepted only while paused")
+                axis = payload.get("axis")
+                if axis not in {"x", "y", "z"}:
+                    raise ValueError("axis must be x, y, or z")
+                step_mm = int(payload.get("step_mm", 2))
+                direction = int(payload.get("direction", 0))
+                if step_mm not in {1, 2, 5} or direction not in {-1, 1}:
+                    raise ValueError("step must be 1/2/5 mm and direction ±1")
+                bias = self.xyz_bias["right"].copy()
+                bias[{"x": 0, "y": 1, "z": 2}[axis]] += direction * step_mm / 1000.0
+                self.intervention.set_bias("right", bias)
+                self.set_bias("right", bias)
+                self.intervention.correction_revision += 1
+                self.recorder.log_event(
+                    "bias_nudge", axis=axis, direction=direction, step_mm=step_mm,
+                    bias_m=bias.tolist(), correction_revision=self.intervention.correction_revision,
+                )
+                metrics["last_nudge"] = {"axis": axis, "direction": direction, "step_mm": step_mm}
+            elif command == "resume":
+                if mode != "paused":
+                    raise RuntimeError("resume requires paused mode")
+                self._resume_after_obs_timestamp = time.time()
+                self._clear_actions_after(self._resume_after_obs_timestamp)
+                self.starting_pose_left = self.starting_pose_right = None
+                self.safety.reset()
+                self.recorder.log_event("resumed", fresh_after=self._resume_after_obs_timestamp)
+                mode = "awaiting_fresh_action"
+            elif command in {"success", "failure"}:
+                if not self.episode_manager.is_active():
+                    raise RuntimeError("no active episode")
+                if command == "failure" and payload.get("reason") not in FAILURE_REASONS:
+                    raise ValueError("select a supported failure reason")
+                self.episode_manager.end_episode(reason=command)
+                destination = self.recorder.finalize(command, reason=payload.get("reason"))
+                self.episode_manager.clear_action_queue()
+                mode = "idle"
+                metrics["last_episode"] = str(destination)
+                metrics["success_count"] = self.recorder.success_count(self.agent_task)
+                with self.intervention.lock:
+                    self.intervention.target_selection = None
+            self.intervention.complete(request_id, mode=mode, **metrics)
+        except Exception as error:
+            self.intervention.complete(request_id, error=str(error))
 
     def request_action(self):
         try:
@@ -364,6 +614,25 @@ class PolicyController:
             self._buffer_gen = None
             return
 
+        if self.agent_collection:
+            if action.get("left_delta_pose") is not None or action.get("right_delta_pose") is not None:
+                raise RuntimeError("agent collection refuses delta ACT; use absolute actions")
+            obs_timestamp = action.get("obs_timestamp")
+            if self._resume_after_obs_timestamp is not None:
+                if obs_timestamp is None or float(obs_timestamp) < self._resume_after_obs_timestamp:
+                    return
+                self._resume_after_obs_timestamp = None
+                with self.intervention.lock:
+                    self.intervention.mode = "running"
+                    self.intervention.revision += 1
+            with self._action_record_lock:
+                self._last_action_record.update({
+                    "policy": self._action_quat16(action),
+                    "chunk_index": int(action.get("chunk_index", -1)),
+                    "generation": int(action.get("total_buffer_updates", -1)),
+                    "obs_timestamp": float(obs_timestamp) if obs_timestamp is not None else np.nan,
+                })
+
         # A re-plan overwrites the buffer, so the next target is computed from
         # the arm's *current* pose while the previous one was however far ahead
         # the tracking lag had put it. That legitimate discontinuity is not a
@@ -376,7 +645,11 @@ class PolicyController:
             self.safety.reset()
             self._buffer_gen = gen
 
-        if self.starting_pose_left is None or self.starting_pose_right is None:
+        if self.agent_collection and self.starting_pose_right is None:
+            self.starting_pose_right = self._biased_pose(
+                self.cone_e.get_right_ee_pose(), 'right')
+            self.safety.reset()
+        elif (not self.agent_collection) and (self.starting_pose_left is None or self.starting_pose_right is None):
             # Latch the reference pose. In delta mode this is the ONLY place the
             # bias enters -- applying it per step would integrate (see
             # _apply_arm_action). In absolute mode the latched pose is just a
@@ -388,12 +661,12 @@ class PolicyController:
                 self.cone_e.get_right_ee_pose(), 'right')
             self.safety.reset()
 
-        if 'left_delta_pose' in action and action['left_delta_pose'] is not None:
+        if (not self.agent_collection) and 'left_delta_pose' in action and action['left_delta_pose'] is not None:
             self.starting_pose_left = self._apply_arm_action(
                 'left', action['left_delta_pose'], action.get('left_gripper', 0.5),
                 self.starting_pose_left, self.cone_e.set_left_ee_target
             )
-        elif 'left_ee_pose' in action and action['left_ee_pose'] is not None:
+        elif (not self.agent_collection) and 'left_ee_pose' in action and action['left_ee_pose'] is not None:
             self._apply_arm_action_absolute(
                 'left', action['left_ee_pose'], action.get('left_gripper', 0.5),
                 self.starting_pose_left, self.cone_e.set_left_ee_target
@@ -426,6 +699,8 @@ class PolicyController:
         b = np.asarray(bias, dtype=float).reshape(3)
         if not np.all(np.isfinite(b)):
             raise ValueError(f"bias must contain three finite values, got {bias!r}")
+        if np.any(np.abs(b) > 0.06 + 1e-12):
+            raise ValueError("bias is limited to ±0.06 m")
         self.xyz_bias[arm] = b
         # Changing the bias jumps the next target by the delta -- a legitimate
         # discontinuity, not a runaway. Drop the step reference so the safety
@@ -467,12 +742,22 @@ class PolicyController:
         if p_safe is None:
             return
 
+        target = mink.SE3(np.concatenate([R_target.wxyz, p_safe]))
         set_target_fn(
-            ee_target=mink.SE3(np.concatenate([R_target.wxyz, p_safe])),
+            ee_target=target,
             gripper_target=gripper, preview_time=0.5,
         )
+        if self.agent_collection:
+            commanded = np.full(16, np.nan, dtype=float)
+            section = slice(0, 7) if arm == "left" else slice(7, 14)
+            commanded[section] = np.concatenate([target.rotation().wxyz, target.translation()])
+            commanded[14 if arm == "left" else 15] = float(gripper)
+            with self._action_record_lock:
+                self._last_action_record["commanded"] = commanded
 
     def control_loop(self, control_rate=30):
+        if self.agent_collection and control_rate != 30:
+            raise ValueError("agent collection must run at exactly 30 Hz")
         rate_limiter = RateLimiter(control_rate)
         self.policy_active = True
         self._print_startup_info(control_rate)
@@ -487,9 +772,14 @@ class PolicyController:
 
         while not self.stop_event.is_set():
             loop_start = time.time()
+            self._process_agent_command()
             self.episode_manager.check_autonomous_conditions(self.manipulability_calc, iteration)
 
             if not self.episode_manager.is_active():
+                rate_limiter.sleep()
+                continue
+
+            if self.agent_collection and self.intervention.mode == "paused":
                 rate_limiter.sleep()
                 continue
 
@@ -513,7 +803,7 @@ class PolicyController:
 
     def _print_startup_info(self, control_rate):
         print(f"\nStarting policy control loop at {control_rate} Hz")
-        print(f"Observations publishing at 2 Hz in background")
+        print(f"Observations publishing at {30 if self.agent_collection else 2} Hz in background")
         print(f"Task: '{self.task}'")
         if self.episode_manager.autonomous_mode:
             print("AUTONOMOUS MODE ENABLED")
@@ -564,7 +854,11 @@ class PolicyController:
         print("Stopping policy controller...")
         if self.episode_manager.is_active():
             self.episode_manager.end_episode(reason="shutdown")
+            if self.agent_collection and self.recorder.episode_dir is not None:
+                self.recorder.finalize("failure", reason="abort")
         self.stop_event.set()
+        if self.agent_ui:
+            self.agent_ui.stop()
         self.obs_thread.join(timeout=2.0)
         # The bias thread owns a socket on self.zmq_context. Let it observe the
         # stop event and close that socket before terminating the shared
@@ -577,9 +871,12 @@ class PolicyController:
             self.right_wrist_camera.stop()
         if self.recorder:
             self.recorder.stop()
-        self.keyboard.stop()
+        if self.keyboard:
+            self.keyboard.stop()
         self.obs_socket.close()
         self.action_socket.close()
         self.control_socket.close()
         self.zmq_context.term()
+        if self.controller_claim:
+            self.controller_claim.release()
         print("Policy controller stopped")

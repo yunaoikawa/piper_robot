@@ -40,7 +40,29 @@ def main():
                              'on the bias port instead of restarting.')
     parser.add_argument('--bias-port', type=int, default=5560,
                         help='Port serving set_bias/get_bias (default: 5560)')
+    parser.add_argument('--agent-collection', action='store_true',
+                        help='Use the isolated 30 Hz ACT correction collector')
+    parser.add_argument('--agent-task', choices=('lid_open', 'lid_close'))
+    parser.add_argument('--agent-root', default='data/vla_agent/lid_bias')
+    parser.add_argument('--agent-ui-host', default='0.0.0.0')
+    parser.add_argument('--agent-ui-port', type=int, default=8780)
+    parser.add_argument('--agent-ui-token', default='')
+    parser.add_argument('--controller-lock',
+                        default='/tmp/piper_robot_right_arm_controller.lock')
     args = parser.parse_args()
+
+    if args.agent_collection:
+        if not args.agent_task:
+            parser.error('--agent-collection requires --agent-task')
+        if args.autonomous:
+            parser.error('--agent-collection is phone-confirmed, not --autonomous')
+        args.rate = 30
+        args.record = True
+        args.save_dir = args.agent_root
+        args.task = {
+            'lid_open': 'open the petri dish lid',
+            'lid_close': 'close the petri dish lid',
+        }[args.agent_task]
 
     # Create controller
     controller = PolicyController(
@@ -55,9 +77,15 @@ def main():
         task=args.task,
         safety_config=args.safety_config,
         bias_port=args.bias_port,
+        agent_collection=args.agent_collection,
+        agent_task=args.agent_task,
+        agent_ui_host=args.agent_ui_host,
+        agent_ui_port=args.agent_ui_port,
+        agent_ui_token=args.agent_ui_token,
+        controller_lock=args.controller_lock,
     )
 
-    if args.bias is not None:
+    if args.bias is not None and not args.agent_collection:
         controller.set_bias('right', args.bias)
     atexit.register(controller.stop)
 

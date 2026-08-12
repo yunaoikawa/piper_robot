@@ -36,6 +36,20 @@ import numpy as np
 import pandas as pd
 
 
+def intervention_slice_mask(revisions: np.ndarray, mode: str) -> np.ndarray:
+    """Select a complete episode or the contiguous suffix after first correction."""
+    revisions = np.asarray(revisions, dtype=int).reshape(-1)
+    if mode == "all":
+        return np.ones(len(revisions), dtype=bool)
+    if mode != "post-intervention":
+        raise ValueError("intervention slice must be all or post-intervention")
+    indices = np.flatnonzero(revisions > 0)
+    mask = np.zeros(len(revisions), dtype=bool)
+    if len(indices):
+        mask[int(indices[0]):] = True
+    return mask
+
+
 # ---------------------------------------------------------------------------
 # Rotation utilities
 # ---------------------------------------------------------------------------
@@ -66,7 +80,7 @@ def build_state_r6(pos, quat, gripper) -> np.ndarray:
 # Episode loading
 # ---------------------------------------------------------------------------
 
-def load_episode(hdf5_path: str) -> dict:
+def load_episode(hdf5_path: str, intervention_slice: str = "all") -> dict:
     with h5py.File(hdf5_path, "r") as f:
         left_pos   = f["left_ee_pos"][()]
         left_quat  = f["left_ee_quat"][()]
@@ -75,6 +89,18 @@ def load_episode(hdf5_path: str) -> dict:
         right_quat = f["right_ee_quat"][()]
         right_grip = f["right_gripper"][()]
         timestamps = f["timestamps"][()]
+        revisions = f["intervention_revision"][()] if "intervention_revision" in f else np.zeros(len(timestamps), dtype=int)
+
+    mask = intervention_slice_mask(revisions, intervention_slice)
+    indices = np.flatnonzero(mask)
+    if len(indices) < 2:
+        raise ValueError(f"episode has fewer than two {intervention_slice} samples")
+    frame_start, frame_stop = int(indices[0]), int(indices[-1]) + 1
+    if not np.all(mask[frame_start:frame_stop]):
+        raise ValueError("intervention slice must be contiguous")
+    left_pos, left_quat, left_grip = left_pos[mask], left_quat[mask], left_grip[mask]
+    right_pos, right_quat, right_grip = right_pos[mask], right_quat[mask], right_grip[mask]
+    timestamps = timestamps[mask]
 
     left_state  = build_state_r6(left_pos,  left_quat,  left_grip)
     right_state = build_state_r6(right_pos, right_quat, right_grip)
@@ -82,7 +108,8 @@ def load_episode(hdf5_path: str) -> dict:
     action = np.concatenate([state[1:], state[-1:]], axis=0)
 
     actual_fps = (len(timestamps) - 1) / max(timestamps[-1] - timestamps[0], 1e-6)
-    return {"state": state, "action": action, "timestamps": timestamps, "fps": float(actual_fps)}
+    return {"state": state, "action": action, "timestamps": timestamps, "fps": float(actual_fps),
+            "video_frame_start": frame_start, "video_frame_stop": frame_stop}
 
 
 # ---------------------------------------------------------------------------
@@ -96,25 +123,33 @@ MP4_SUFFIX_TO_CAMERA = {
 }
 
 
-def find_episode_pairs(data_dir: str, camera_keys: list) -> list:
-    h5_files = sorted(glob.glob(os.path.join(data_dir, "*.hdf5")))
+def find_episode_pairs(data_dir: str, camera_keys: list, require_success_manifest=False) -> list:
+    h5_files = sorted(glob.glob(os.path.join(data_dir, "**", "*.hdf5"), recursive=True))
     if not h5_files:
-        h5_files = sorted(glob.glob(os.path.join(data_dir, "*.h5")))
+        h5_files = sorted(glob.glob(os.path.join(data_dir, "**", "*.h5"), recursive=True))
 
     pairs = []
     for h5 in h5_files:
+        episode_dir = Path(h5).parent
+        manifest_path = episode_dir / "manifest.json"
+        if require_success_manifest:
+            if not manifest_path.exists():
+                continue
+            manifest = json.loads(manifest_path.read_text())
+            if manifest.get("outcome") != "success" or not manifest.get("training_eligible"):
+                continue
         stem = Path(h5).stem
 
         mp4s = {}
         for suffix, cam_key in MP4_SUFFIX_TO_CAMERA.items():
             if cam_key not in camera_keys:
                 continue
-            mp4_path = Path(data_dir) / f"{stem}{suffix}.mp4"
+            mp4_path = episode_dir / f"{stem}{suffix}.mp4"
             if mp4_path.exists():
                 mp4s[cam_key] = str(mp4_path)
             else:
                 prefix = "_".join(stem.split("_")[:2])
-                candidates = sorted(Path(data_dir).glob(f"{prefix}*{suffix}.mp4"))
+                candidates = sorted(episode_dir.glob(f"{prefix}*{suffix}.mp4"))
                 mp4s[cam_key] = str(candidates[0]) if candidates else None
 
         if not any(mp4s.values()):
@@ -142,7 +177,8 @@ def state_names() -> list:
 # Video re-encoding
 # ---------------------------------------------------------------------------
 
-def reencode_video(src_path: str, dest_path: str, target_fps: int = None):
+def reencode_video(src_path: str, dest_path: str, target_fps: int = None,
+                   frame_start: int = 0, frame_stop: int = None):
     import av as _av
     import fractions
 
@@ -151,7 +187,11 @@ def reencode_video(src_path: str, dest_path: str, target_fps: int = None):
         vs = inc.streams.video[0]
         w, h = vs.width, vs.height
         fps_num = target_fps if target_fps else int(round(float(vs.average_rate)))
-        for frame in inc.decode(video=0):
+        for index, frame in enumerate(inc.decode(video=0)):
+            if index < frame_start:
+                continue
+            if frame_stop is not None and index >= frame_stop:
+                break
             raw_frames.append(frame.to_ndarray(format="rgb24"))
 
     with _av.open(str(dest_path), mode="w", format="mp4") as outc:
@@ -185,6 +225,7 @@ def _write_single_dataset(
     fps: int,
     camera_keys: list,
     label: str = "train",
+    intervention_slice: str = "all",
 ):
     """Write a single LeRobot v3.0 dataset from a list of episodes."""
     if not episodes:
@@ -215,8 +256,8 @@ def _write_single_dataset(
         print(f"  [{label}] Episode {ep_idx:04d} (task {task_idx}): {Path(h5_path).name}")
 
         try:
-            ep = load_episode(h5_path)
-        except (OSError, KeyError) as e:
+            ep = load_episode(h5_path, intervention_slice=intervention_slice)
+        except (OSError, KeyError, ValueError) as e:
             print(f"    SKIPPING corrupt HDF5 ({type(e).__name__}): {e}")
             skipped.append(h5_path)
             continue
@@ -251,7 +292,10 @@ def _write_single_dataset(
                 print(f"    {ck}: already exists, skipping")
                 continue
             if src_mp4 and Path(src_mp4).exists():
-                n_frames = reencode_video(src_mp4, str(dest), target_fps=ep_fps)
+                n_frames = reencode_video(
+                    src_mp4, str(dest), target_fps=ep_fps,
+                    frame_start=ep["video_frame_start"], frame_stop=ep["video_frame_stop"],
+                )
                 print(f"    {ck}: re-encoded {n_frames} frames")
             else:
                 print(f"    WARNING: No MP4 for {ck}")
@@ -427,6 +471,8 @@ def write_lerobot_dataset(
     val_output_dir: str = None,
     val_repo_id: str = None,
     seed: int = 42,
+    require_success_manifest: bool = False,
+    intervention_slice: str = "all",
 ):
     if camera_keys is None:
         camera_keys = ["cam_high", "cam_left_wrist", "cam_right_wrist"]
@@ -437,7 +483,7 @@ def write_lerobot_dataset(
     # Collect all episodes
     all_episodes = []
     for task_idx, (data_dir, task_name) in enumerate(zip(data_dirs, task_names)):
-        pairs = find_episode_pairs(data_dir, camera_keys)
+        pairs = find_episode_pairs(data_dir, camera_keys, require_success_manifest)
         if not pairs:
             print(f"WARNING: No episodes found in {data_dir} for task '{task_name}'")
             continue
@@ -485,14 +531,14 @@ def write_lerobot_dataset(
             print(f"  [{task_idx}] '{task_name}': {n_train} train, {n_val_t} val")
 
         print(f"\n--- Writing train dataset ---")
-        _write_single_dataset(train_episodes, task_names, output_dir, repo_id, fps, camera_keys, "train")
+        _write_single_dataset(train_episodes, task_names, output_dir, repo_id, fps, camera_keys, "train", intervention_slice)
 
         print(f"\n--- Writing val dataset ---")
-        _write_single_dataset(val_episodes, task_names, val_output_dir, val_repo_id, fps, camera_keys, "val")
+        _write_single_dataset(val_episodes, task_names, val_output_dir, val_repo_id, fps, camera_keys, "val", intervention_slice)
 
     else:
         print(f"\n--- Writing dataset (no val split) ---")
-        _write_single_dataset(all_episodes, task_names, output_dir, repo_id, fps, camera_keys, "all")
+        _write_single_dataset(all_episodes, task_names, output_dir, repo_id, fps, camera_keys, "all", intervention_slice)
 
     # ── Summary ──
     print(f"\n{'='*60}")
@@ -520,6 +566,9 @@ def main():
                         help="Repo ID for val dataset (default: repo_id + '_val')")
     parser.add_argument("--seed",           type=int, default=42,
                         help="Random seed for train/val split")
+    parser.add_argument("--require-success-manifest", action="store_true",
+                        help="Only import human-confirmed agent successes")
+    parser.add_argument("--intervention-slice", choices=("all", "post-intervention"), default="all")
     args = parser.parse_args()
 
     assert len(args.data_dirs) == len(args.task_names)
@@ -535,6 +584,8 @@ def main():
         val_output_dir=args.val_output_dir,
         val_repo_id=args.val_repo_id,
         seed=args.seed,
+        require_success_manifest=args.require_success_manifest,
+        intervention_slice=args.intervention_slice,
     )
 
 

@@ -119,6 +119,10 @@ class ActionBuffer:
         with self.lock:
             return len(self.actions) == 0
 
+    def should_replan(self, threshold: int) -> bool:
+        with self.lock:
+            return len(self.actions) <= threshold
+
     def clear(self):
         with self.lock:
             self.actions = []
@@ -134,10 +138,19 @@ class InferenceServer:
         action_port: int = 5556,
         device: str = "cuda",
         chunk_size: int = 50,
+        replan_at: int = 0,
+        active_arm: str = "both",
     ):
         self.model = model
         self.device = device
         self.chunk_size = chunk_size
+        if not 0 <= replan_at < chunk_size:
+            raise ValueError("replan_at must be in [0, chunk_size)")
+        if active_arm not in {"left", "right", "both"}:
+            raise ValueError("active_arm must be left, right, or both")
+        self.replan_at = replan_at
+        self.active_arm = active_arm
+        self.minimum_obs_timestamp = float("-inf")
         self.action_buffer = ActionBuffer(chunk_size)
 
         self.context = zmq.Context()
@@ -159,6 +172,7 @@ class InferenceServer:
         print(f"Control server listening on port {self.control_port}", flush=True)
         print(f"Using device: {device}", flush=True)
         print(f"Action chunk size: {chunk_size}", flush=True)
+        print(f"Replan threshold: {replan_at}; active arm: {active_arm}", flush=True)
 
         print("Warming up model...", flush=True)
         self.model.warmup()
@@ -182,17 +196,26 @@ class InferenceServer:
     # ── Threads ───────────────────────────────────────────────────────────────
     def _inference_loop(self):
         print("Inference thread started", flush=True)
+        latest_observation = None
+        last_inferred_timestamp = None
 
         while not self.stop_event.is_set():
             try:
-                observation = None
                 while self.obs_socket.poll(timeout=0):
-                    observation = self.obs_socket.recv_pyobj(flags=zmq.NOBLOCK)
-                    if observation is not None and self.action_buffer.is_empty:
+                    latest_observation = self.obs_socket.recv_pyobj(flags=zmq.NOBLOCK)
+                    if latest_observation is not None:
                         with self.stats_lock:
                             self.stats["observations_received"] += 1
 
-                if observation is not None and self.action_buffer.is_empty:
+                observation_timestamp = (
+                    latest_observation.get("timestamp") if latest_observation else None
+                )
+                if (latest_observation is not None
+                        and observation_timestamp != last_inferred_timestamp
+                        and observation_timestamp is not None
+                        and float(observation_timestamp) >= self.minimum_obs_timestamp
+                        and self.action_buffer.should_replan(self.replan_at)):
+                    observation = latest_observation
                     start = time.time()
 
                     with torch.no_grad():
@@ -213,16 +236,17 @@ class InferenceServer:
                     for t in range(quat_chunk.shape[0]):
                         a = quat_chunk[t]
                         action_list.append({
-                            "left_ee_pose": a[0:7],
-                            "right_ee_pose": a[7:14],
-                            "left_gripper": float(a[14]),
-                            "right_gripper": float(a[15]),
+                            "left_ee_pose": a[0:7] if self.active_arm in {"left", "both"} else None,
+                            "right_ee_pose": a[7:14] if self.active_arm in {"right", "both"} else None,
+                            "left_gripper": float(a[14]) if self.active_arm in {"left", "both"} else None,
+                            "right_gripper": float(a[15]) if self.active_arm in {"right", "both"} else None,
                             "timestamp": time.time(),
                             "chunk_index": t,
                             "obs_timestamp": observation.get("timestamp", None),
                         })
 
                     self.action_buffer.overwrite(action_list)
+                    last_inferred_timestamp = observation_timestamp
 
                     with self.stats_lock:
                         self.stats["inferences_completed"] += 1
@@ -306,6 +330,9 @@ class InferenceServer:
 
                 if command.get("command") == "clear_queue":
                     self.action_buffer.clear()
+                    minimum = command.get("minimum_obs_timestamp")
+                    if minimum is not None:
+                        self.minimum_obs_timestamp = float(minimum)
                     try:
                         self.model.reset_action_queue()
                         print("Policy action queue reset", flush=True)
@@ -385,6 +412,9 @@ def main():
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"])
     parser.add_argument("--pred_horizon", default=50, type=int, help="Action chunk size to serve")
+    parser.add_argument("--replan-at", default=0, type=int,
+                        help="Refresh the chunk when this many actions remain")
+    parser.add_argument("--active-arm", choices=("left", "right", "both"), default="both")
     parser.add_argument("--hz", default=30, type=float, help="Control frequency (Hz)")
     parser.add_argument(
         "--primary-camera", type=str, default="cam_high",
@@ -413,6 +443,8 @@ def main():
     print(f"  Checkpoint:         {args.checkpoint}", flush=True)
     print(f"  Prediction horizon: {chunk_size}", flush=True)
     print(f"  Control frequency:  {args.hz} Hz", flush=True)
+    print(f"  Replan at:          {args.replan_at}", flush=True)
+    print(f"  Active arm:         {args.active_arm}", flush=True)
 
     server = InferenceServer(
         model,
@@ -420,6 +452,8 @@ def main():
         action_port=args.action_port,
         device=args.device,
         chunk_size=chunk_size,
+        replan_at=args.replan_at,
+        active_arm=args.active_arm,
     )
     server.run()
 
