@@ -35,12 +35,14 @@ class ConeE:
                 can_port="can_left",
                 mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix(),
                 use_gripper=True,
+                hold_current_during_init=not self.reset_arms_on_init,
             )
             self.right_arm = ArmNode(
                 can_port="can_right",
                 mjcf_path=(_HERE / "cone-e-description/robot-welded-base-and-lift.mjcf").as_posix(),
                 is_left_arm=False,
                 use_gripper=True,
+                hold_current_during_init=not self.reset_arms_on_init,
             )
 
     def init(self):

@@ -29,6 +29,7 @@ def _agent_pressure_guard(rpc, torque_config_path, audit_path, provenance):
         margin=1.20,
     )
     recovery = config["recovery_teleop"]
+    home = config.get("agent_auto_home", {})
     return RecoveryTorqueGuard(
         rpc,
         thresholds,
@@ -36,7 +37,12 @@ def _agent_pressure_guard(rpc, torque_config_path, audit_path, provenance):
         preview_time_s=0.05,
         residual_fraction=float(recovery["residual_fraction"]),
         residual_floor_nm=float(recovery["residual_floor_nm"]),
-        residual_ceiling_nm=float(recovery["residual_ceiling_nm"]),
+        # Planned, slow gravity-compensated homing changes joint load even
+        # without contact.  Use its separately calibrated residual envelope;
+        # the absolute hard limit and sustained-residual stop remain enforced.
+        residual_ceiling_nm=float(home.get(
+            "residual_ceiling_nm", recovery["residual_ceiling_nm"]
+        )),
         residual_duration_s=float(recovery["residual_duration_s"]),
         baseline_slew_nm_per_s=float(recovery["baseline_slew_nm_per_s"]),
         hard_limit_multiplier=float(recovery["hard_limit_multiplier"]),
@@ -106,7 +112,15 @@ def run_agent_auto_home(
         )
         for arm in ("left", "right")
     }
-    paths, duration = agent_home_trajectory(starts, control_hz=control_hz)
+    config = json.loads(Path(torque_config_path).read_text())
+    maximum_speed_rad_s = float(
+        config.get("agent_auto_home", {}).get("maximum_speed_rad_s", 0.18)
+    )
+    paths, duration = agent_home_trajectory(
+        starts,
+        control_hz=control_hz,
+        maximum_speed_rad_s=maximum_speed_rad_s,
+    )
     guard = _agent_pressure_guard(
         rpc,
         torque_config_path,
@@ -161,6 +175,7 @@ def run_agent_auto_home(
         "completed": completed,
         "duration_s": duration,
         "control_hz": control_hz,
+        "maximum_speed_rad_s": maximum_speed_rad_s,
         "maximum_final_error_rad": errors,
         "grippers_commanded": False,
         "pressure_stop_enforced": True,

@@ -3,6 +3,10 @@
   "method": "non-contact replay plus active-view envelope, 20% margin",
   "motion_torque_policy": "observe_only",
   "consecutive_samples": 5,
+  "agent_auto_home": {
+    "maximum_speed_rad_s": 0.1,
+    "residual_ceiling_nm": 0.5
+  },
   "recovery_teleop": {
     "residual_fraction": 0.3,
     "residual_floor_nm": 0.1,

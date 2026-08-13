@@ -167,6 +167,7 @@ class ArmNode:
         solver_dt: float = 0.01,
         is_left_arm: bool = True,
         use_gripper: bool = True,
+        hold_current_during_init: bool = False,
     ):
         _HERE = Path(__file__).parent
         self.can_port = can_port
@@ -194,6 +195,19 @@ class ArmNode:
         self.piper = PiperJointController(
             self.robot_config, self.controller_config, self.can_port
         )
+
+        if hold_current_during_init:
+            # PiperJointController comes up in damping mode.  Gripper setup can
+            # take more than a second (the right Dynamixel is rebooted), which
+            # previously let a vertically mounted arm sag before ConeE.init()
+            # enabled its position gains.  The controller constructor already
+            # latches the measured joints as its command, so enabling the same
+            # configured gains immediately holds that measured pose without a
+            # home/reset command.
+            self.piper.set_gain(Gain(
+                self.controller_config.default_kp,
+                self.controller_config.default_kd,
+            ))
 
         if use_gripper:
             if is_left_arm:
