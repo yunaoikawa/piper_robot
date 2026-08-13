@@ -45,7 +45,9 @@ def _agent_pressure_guard(rpc, torque_config_path, audit_path, provenance):
         residual_ceiling_nm=float(home.get(
             "residual_ceiling_nm", recovery["residual_ceiling_nm"]
         )),
-        residual_duration_s=float(recovery["residual_duration_s"]),
+        residual_duration_s=float(home.get(
+            "residual_duration_s", recovery["residual_duration_s"]
+        )),
         baseline_slew_nm_per_s=float(recovery["baseline_slew_nm_per_s"]),
         hard_limit_multiplier=float(recovery["hard_limit_multiplier"]),
         enforce=True,

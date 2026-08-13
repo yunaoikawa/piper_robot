@@ -6,7 +6,8 @@
   "agent_auto_home": {
     "maximum_speed_rad_s": 0.1,
     "residual_floor_nm": 0.2,
-    "residual_ceiling_nm": 0.5
+    "residual_ceiling_nm": 0.5,
+    "residual_duration_s": 2.0
   },
   "recovery_teleop": {
     "residual_fraction": 0.3,
