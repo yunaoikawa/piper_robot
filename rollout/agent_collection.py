@@ -804,7 +804,9 @@ class InterventionState:
         if arm not in self.bias or not np.all(np.isfinite(value)):
             raise ValueError("invalid arm bias")
         if np.any(np.abs(value) > self.maximum_bias_m + 1e-12):
-            raise ValueError("agent bias exceeds configured ±0.06 m limit")
+            raise ValueError(
+                f"agent bias exceeds configured ±{self.maximum_bias_m:.3f} m limit"
+            )
         self.bias[arm] = value.copy()
 
 

@@ -83,6 +83,8 @@ class PolicyController:
                 "maximum_absolute_bias_m", 0.06
             )
         )
+        if self.intervention is not None:
+            self.intervention.maximum_bias_m = self.maximum_bias_m
         self.agent_cycle_enabled = bool(agent_cycle)
         if self.agent_cycle_enabled and not self.agent_collection:
             raise ValueError("agent_cycle requires agent_collection")
