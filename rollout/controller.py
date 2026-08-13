@@ -26,6 +26,7 @@ from .agent_collection import (
     FAILURE_REASONS, GripperCloseLatch, InterventionState,
 )
 from .agent_collection_ui import AgentCollectionUI
+from .agent_cycle import AlternatingAgentCycle
 from .agent_home import run_agent_auto_home
 
 DATA_DIR = Path("./your_save_dir_here")
@@ -59,7 +60,8 @@ class PolicyController:
                  agent_collection=False, agent_task=None,
                  agent_ui_host="0.0.0.0", agent_ui_port=8780,
                  agent_ui_token="", controller_lock="/tmp/piper_robot_right_arm_controller.lock",
-                 agent_auto_home=True, agent_config="src/configs/lid_agent_collection.json"):
+                 agent_auto_home=True, agent_config="src/configs/lid_agent_collection.json",
+                 agent_cycle=False):
         self.stop_event = threading.Event()
         self.policy_active = False
         self.task = task
@@ -71,6 +73,33 @@ class PolicyController:
         if self.controller_claim:
             self.controller_claim.acquire()
         self.intervention = InterventionState() if self.agent_collection else None
+        self.agent_profile = (
+            json.loads(Path(agent_config).read_text())
+            if self.agent_collection else {}
+        )
+        self.agent_cycle_enabled = bool(agent_cycle)
+        if self.agent_cycle_enabled and not self.agent_collection:
+            raise ValueError("agent_cycle requires agent_collection")
+        self.agent_cycle = None
+        if self.agent_cycle_enabled:
+            cycle = self.agent_profile.get("cycle", {})
+            self.agent_cycle = AlternatingAgentCycle(
+                cycle.get("tasks", ("lid_close", "lid_open")),
+                initial_task=agent_task,
+                required_cameras=cycle.get("required_cameras", ("head", "right")),
+                camera_failure_grace_s=cycle.get("camera_failure_grace_s", 1.0),
+                inference_failure_grace_s=cycle.get(
+                    "inference_failure_grace_s", 10.0
+                ),
+                maximum_episode_s=cycle.get("maximum_episode_s", 60.0),
+            )
+        self._agent_task_bias = {
+            name: np.asarray(settings["initial_right_xyz_bias_m"], dtype=float)
+            for name, settings in self.agent_profile.get("tasks", {}).items()
+        }
+        self._agent_cycle_transition_active = False
+        self._agent_camera_last_id = {}
+        self._agent_camera_last_change_s = {}
         self._resume_after_obs_timestamp = None
         self._agent_sample_index = 0
         self._last_action_record = {
@@ -82,12 +111,22 @@ class PolicyController:
         self._resume_anchor_xyz = None
         self._resume_anchor_offset = np.zeros(3, dtype=float)
         self.agent_auto_home = bool(agent_auto_home)
-        # lid_open terminates while retaining the object.  A time-agnostic ACT
-        # policy can otherwise re-enter its approach phase and reopen after a
-        # successful grasp.  lid_close is deliberately excluded because its
-        # demonstrated terminal action is a release.
-        self._right_close_latch = GripperCloseLatch()
-        self._right_close_latch_enabled = self.agent_collection and agent_task == "lid_open"
+        # Time-agnostic ACT can otherwise re-enter an earlier open/close phase
+        # after a successful grasp.  Both pilot tasks transport before their
+        # demonstrated final release, so the same measured-displacement gate
+        # protects their grasp without suppressing that release.
+        release_gate = self.agent_profile.get("intervention", {}).get(
+            "gripper_transport_release", {}
+        )
+        self._right_close_latch = GripperCloseLatch(
+            minimum_transport_distance_m=float(
+                release_gate.get("minimum_transport_distance_m", 0.03)
+            ),
+            minimum_release_command_time_s=float(
+                release_gate.get("minimum_open_command_time_s", 0.15)
+            ),
+        )
+        self._right_close_latch_enabled = self.agent_collection
 
         # Per-arm EE offset in robot frame, applied in apply_action(). This
         # replaces the server-side --z-bias so the bias exists in exactly one
@@ -121,6 +160,12 @@ class PolicyController:
         self.last_left_gripper = 1.0
         self.last_right_gripper = 1.0
         self.latest_right_gripper_exact = 1.0
+        self.latest_right_ee_xyz = None
+        self._policy_image_cache = {
+            name: {"timestamp": None, "frame": None}
+            for name in ("head", "left", "right")
+        }
+        self._observation_state_rpc_available = None
         self.last_left_gripper_binary = 1.0
         self.last_right_gripper_binary = 1.0
         self.starting_pose_left = None
@@ -133,9 +178,8 @@ class PolicyController:
         self.test_qpos = None
         save_path = Path(save_dir) if save_dir else DATA_DIR
         if self.agent_collection:
-            profile = json.loads(Path(agent_config).read_text())
             cam_map, live_udids = configure_camera_map_by_udid(
-                profile["camera_udids"], preserve_unknown=False
+                self.agent_profile["camera_udids"], preserve_unknown=False
             )
             print(f"[agent] camera map by UDID: {cam_map}; live={live_udids}")
         else:
@@ -173,6 +217,8 @@ class PolicyController:
             control_socket=self.control_socket, autonomous_mode=autonomous_mode,
             episode_timeout=episode_timeout, manipulability_threshold=manipulability_threshold
         )
+        if self.agent_cycle_enabled:
+            self._activate_agent_inference(agent_task)
 
         self.keyboard = None
         if not self.agent_collection:
@@ -183,10 +229,15 @@ class PolicyController:
 
         self.agent_ui = None
         if self.agent_collection:
-            self.set_bias("right", [0.0, 0.0, -0.03])
+            self.set_bias(
+                "right", self._agent_task_bias.get(
+                    agent_task, np.array([0.0, 0.0, -0.03])
+                )
+            )
             self.intervention.set_bias("right", self.xyz_bias["right"])
             self.intervention.set_bias("left", self.xyz_bias["left"])
             self.intervention.latest_metrics["task"] = agent_task
+            self.intervention.latest_metrics["cycle_enabled"] = self.agent_cycle_enabled
             self.intervention.latest_metrics["auto_home"] = self.agent_start_home_report
             self.intervention.latest_metrics["pilot_success_target"] = 10
             self.intervention.latest_metrics["success_count"] = self.recorder.success_count(agent_task)
@@ -276,57 +327,155 @@ class PolicyController:
 
     def _setup_zmq(self, hpc_host, obs_port, action_port):
         self.zmq_context = zmq.Context()
+        self._agent_inference_sockets = {}
 
-        self.obs_socket = self.zmq_context.socket(zmq.PUB)
-        self.obs_socket.connect(f"tcp://{hpc_host}:{obs_port}")
-        print(f"Publishing observations to tcp://{hpc_host}:{obs_port}")
+        endpoints = None
+        if self.agent_cycle_enabled:
+            endpoints = self.agent_profile.get("inference_endpoints")
+            expected = set(self.agent_cycle.tasks)
+            if not isinstance(endpoints, dict) or set(endpoints) != expected:
+                raise ValueError(
+                    "agent cycle requires exactly one inference endpoint for "
+                    f"each task {sorted(expected)}"
+                )
+        if endpoints is None:
+            endpoints = {
+                self.agent_task or "default": {
+                    "obs_port": int(obs_port), "action_port": int(action_port)
+                }
+            }
 
-        self.action_socket = self.zmq_context.socket(zmq.REQ)
-        self.action_socket.setsockopt(zmq.RCVTIMEO, 2000)
-        self.action_socket.setsockopt(zmq.SNDTIMEO, 2000)
-        self.action_socket.setsockopt(zmq.LINGER, 0)
-        self.action_socket.connect(f"tcp://{hpc_host}:{action_port}")
-        print(f"Requesting actions from tcp://{hpc_host}:{action_port}")
+        for task_name, endpoint in endpoints.items():
+            task_obs_port = int(endpoint["obs_port"])
+            task_action_port = int(endpoint["action_port"])
+            task_control_port = int(endpoint.get(
+                "control_port", task_action_port + 1
+            ))
+            obs_socket = self.zmq_context.socket(zmq.PUB)
+            obs_socket.connect(f"tcp://{hpc_host}:{task_obs_port}")
 
-        self.control_port = action_port + 1
-        self.control_socket = self.zmq_context.socket(zmq.REQ)
-        self.control_socket.setsockopt(zmq.RCVTIMEO, 2000)
-        self.control_socket.setsockopt(zmq.SNDTIMEO, 2000)
-        self.control_socket.setsockopt(zmq.LINGER, 0)
-        self.control_socket.connect(f"tcp://{hpc_host}:{self.control_port}")
-        print(f"Sending control commands to tcp://{hpc_host}:{self.control_port}")
+            action_socket = self.zmq_context.socket(zmq.REQ)
+            action_socket.setsockopt(zmq.RCVTIMEO, 2000)
+            action_socket.setsockopt(zmq.SNDTIMEO, 2000)
+            action_socket.setsockopt(zmq.LINGER, 0)
+            action_socket.connect(f"tcp://{hpc_host}:{task_action_port}")
+
+            control_socket = self.zmq_context.socket(zmq.REQ)
+            control_socket.setsockopt(zmq.RCVTIMEO, 2000)
+            control_socket.setsockopt(zmq.SNDTIMEO, 2000)
+            control_socket.setsockopt(zmq.LINGER, 0)
+            control_socket.connect(f"tcp://{hpc_host}:{task_control_port}")
+            self._agent_inference_sockets[task_name] = {
+                "obs": obs_socket,
+                "action": action_socket,
+                "control": control_socket,
+                "ports": (task_obs_port, task_action_port, task_control_port),
+            }
+            print(
+                f"Inference endpoint {task_name}: {hpc_host}:"
+                f"{task_obs_port}/{task_action_port}/{task_control_port}"
+            )
+
+        initial = self.agent_task if self.agent_task in self._agent_inference_sockets else next(
+            iter(self._agent_inference_sockets)
+        )
+        sockets = self._agent_inference_sockets[initial]
+        self.obs_socket = sockets["obs"]
+        self.action_socket = sockets["action"]
+        self.control_socket = sockets["control"]
+        self.control_port = sockets["ports"][2]
         time.sleep(0.5)
+
+    def _activate_agent_inference(self, task):
+        if task not in self._agent_inference_sockets:
+            raise RuntimeError(f"no inference endpoint configured for {task}")
+        sockets = self._agent_inference_sockets[task]
+        self.obs_socket = sockets["obs"]
+        self.action_socket = sockets["action"]
+        self.control_socket = sockets["control"]
+        self.control_port = sockets["ports"][2]
+        self.episode_manager.control_socket = self.control_socket
+        self.agent_task = task
+        self.task = {
+            "lid_open": "open the petri dish lid",
+            "lid_close": "close the petri dish lid",
+        }[task]
+        if self.intervention is not None:
+            with self.intervention.lock:
+                self.intervention.latest_metrics.update({
+                    "task": task,
+                    "inference_ports": list(sockets["ports"]),
+                })
+                self.intervention.revision += 1
 
     def get_observation(self):
         timestamp = time.time()
 
         with self.obs_rpc_lock:
-            ee_pose_left = self.obs_cone_e.get_left_ee_pose()
-            ee_pose_right = self.obs_cone_e.get_right_ee_pose()
-            left_gripper = self.obs_cone_e.get_left_gripper_exact()
-            right_gripper = self.obs_cone_e.get_right_gripper_exact()
-            left_joint_positions = self.obs_cone_e.get_left_joint_positions()
-            right_joint_positions = self.obs_cone_e.get_right_joint_positions()
+            if self._observation_state_rpc_available is not False:
+                try:
+                    state = self.obs_cone_e.get_observation_state(
+                        active_arm="right" if self.agent_collection else None
+                    )
+                    self._observation_state_rpc_available = True
+                except Exception as error:
+                    # Rolling deployment: the collector can be restarted first
+                    # while the physical ConeE daemon still serves the older
+                    # API.  Fall back safely until its next planned restart.
+                    self._observation_state_rpc_available = False
+                    print(
+                        "[observation] state snapshot RPC unavailable; "
+                        f"using legacy calls until restart: {error}",
+                        flush=True,
+                    )
+            if self._observation_state_rpc_available is False:
+                state = {
+                    "left_ee_pose": self.obs_cone_e.get_left_ee_pose(),
+                    "right_ee_pose": self.obs_cone_e.get_right_ee_pose(),
+                    "left_gripper_exact": self.obs_cone_e.get_left_gripper_exact(),
+                    "right_gripper_exact": self.obs_cone_e.get_right_gripper_exact(),
+                    "left_joint_positions": self.obs_cone_e.get_left_joint_positions(),
+                    "right_joint_positions": self.obs_cone_e.get_right_joint_positions(),
+                }
+        ee_pose_left = state["left_ee_pose"]
+        ee_pose_right = state["right_ee_pose"]
+        left_joint_positions = state["left_joint_positions"]
+        right_joint_positions = state["right_joint_positions"]
+        # A single-arm agent does not need to block its 30 Hz loop on the
+        # inactive Dynamixel.  Keep the last exact inactive value instead.
+        left_gripper = state["left_gripper_exact"]
+        right_gripper = state["right_gripper_exact"]
+        if left_gripper is None:
+            left_gripper = self.last_left_gripper
+        if right_gripper is None:
+            right_gripper = self.last_right_gripper
         self.latest_right_gripper_exact = float(right_gripper)
+        self.latest_right_ee_xyz = np.asarray(
+            ee_pose_right.translation(), dtype=float
+        ).copy()
 
         left_gripper_binary, right_gripper_binary = self._process_gripper_states(
             left_gripper, right_gripper
         )
 
         rgb_frame, rgb_timestamp, depth_frame = self.camera.get_latest_frame()
-        rgb_frame = _rotate_and_resize(rgb_frame)
+        rgb_frame = self._policy_camera_frame("head", rgb_frame, rgb_timestamp)
 
         left_wrist_frame = None
         left_wrist_timestamp = np.nan
         if self.left_wrist_camera is not None:
             left_wrist_frame, left_wrist_timestamp, _ = self.left_wrist_camera.get_latest_frame()
-            left_wrist_frame = _rotate_and_resize(left_wrist_frame)
+            left_wrist_frame = self._policy_camera_frame(
+                "left", left_wrist_frame, left_wrist_timestamp
+            )
 
         right_wrist_frame = None
         right_wrist_timestamp = np.nan
         if self.right_wrist_camera is not None:
             right_wrist_frame, right_wrist_timestamp, _ = self.right_wrist_camera.get_latest_frame()
-            right_wrist_frame = _rotate_and_resize(right_wrist_frame)
+            right_wrist_frame = self._policy_camera_frame(
+                "right", right_wrist_frame, right_wrist_timestamp
+            )
 
         blank = np.zeros((TARGET_H, TARGET_W, 3), dtype=np.uint8)
 
@@ -376,7 +525,12 @@ class PolicyController:
             "right": (observation["images"]["cam_right_wrist"], frame_id(right_wrist_timestamp)),
         }
 
-        if self.agent_collection and self.recorder.is_recording and self.intervention.mode != "paused":
+        sample_monotonic = time.monotonic()
+        if (self.agent_collection and self.recorder.is_recording
+                and self.intervention.mode == "running"):
+            head_recording, left_recording, right_recording = (
+                self._copy_agent_recording_frames()
+            )
             with self._action_record_lock:
                 action_record = {
                     key: value.copy() if isinstance(value, np.ndarray) else value
@@ -384,15 +538,17 @@ class PolicyController:
                 }
             sample = AgentRecordingSample(
                 wall_timestamp=timestamp,
-                active_timestamp=self._agent_sample_index / 30.0,
+                active_timestamp=self.recorder.active_timestamp(
+                    now=sample_monotonic
+                ),
                 left_ee_pose=ee_pose_left, right_ee_pose=ee_pose_right,
                 left_gripper_exact=left_gripper, right_gripper_exact=right_gripper,
                 left_gripper=left_gripper_binary, right_gripper=right_gripper_binary,
                 left_joint_positions=np.asarray(left_joint_positions),
                 right_joint_positions=np.asarray(right_joint_positions),
-                head_rgb=self.camera.latest_rgb_frame.copy() if self.camera.latest_rgb_frame is not None else None,
-                left_rgb=self.left_wrist_camera.latest_rgb.copy() if (self.left_wrist_camera and self.left_wrist_camera.latest_rgb is not None) else None,
-                right_rgb=self.right_wrist_camera.latest_rgb.copy() if (self.right_wrist_camera and self.right_wrist_camera.latest_rgb is not None) else None,
+                head_rgb=head_recording,
+                left_rgb=left_recording,
+                right_rgb=right_recording,
                 camera_timestamps=(finite_timestamp(rgb_timestamp), finite_timestamp(left_wrist_timestamp), finite_timestamp(right_wrist_timestamp)),
                 camera_frame_ids=tuple(self._latest_ui_frames[name][1] for name in ("head", "left", "right")),
                 policy_action_quat16=action_record["policy"],
@@ -422,6 +578,47 @@ class PolicyController:
             self.recorder.record_sample(sample)
 
         return observation
+
+    def _policy_camera_frame(self, name, frame, camera_timestamp):
+        """Transform a camera image only when its source timestamp changes.
+
+        The head source is slower than the policy loop and its 1920x1440
+        rotate/resize costs about 23 ms.  Repeating the last transformed image
+        at 30 Hz is correct; the unchanged source timestamp remains attached
+        to the observation and recording metadata.
+        """
+        cache = self._policy_image_cache[name]
+        if frame is None:
+            return cache["frame"]
+        if cache["frame"] is None or camera_timestamp != cache["timestamp"]:
+            cache["timestamp"] = camera_timestamp
+            cache["frame"] = _rotate_and_resize(frame)
+        return cache["frame"]
+
+    def _copy_agent_recording_frames(self):
+        """Copy raw source frames under their camera locks.
+
+        Recording remains independent from the resized policy observation, so
+        repeated 30 Hz policy frames never pretend that a slower camera
+        produced a new image.  The original camera timestamp/frame id records
+        that repetition honestly.
+        """
+        with self.camera.rgb_frame_lock:
+            head = (
+                None if self.camera.latest_rgb_frame is None
+                else self.camera.latest_rgb_frame.copy()
+            )
+        with self.left_wrist_camera.lock:
+            left = (
+                None if self.left_wrist_camera.latest_rgb is None
+                else self.left_wrist_camera.latest_rgb.copy()
+            )
+        with self.right_wrist_camera.lock:
+            right = (
+                None if self.right_wrist_camera.latest_rgb is None
+                else self.right_wrist_camera.latest_rgb.copy()
+            )
+        return head, left, right
 
     def _process_gripper_states(self, left_gripper, right_gripper):
         delta_left = left_gripper - self.last_left_gripper
@@ -460,6 +657,7 @@ class PolicyController:
             self.camera.episode_start_time = self.episode_manager.get_start_time()
             self.camera.is_recording = self.recorder.is_recording if self.recorder else False
             if (self.agent_collection and self.recorder.is_recording
+                    and self.intervention.mode == "running"
                     and time.monotonic() - started > 1.5 / observation_rate):
                 self.recorder.note_deadline_miss()
             rate_limiter.sleep()
@@ -468,6 +666,205 @@ class PolicyController:
 
     def _agent_frame_provider(self, camera):
         return self._latest_ui_frames.get(camera, (None, None))
+
+    def _agent_camera_health(self, now=None):
+        """Return freshness/visibility gates for cycle-required cameras."""
+        now = time.monotonic() if now is None else float(now)
+        result = {}
+        required = (
+            self.agent_cycle.required_cameras
+            if self.agent_cycle is not None else ("head", "right")
+        )
+        stale_after_s = float(
+            self.agent_profile.get("cycle", {}).get("camera_stale_after_s", 1.0)
+        )
+        for camera in required:
+            frame, frame_id = self._agent_frame_provider(camera)
+            visible = (
+                frame is not None and frame_id is not None
+                and float(np.std(frame)) >= 2.0
+            )
+            if visible and self._agent_camera_last_id.get(camera) != frame_id:
+                self._agent_camera_last_id[camera] = frame_id
+                self._agent_camera_last_change_s[camera] = now
+            changed_at = self._agent_camera_last_change_s.get(camera)
+            result[camera] = bool(
+                visible and changed_at is not None
+                and now - changed_at <= stale_after_s
+            )
+        return result
+
+    def _refresh_agent_target_selection(self):
+        """Carry normalized metadata to the next task with fresh provenance."""
+        with self.intervention.lock:
+            previous = dict(self.intervention.target_selection or {})
+        if not previous:
+            raise RuntimeError("cycle has no target-selection metadata")
+        frame, frame_id = self._agent_frame_provider("head")
+        if frame is None or frame_id is None or np.std(frame) < 2.0:
+            raise RuntimeError("required head camera is missing/blank")
+        previous.update({
+            "frame_id": int(frame_id),
+            "frame_sha256": hashlib.sha256(frame.tobytes()).hexdigest(),
+            "selected_at": time.time(),
+            "cycle_reused_normalized_selection": True,
+        })
+        with self.intervention.lock:
+            self.intervention.target_selection = previous
+        return previous
+
+    def _reset_agent_episode_runtime(self):
+        self._agent_sample_index = 0
+        self._resume_after_obs_timestamp = None
+        self._resume_anchor_xyz = None
+        self._resume_anchor_offset[:] = 0
+        self._right_close_latch.reset()
+        self.starting_pose_left = self.starting_pose_right = None
+        self._buffer_gen = None
+        self.safety.reset()
+        self.intervention.correction_revision = 0
+        with self._action_record_lock:
+            self._last_action_record = {
+                "policy": np.full(16, np.nan),
+                "commanded": np.full(16, np.nan),
+                "chunk_index": -1, "generation": -1,
+                "obs_timestamp": np.nan,
+            }
+
+    def _start_cycle_episode(self, task):
+        camera_health = self._agent_camera_health()
+        missing = [name for name, ready in camera_health.items() if not ready]
+        if missing:
+            raise RuntimeError("required camera is missing/stale: " + ",".join(missing))
+        selection = self._refresh_agent_target_selection()
+        self.recorder.configure_episode({
+            "task": task,
+            "target_selection": selection,
+            "initial_bias_m": {
+                arm: bias.tolist() for arm, bias in self.xyz_bias.items()
+            },
+            "policy_mode": "absolute", "control_frequency_hz": 30,
+            "automatic_cycle": True,
+        })
+        self._reset_agent_episode_runtime()
+        self.episode_manager.start_episode()
+        if not self.episode_manager.is_active():
+            raise RuntimeError("episode manager refused automatic cycle start")
+        self.recorder.set_sampling_active(True)
+        self.agent_cycle.begin_episode(
+            safety_rejected_count=self.safety.rejected_count
+        )
+        with self.intervention.lock:
+            self.intervention.mode = "running"
+            self.intervention.latest_metrics.update({
+                "task": task,
+                "gripper_close_latched": False,
+                "gripper_release_enabled": False,
+                "gripper_released_after_transport": False,
+                "cycle_state": "running",
+            })
+            self.intervention.revision += 1
+
+    def _hold_agent_measured_state(self):
+        for arm in ("left", "right"):
+            measured = np.asarray(
+                getattr(self.cone_e, f"get_{arm}_joint_positions")(), dtype=float
+            )
+            getattr(self.cone_e, f"set_{arm}_joint_target")(
+                measured, gripper_target=None, preview_time=0.10
+            )
+
+    def _stop_agent_cycle(self, reason):
+        """Fail closed: save failure, hold measured state, never auto-retry."""
+        if self.episode_manager.is_active():
+            self.recorder.log_event("cycle_stopped", reason=str(reason))
+            self.episode_manager.end_episode(
+                reason=f"cycle_stop:{reason}", home_after=False
+            )
+            if self.recorder.episode_dir is not None:
+                destination = self.recorder.finalize("failure", reason="abort")
+            else:
+                destination = None
+        else:
+            destination = None
+        try:
+            self.episode_manager.clear_action_queue()
+        finally:
+            self._hold_agent_measured_state()
+        if self.agent_cycle is not None and self.agent_cycle.enabled:
+            self.agent_cycle.stop(str(reason))
+        with self.intervention.lock:
+            self.intervention.mode = "cycle_stopped"
+            self.intervention.latest_metrics.update({
+                "cycle_state": "stopped",
+                "cycle_stop_reason": str(reason),
+                "last_episode": None if destination is None else str(destination),
+            })
+            self.intervention.last_error = str(reason)
+            self.intervention.revision += 1
+
+    def _complete_and_advance_agent_cycle(self, decision):
+        """Promote success, guarded-home, route the next ACT, and restart."""
+        self._agent_cycle_transition_active = True
+        current_task = decision.task
+        next_task = decision.next_task
+        try:
+            self.recorder.log_event(
+                "automatic_terminal_release",
+                next_task=next_task,
+                transport_displacement_m=(
+                    self._right_close_latch.transport_displacement_m
+                ),
+            )
+            self.episode_manager.end_episode(
+                reason="released_after_transport", home_after=False
+            )
+            destination = self.recorder.finalize("success")
+            self.episode_manager.clear_action_queue()
+            self._agent_task_bias[current_task] = self.xyz_bias["right"].copy()
+            with self.intervention.lock:
+                self.intervention.mode = "cycle_homing"
+                self.intervention.latest_metrics.update({
+                    "cycle_state": "homing",
+                    "last_episode": str(destination),
+                    "next_task": next_task,
+                })
+                self.intervention.revision += 1
+
+            report = self._agent_home_both_arms()
+            self.agent_cycle.advance_after_success()
+            self._activate_agent_inference(next_task)
+            self.set_bias("right", self._agent_task_bias[next_task])
+            self.intervention.set_bias("right", self.xyz_bias["right"])
+            self.episode_manager.clear_action_queue()
+            with self.intervention.lock:
+                self.intervention.latest_metrics.update({
+                    "auto_home": report,
+                    "success_count": self.recorder.success_count(next_task),
+                })
+            self._start_cycle_episode(next_task)
+        except Exception as error:
+            self._stop_agent_cycle(f"cycle_transition:{type(error).__name__}:{error}")
+        finally:
+            self._agent_cycle_transition_active = False
+
+    def _evaluate_agent_cycle(self):
+        if (not self.agent_cycle_enabled or self.agent_cycle is None
+                or not self.episode_manager.is_active()
+                or self._agent_cycle_transition_active):
+            return False
+        decision = self.agent_cycle.evaluate(
+            terminal_release=self._right_close_latch.released,
+            camera_ready=self._agent_camera_health(),
+            safety_rejected_count=self.safety.rejected_count,
+        )
+        if decision is None:
+            return False
+        if decision.action == "complete_success":
+            self._complete_and_advance_agent_cycle(decision)
+        else:
+            self._stop_agent_cycle(decision.reason)
+        return True
 
     def _submit_agent_command(self, command, payload):
         allowed = {"home", "select_target", "start", "pause", "nudge", "resume", "success", "failure"}
@@ -561,6 +958,9 @@ class PolicyController:
                 self._resume_anchor_offset[:] = 0
                 self._right_close_latch.reset()
                 metrics["gripper_close_latched"] = False
+                metrics["gripper_release_enabled"] = False
+                metrics["gripper_release_commanded"] = False
+                metrics["gripper_released_after_transport"] = False
                 self.intervention.correction_revision = 0
                 with self._action_record_lock:
                     self._last_action_record = {
@@ -570,12 +970,19 @@ class PolicyController:
                         "obs_timestamp": np.nan,
                     }
                 self.episode_manager.start_episode()
+                self.recorder.set_sampling_active(True)
+                if self.agent_cycle_enabled:
+                    self.agent_cycle.begin_episode(
+                        safety_rejected_count=self.safety.rejected_count
+                    )
+                    metrics["cycle_state"] = "running"
                 mode = "running"
             elif command == "pause":
                 if mode not in {"running", "awaiting_fresh_action"}:
                     raise RuntimeError("pause requires a running episode")
                 with self.intervention.lock:
                     self.intervention.mode = "paused"
+                self.recorder.set_sampling_active(False)
                 pose = self.cone_e.get_right_ee_pose()
                 gripper = self.cone_e.get_right_gripper_exact()
                 self.cone_e.set_right_ee_target(ee_target=pose, gripper_target=gripper, preview_time=0.05)
@@ -640,6 +1047,20 @@ class PolicyController:
                     raise RuntimeError("no active episode")
                 if command == "failure" and payload.get("reason") not in FAILURE_REASONS:
                     raise ValueError("select a supported failure reason")
+                if self.agent_cycle_enabled:
+                    if command == "success":
+                        raise RuntimeError(
+                            "cycle success is automatic after measured terminal release"
+                        )
+                    reason = f"operator_failure:{payload.get('reason')}"
+                    self._stop_agent_cycle(reason)
+                    mode = "cycle_stopped"
+                    metrics["cycle_state"] = "stopped"
+                    metrics["cycle_stop_reason"] = reason
+                    self.intervention.complete(
+                        request_id, mode=mode, **metrics
+                    )
+                    return
                 self.episode_manager.end_episode(reason=command)
                 destination = self.recorder.finalize(command, reason=payload.get("reason"))
                 self.episode_manager.clear_action_queue()
@@ -661,12 +1082,18 @@ class PolicyController:
             action = self.action_socket.recv_pyobj()
             if 'error' in action:
                 print(f"Server error: {action['error']}")
+                if self.agent_cycle is not None:
+                    self.agent_cycle.note_inference(False)
                 return None
+            if self.agent_cycle is not None:
+                self.agent_cycle.note_inference(True)
             self.stats['actions_received'] += 1
             if action.get('is_stale', False):
                 self.stats['buffer_wraps'] += 1
             return action
         except zmq.error.Again:
+            if self.agent_cycle is not None:
+                self.agent_cycle.note_inference(False)
             now = time.time()
             if not hasattr(self, '_last_timeout_warning') or now - self._last_timeout_warning > 2.0:
                 print("Timeout waiting for action from server")
@@ -674,6 +1101,8 @@ class PolicyController:
             self.stats['errors'] += 1
             return None
         except Exception as e:
+            if self.agent_cycle is not None:
+                self.agent_cycle.note_inference(False)
             now = time.time()
             if not hasattr(self, '_last_comm_error_time') or now - self._last_comm_error_time > 1.0:
                 print(f"Communication error: {e}")
@@ -715,6 +1144,7 @@ class PolicyController:
                 if obs_timestamp is None or float(obs_timestamp) < self._resume_after_obs_timestamp:
                     return
                 self._resume_after_obs_timestamp = None
+                self.recorder.set_sampling_active(True)
                 with self.intervention.lock:
                     self.intervention.mode = "running"
                     self.intervention.revision += 1
@@ -847,17 +1277,76 @@ class PolicyController:
         target = mink.SE3(np.concatenate([R_target.wxyz, p_safe]))
         gripper_command = float(gripper)
         if arm == "right" and self._right_close_latch_enabled:
+            release_was_enabled = self._right_close_latch.release_enabled
+            release_was_commanded = self._right_close_latch.release_commanded
+            release_was_completed = self._right_close_latch.released
             gripper_command, newly_latched = self._right_close_latch.apply(
-                gripper_command, self.latest_right_gripper_exact
+                gripper_command, self.latest_right_gripper_exact,
+                measured_xyz=self.latest_right_ee_xyz,
             )
             if newly_latched:
+                grasp_xyz = self._right_close_latch.grasp_xyz_m
                 self.recorder.log_event(
                     "gripper_close_latched",
                     policy_gripper=float(gripper),
                     held_gripper_target=gripper_command,
+                    grasp_xyz_m=None if grasp_xyz is None else grasp_xyz.tolist(),
                 )
                 with self.intervention.lock:
                     self.intervention.latest_metrics["gripper_close_latched"] = True
+                    self.intervention.revision += 1
+            if not release_was_enabled and self._right_close_latch.release_enabled:
+                grasp_xyz = self._right_close_latch.grasp_xyz_m
+                measured_xyz = self._right_close_latch.latest_xyz_m
+                self.recorder.log_event(
+                    "gripper_release_enabled",
+                    grasp_xyz_m=None if grasp_xyz is None else grasp_xyz.tolist(),
+                    measured_xyz_m=(
+                        None if measured_xyz is None else measured_xyz.tolist()
+                    ),
+                    transport_displacement_m=(
+                        self._right_close_latch.transport_displacement_m
+                    ),
+                    minimum_transport_distance_m=(
+                        self._right_close_latch.minimum_transport_distance_m
+                    ),
+                )
+                with self.intervention.lock:
+                    self.intervention.latest_metrics.update({
+                        "gripper_release_enabled": True,
+                        "gripper_transport_displacement_m": (
+                            self._right_close_latch.transport_displacement_m
+                        ),
+                    })
+                    self.intervention.revision += 1
+            if not release_was_commanded and self._right_close_latch.release_commanded:
+                self.recorder.log_event(
+                    "gripper_release_commanded",
+                    policy_gripper=float(gripper),
+                    commanded_gripper=gripper_command,
+                    transport_displacement_m=(
+                        self._right_close_latch.transport_displacement_m
+                    ),
+                )
+                with self.intervention.lock:
+                    self.intervention.latest_metrics[
+                        "gripper_release_commanded"
+                    ] = True
+                    self.intervention.revision += 1
+            if not release_was_completed and self._right_close_latch.released:
+                self.recorder.log_event(
+                    "gripper_released_after_transport",
+                    policy_gripper=float(gripper),
+                    commanded_gripper=gripper_command,
+                    transport_displacement_m=(
+                        self._right_close_latch.transport_displacement_m
+                    ),
+                )
+                with self.intervention.lock:
+                    self.intervention.latest_metrics.update({
+                        "gripper_close_latched": False,
+                        "gripper_released_after_transport": True,
+                    })
                     self.intervention.revision += 1
         set_target_fn(
             ee_target=target,
@@ -903,13 +1392,23 @@ class PolicyController:
                 rate_limiter.sleep()
                 continue
 
+            if self._evaluate_agent_cycle():
+                rate_limiter.sleep()
+                continue
+
             action = self.request_action()
             if action is not None:
                 self.apply_action(action)
+                if self._evaluate_agent_cycle():
+                    rate_limiter.sleep()
+                    continue
                 if iteration % 30 == 0:
                     self._print_status(action, loop_start)
                 wait_for_ready_count = 0
             else:
+                if self._evaluate_agent_cycle():
+                    rate_limiter.sleep()
+                    continue
                 wait_for_ready_count += 1
                 if wait_for_ready_count % 30 == 1:
                     print("Waiting for HPC server to be ready...")
@@ -973,7 +1472,9 @@ class PolicyController:
     def stop(self):
         print("Stopping policy controller...")
         if self.episode_manager.is_active():
-            self.episode_manager.end_episode(reason="shutdown")
+            self.episode_manager.end_episode(
+                reason="shutdown", home_after=not self.agent_cycle_enabled
+            )
             if self.agent_collection and self.recorder.episode_dir is not None:
                 self.recorder.finalize("failure", reason="abort")
         self.stop_event.set()
@@ -993,9 +1494,12 @@ class PolicyController:
             self.recorder.stop()
         if self.keyboard:
             self.keyboard.stop()
-        self.obs_socket.close()
-        self.action_socket.close()
-        self.control_socket.close()
+        closed = set()
+        for endpoint in self._agent_inference_sockets.values():
+            for socket in (endpoint["obs"], endpoint["action"], endpoint["control"]):
+                if id(socket) not in closed:
+                    socket.close()
+                    closed.add(id(socket))
         self.zmq_context.term()
         if self.controller_claim:
             self.controller_claim.release()

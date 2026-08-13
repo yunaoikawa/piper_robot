@@ -312,8 +312,18 @@ class ArmNode:
         """Return the latest measured joint torques from the Piper controller."""
         return np.asarray(self.piper.get_joint_state().torque, dtype=float).copy()
 
-    def get_ee_pose(self):
-        q = self.get_joint_positions()
+    def get_ee_pose(self, joint_positions=None):
+        """Return FK, optionally from an already sampled joint vector.
+
+        Passing ``joint_positions`` is important for coherent high-rate state
+        snapshots: it avoids reading the controller a second time after the
+        joints have already been sampled for recording.
+        """
+        q = (
+            self.get_joint_positions()
+            if joint_positions is None
+            else np.asarray(joint_positions, dtype=float)
+        )
         self.ik_solver.update_configuration(q)
         return self.ik_solver.forward_kinematics()
 

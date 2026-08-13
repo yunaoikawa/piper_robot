@@ -51,6 +51,10 @@ def main():
                         help='Agent config containing immutable camera_udids')
     parser.add_argument('--agent-no-auto-home', action='store_true',
                         help='Emergency/debug opt-out; agent collection homes both arms by default')
+    parser.add_argument(
+        '--agent-cycle', action='store_true',
+        help='Alternate lid_open/lid_close after verified terminal releases',
+    )
     parser.add_argument('--controller-lock',
                         default='/tmp/piper_robot_right_arm_controller.lock')
     args = parser.parse_args()
@@ -60,6 +64,8 @@ def main():
             parser.error('--agent-collection requires --agent-task')
         if args.autonomous:
             parser.error('--agent-collection is phone-confirmed, not --autonomous')
+        if args.agent_cycle and args.agent_no_auto_home:
+            parser.error('--agent-cycle requires pressure-guarded auto-home')
         args.rate = 30
         args.record = True
         args.save_dir = args.agent_root
@@ -89,6 +95,7 @@ def main():
         agent_config=args.agent_config,
         controller_lock=args.controller_lock,
         agent_auto_home=not args.agent_no_auto_home,
+        agent_cycle=args.agent_cycle,
     )
 
     if args.bias is not None and not args.agent_collection:

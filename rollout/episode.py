@@ -141,7 +141,7 @@ class EpisodeManager:
         except Exception as e:
             print(f"⚠️  Error clearing action queue: {e}")
 
-    def end_episode(self, reason="manual"):
+    def end_episode(self, reason="manual", *, home_after=True):
         """End current episode (disables action execution and saves recording)."""
         if not self.is_episode_active:
             return
@@ -159,7 +159,7 @@ class EpisodeManager:
         print(f"⏹️  Episode ended ({reason}) - Duration: {episode_duration:.1f}s")
 
         # Reset arm positions after episode ends
-        if self.robot_rpc:
+        if self.robot_rpc and home_after:
             print("🏠 Resetting arm positions to home...")
             try:
                 self.robot_rpc.home_left_arm()

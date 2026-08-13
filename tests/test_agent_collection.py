@@ -9,6 +9,7 @@ import pytest
 from rollout.agent_collection import (
     AgentEpisodeRecorder, AgentRecordingSample, ControllerClaim,
     GripperCloseLatch, InterventionState, intervention_slice_mask,
+    summarize_sampling_timing,
 )
 from src.convert_to_lerobot import find_episode_pairs, load_episode
 from rollout.agent_collection_ui import AgentCollectionUI
@@ -62,21 +63,115 @@ def test_bias_mailbox_and_slice():
     assert intervention_slice_mask(revisions, "post-intervention").tolist() == [False, False, True, True]
 
 
-def test_open_task_gripper_latch_never_releases_after_close():
-    latch = GripperCloseLatch()
-    steps = (
-        (1.0, 1.0, 0.0),
-        (.3, .7, 1.0),
-        (.2, .61, 1.7),
-        (.15, .605, 1.9),
-        (.1, .60, 2.1),
-        (.9, .60, 2.2),
-        (1.0, .60, 2.3),
+def test_sampling_timing_rejects_synthetic_30hz_claim_for_10hz_data():
+    timing = summarize_sampling_timing(np.arange(419) * 0.0965, target_hz=30)
+    assert timing["effective_hz"] == pytest.approx(10.3627, rel=1e-3)
+    assert timing["interval_deadline_misses"] == 418
+    assert timing["eligible"] is False
+
+
+def test_episode_active_clock_excludes_pause_and_inference_wait(tmp_path):
+    recorder = AgentEpisodeRecorder(tmp_path / "agent", threading.Event())
+    recorder.set_sampling_active(True, now=10.0)
+    assert recorder.active_timestamp(now=10.1) == pytest.approx(.1)
+    recorder.set_sampling_active(False, now=10.2)
+    # Arbitrarily long pause / fresh-inference wait does not advance the clock.
+    assert recorder.active_timestamp(now=50.0) == pytest.approx(.2)
+    recorder.set_sampling_active(True, now=50.0)
+    assert recorder.active_timestamp(now=50.1) == pytest.approx(.3)
+    recorder.set_sampling_active(False, now=50.1)
+    recorder.stop()
+
+
+def test_gripper_latch_blocks_open_until_measured_transport_then_releases():
+    latch = GripperCloseLatch(
+        minimum_transport_distance_m=.03,
+        minimum_release_command_time_s=.15,
     )
-    output = [latch.apply(command, measured, now=now)[0]
-              for command, measured, now in steps]
-    assert output == pytest.approx([1.0, .3, .2, .15, .1, .1, .1])
-    assert latch.latched is True
+    grasp_xyz = np.array([.20, -.10, .70])
+    steps = (
+        (1.0, 1.0, 0.0, grasp_xyz),
+        (.3, .7, 1.0, grasp_xyz),
+        (.2, .61, 1.7, grasp_xyz),
+        (.15, .605, 1.9, grasp_xyz),
+        (.1, .60, 2.1, grasp_xyz),
+        # A replan's temporary open beside the grasp is suppressed.
+        (.9, .60, 2.2, grasp_xyz + [.029, 0, 0]),
+        # Crossing the task-independent Cartesian transport gate enables, but
+        # does not immediately execute, a one-frame open prediction.
+        (1.0, .60, 2.3, grasp_xyz + [.031, 0, 0]),
+        (1.0, .60, 2.46, grasp_xyz + [.031, 0, 0]),
+        # Completion is measured, not inferred from sending the open command.
+        (.1, .80, 2.50, grasp_xyz + [.031, 0, 0]),
+    )
+    output = [
+        latch.apply(command, measured, measured_xyz=xyz, now=now)[0]
+        for command, measured, now, xyz in steps
+    ]
+    assert output == pytest.approx([1.0, .3, .2, .15, .1, .1, .1, 1.0, 1.0])
+    assert latch.release_enabled is True
+    assert latch.released is True
+    assert latch.latched is False
+    assert latch.grasp_xyz_m == pytest.approx(grasp_xyz)
+    assert latch.transport_displacement_m == pytest.approx(.031)
+
+
+def test_gripper_latch_rejects_transient_open_even_after_transport():
+    latch = GripperCloseLatch(
+        minimum_transport_distance_m=.02,
+        minimum_release_command_time_s=.15,
+    )
+    grasp_xyz = np.array([0.0, 0.0, .5])
+    latch.apply(1.0, 1.0, measured_xyz=grasp_xyz, now=0)
+    latch.apply(.2, .6, measured_xyz=grasp_xyz, now=1)
+    latch.apply(.1, .6, measured_xyz=grasp_xyz, now=1.9)
+    latch.apply(.1, .6, measured_xyz=grasp_xyz, now=2.1)
+    assert latch.latched
+
+    transported = grasp_xyz + [0, -.03, .02]
+    assert latch.apply(1.0, .6, measured_xyz=transported, now=2.2)[0] == .1
+    # A close command resets the persistence timer.
+    assert latch.apply(.1, .6, measured_xyz=transported, now=2.3)[0] == .1
+    assert latch.apply(1.0, .6, measured_xyz=transported, now=2.4)[0] == .1
+    assert latch.apply(1.0, .6, measured_xyz=transported, now=2.56)[0] == 1.0
+    assert latch.release_commanded
+    assert not latch.released
+    # Even if a later policy chunk asks to close, the terminal release remains
+    # open until the measured jaws confirm it.
+    assert latch.apply(.1, .8, measured_xyz=transported, now=2.6)[0] == 1.0
+    assert latch.released
+
+
+def test_gripper_latch_fails_closed_without_valid_measured_pose():
+    latch = GripperCloseLatch(minimum_release_command_time_s=0)
+    latch.apply(1.0, 1.0, now=0)
+    latch.apply(.2, .6, now=1)
+    latch.apply(.1, .6, now=1.9)
+    latch.apply(.1, .6, now=2.1)
+    assert latch.latched
+    assert latch.grasp_xyz_m is None
+    assert latch.apply(1.0, .6, measured_xyz=[np.nan, 0, 0], now=3)[0] == .1
+    assert latch.release_enabled is False
+    assert latch.released is False
+
+
+def test_gripper_latch_recovers_when_pose_arrives_after_grasp_confirmation():
+    latch = GripperCloseLatch(
+        minimum_transport_distance_m=.02,
+        minimum_release_command_time_s=0,
+    )
+    latch.apply(1.0, 1.0, now=0)
+    latch.apply(.2, .6, now=1)
+    latch.apply(.1, .6, now=1.9)
+    latch.apply(.1, .6, now=2.1)
+    assert latch.latched and latch.grasp_xyz_m is None
+
+    late_grasp_pose = np.array([.1, .2, .7])
+    assert latch.apply(.1, .6, measured_xyz=late_grasp_pose, now=2.2)[0] == .1
+    assert latch.grasp_xyz_m == pytest.approx(late_grasp_pose)
+    moved = late_grasp_pose + [0, 0, .021]
+    assert latch.apply(1.0, .6, measured_xyz=moved, now=2.3)[0] == 1.0
+    assert latch.release_enabled and latch.release_commanded
 
 
 def test_gripper_latch_does_not_hold_an_empty_fully_closed_gripper():

@@ -48,6 +48,41 @@ start, and use `PAUSE → physical 前/後/左/右/上/下 1/2/5 mm → RESUME`.
 hand between episodes. Confirm SUCCESS or select a failure reason. Repeat until
 10 successes, then repeat with `lid_close` and its checkpoint.
 
+## Endless alternating open/close cycle
+
+Run one immutable checkpoint server per task, with distinct Pasteur tunnel
+ports. Both remain at 30 Hz:
+
+```bash
+# lid_open: Pasteur tunnel 5555:5557
+python cloud_inference_clean-main/hpc_inference_act.py \
+  --checkpoint outputs/lab/act/horizon/lid_open/ep100/checkpoints/last/pretrained_model \
+  --obs-port 5555 --action-port 5556 --pred_horizon 100 --replan-at 12 \
+  --active-arm right --hz 30
+
+# lid_close: Pasteur tunnel 5655:5657
+python cloud_inference_clean-main/hpc_inference_act.py \
+  --checkpoint outputs/lab/act/horizon/lid_close/ep100/checkpoints/last/pretrained_model \
+  --obs-port 5655 --action-port 5656 --pred_horizon 100 --replan-at 12 \
+  --active-arm right --hz 30
+
+# Pasteur: tap once, then press START once.
+python cloud_inference_control_collect_v2.py \
+  --host 127.0.0.1 --agent-collection --agent-task lid_open --agent-cycle \
+  --agent-root data/vla_agent/lid_bias --agent-ui-port 8780
+```
+
+The gripper gate confirms grasp, permits the demonstrated final release only
+after measured transport, and declares completion only after the measured jaw
+is open. Deterministic code then promotes SUCCESS, runs pressure-guarded home,
+switches to the other endpoint and its per-task bias, clears its queue,
+refreshes tap provenance, and starts the next episode. It repeats
+`open -> close -> open` without Codex.
+
+The loop never retries a failure. A sustained missing/stale camera, inference
+outage, timeout, safety rejection, or pressure stop holds measured state and
+changes the UI to `cycle_stopped`; operator inspection is then required.
+
 UI nudges apply only to the right ACT bias. `--agent-no-auto-home` exists only
 as an emergency/debug opt-out.
 

@@ -1,5 +1,6 @@
 import argparse
 import functools
+import time
 import numpy as np
 import mink
 import atexit
@@ -196,6 +197,51 @@ class ConeE:
         if self.right_arm.gripper is not None:
             return self.right_arm.gripper.get_open_ratio()
         return 0.0
+
+    @require_initialization
+    def get_observation_state(self, active_arm: str | None = None) -> dict:
+        """Return one coherent robot observation in a single RPC response.
+
+        The former observation path made six separate RPC round trips and read
+        each arm's joints twice (once for FK and once for recording).  A pair
+        of Dynamixel position reads alone takes roughly 32 ms on the lab
+        adapter, making 30 Hz impossible before image work even starts.
+
+        Agent ACT currently controls one arm.  ``active_arm`` therefore reads
+        the active gripper exactly and returns ``None`` for the inactive one;
+        its controller-side value is held from the last exact sample.  Joint
+        state and FK remain fresh for both arms on every snapshot.  Passing
+        ``None`` preserves the full bimanual behavior.
+        """
+        if active_arm not in {None, "left", "right"}:
+            raise ValueError("active_arm must be left, right, or None")
+
+        sampled_at = time.time()
+        left_joints = np.asarray(
+            self.left_arm.get_joint_positions(), dtype=float
+        ).copy()
+        right_joints = np.asarray(
+            self.right_arm.get_joint_positions(), dtype=float
+        ).copy()
+        left_pose = self.left_arm.get_ee_pose(left_joints)
+        right_pose = self.right_arm.get_ee_pose(right_joints)
+
+        left_gripper = None
+        right_gripper = None
+        if active_arm in {None, "left"} and self.left_arm.gripper is not None:
+            left_gripper = self.left_arm.gripper.get_open_ratio()
+        if active_arm in {None, "right"} and self.right_arm.gripper is not None:
+            right_gripper = self.right_arm.gripper.get_open_ratio()
+
+        return {
+            "sampled_at": sampled_at,
+            "left_ee_pose": left_pose,
+            "right_ee_pose": right_pose,
+            "left_gripper_exact": left_gripper,
+            "right_gripper_exact": right_gripper,
+            "left_joint_positions": left_joints,
+            "right_joint_positions": right_joints,
+        }
 
     # ----------------------------------------------------------------------
     # Rest positions (for rollout controller 'h' key)

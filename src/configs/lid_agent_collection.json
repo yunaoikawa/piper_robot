@@ -26,11 +26,27 @@
       "pilot_success_target": 10
     }
   },
+  "inference_endpoints": {
+    "lid_open": {"obs_port": 5555, "action_port": 5556, "control_port": 5557},
+    "lid_close": {"obs_port": 5655, "action_port": 5656, "control_port": 5657}
+  },
+  "cycle": {
+    "tasks": ["lid_open", "lid_close"],
+    "required_cameras": ["head", "right"],
+    "camera_stale_after_s": 1.0,
+    "camera_failure_grace_s": 1.0,
+    "inference_failure_grace_s": 10.0,
+    "maximum_episode_s": 60.0
+  },
   "intervention": {
     "steps_mm": [1, 2, 5],
     "maximum_absolute_bias_m": 0.06,
     "pause_excluded_from_training_time": true,
-    "resume_requires_fresh_observation": true
+    "resume_requires_fresh_observation": true,
+    "gripper_transport_release": {
+      "minimum_transport_distance_m": 0.03,
+      "minimum_open_command_time_s": 0.15
+    }
   },
   "storage": {
     "root": "data/vla_agent/lid_bias",

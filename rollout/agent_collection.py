@@ -36,14 +36,84 @@ FAILURE_REASONS = {
 }
 
 
+def summarize_sampling_timing(
+    timestamps: Any,
+    *,
+    target_hz: float,
+    deadline_factor: float = 1.5,
+    minimum_rate_ratio: float = 0.9,
+) -> dict[str, Any]:
+    """Summarize measured cadence on a pause-excluding active clock.
+
+    This deliberately uses timestamps instead of the claimed output FPS.  A
+    slow producer must not turn ten physical samples per second into apparent
+    30 Hz data merely by assigning ``frame_index / 30`` timestamps.
+    """
+
+    values = np.asarray(timestamps, dtype=float).reshape(-1)
+    if target_hz <= 0:
+        raise ValueError("target_hz must be positive")
+    if deadline_factor <= 1:
+        raise ValueError("deadline_factor must be greater than one")
+    if not 0 < minimum_rate_ratio <= 1:
+        raise ValueError("minimum_rate_ratio must be in (0, 1]")
+
+    empty = {
+        "eligible": False,
+        "target_hz": float(target_hz),
+        "effective_hz": 0.0,
+        "active_duration_s": 0.0,
+        "median_period_s": None,
+        "p95_period_s": None,
+        "interval_deadline_misses": 0,
+        "invalid_intervals": 0,
+    }
+    if len(values) < 2:
+        return empty
+
+    intervals = np.diff(values)
+    valid = np.isfinite(intervals) & (intervals > 0)
+    valid_intervals = intervals[valid]
+    invalid_intervals = int((~valid).sum())
+    if not len(valid_intervals):
+        return {**empty, "invalid_intervals": invalid_intervals}
+
+    target_period_s = 1.0 / float(target_hz)
+    duration_s = float(valid_intervals.sum())
+    effective_hz = float(len(valid_intervals) / duration_s)
+    median_period_s = float(np.median(valid_intervals))
+    p95_period_s = float(np.percentile(valid_intervals, 95))
+    interval_deadline_misses = int(
+        np.count_nonzero(valid_intervals > deadline_factor * target_period_s)
+    )
+    eligible = bool(
+        invalid_intervals == 0
+        and effective_hz >= minimum_rate_ratio * float(target_hz)
+        and p95_period_s <= deadline_factor * target_period_s
+    )
+    return {
+        "eligible": eligible,
+        "target_hz": float(target_hz),
+        "effective_hz": effective_hz,
+        "active_duration_s": duration_s,
+        "median_period_s": median_period_s,
+        "p95_period_s": p95_period_s,
+        "interval_deadline_misses": interval_deadline_misses,
+        "invalid_intervals": invalid_intervals,
+    }
+
+
 class GripperCloseLatch:
-    """Prevent an open-task policy from releasing after its first grasp.
+    """Hold a confirmed grasp until measured transport makes release plausible.
 
     ACT is time-agnostic in this deployment.  Replanning after the demonstrated
-    trajectory can therefore start another open/close cycle.  For tasks whose
-    terminal state is *holding* the object, reopening is never a valid action.
-    The latch is armed only after an explicitly open command has been seen, so
-    a noisy first prediction cannot engage it accidentally.
+    trajectory can therefore start another open/close cycle.  The latch blocks
+    those transient open commands while the end effector remains near the
+    confirmed grasp pose, but it must not suppress the demonstrated final
+    release.  Release is enabled from measured Cartesian displacement relative
+    to that pose; it does not depend on a task-specific image pixel or robot
+    coordinate.  The latch is armed only after an explicitly open command has
+    been seen, so a noisy first prediction cannot engage it accidentally.
     """
 
     def __init__(self, *, open_threshold: float = 0.75,
@@ -51,15 +121,23 @@ class GripperCloseLatch:
                  empty_closed_threshold: float = 0.08,
                  minimum_close_time_s: float = 1.0,
                  stall_window_s: float = 0.35,
-                 stall_range: float = 0.02):
+                 stall_range: float = 0.02,
+                 minimum_transport_distance_m: float = 0.03,
+                 minimum_release_command_time_s: float = 0.15):
         if not 0.0 <= close_threshold < open_threshold <= 1.0:
             raise ValueError("gripper thresholds must satisfy 0 <= close < open <= 1")
+        if minimum_transport_distance_m <= 0:
+            raise ValueError("minimum transport distance must be positive")
+        if minimum_release_command_time_s < 0:
+            raise ValueError("minimum release command time cannot be negative")
         self.open_threshold = float(open_threshold)
         self.close_threshold = float(close_threshold)
         self.empty_closed_threshold = float(empty_closed_threshold)
         self.minimum_close_time_s = float(minimum_close_time_s)
         self.stall_window_s = float(stall_window_s)
         self.stall_range = float(stall_range)
+        self.minimum_transport_distance_m = float(minimum_transport_distance_m)
+        self.minimum_release_command_time_s = float(minimum_release_command_time_s)
         self.reset()
 
     def reset(self) -> None:
@@ -68,14 +146,70 @@ class GripperCloseLatch:
         self.target = 1.0
         self.closing_started_at: float | None = None
         self.measured_history: list[tuple[float, float]] = []
+        self.grasp_xyz_m: np.ndarray | None = None
+        self.latest_xyz_m: np.ndarray | None = None
+        self.transport_displacement_m = 0.0
+        self.release_enabled = False
+        self.release_requested_at: float | None = None
+        self.release_commanded = False
+        self.released = False
+
+    @staticmethod
+    def _validated_xyz(measured_xyz: Any | None) -> np.ndarray | None:
+        if measured_xyz is None:
+            return None
+        xyz = np.asarray(measured_xyz, dtype=float)
+        if xyz.shape != (3,) or not np.all(np.isfinite(xyz)):
+            return None
+        return xyz.copy()
+
+    def _update_transport(self, measured_xyz: Any | None) -> None:
+        xyz = self._validated_xyz(measured_xyz)
+        if xyz is None:
+            return
+        self.latest_xyz_m = xyz
+        if not self.latched or self.release_enabled:
+            return
+        # A controller can receive its first valid observation just after the
+        # stall was confirmed.  Capture that first measured pose rather than
+        # turning one missing sample into a permanent no-release state.
+        if self.grasp_xyz_m is None:
+            self.grasp_xyz_m = xyz.copy()
+            return
+        self.transport_displacement_m = float(np.linalg.norm(xyz - self.grasp_xyz_m))
+        if self.transport_displacement_m >= self.minimum_transport_distance_m:
+            self.release_enabled = True
 
     def apply(self, command: float, measured: float,
-              *, now: float | None = None) -> tuple[float, bool]:
+              *, measured_xyz: Any | None = None,
+              now: float | None = None) -> tuple[float, bool]:
         value = float(np.clip(command, 0.0, 1.0))
         measured = float(np.clip(measured, 0.0, 1.0))
         now = time.monotonic() if now is None else float(now)
         newly_latched = False
+        if self.released:
+            # Release is terminal for this episode.  Keep the jaws open while
+            # the episode manager records/promotes the completed transition;
+            # a subsequent time-agnostic replan must not close them again.
+            self.target = max(self.target, value, self.open_threshold)
+            return self.target, False
         if self.latched:
+            self._update_transport(measured_xyz)
+            if self.release_commanded:
+                self.target = max(self.target, value, self.open_threshold)
+                if measured >= self.open_threshold:
+                    self.released = True
+                    self.latched = False
+                return self.target, False
+            if self.release_enabled and value >= self.open_threshold:
+                if self.release_requested_at is None:
+                    self.release_requested_at = now
+                if now - self.release_requested_at >= self.minimum_release_command_time_s:
+                    self.release_commanded = True
+                    self.target = max(value, self.open_threshold)
+                    return self.target, False
+            else:
+                self.release_requested_at = None
             self.target = min(self.target, value)
             return self.target, False
 
@@ -105,6 +239,10 @@ class GripperCloseLatch:
             if blocked:
                 self.latched = True
                 self.target = value
+                self.grasp_xyz_m = self._validated_xyz(measured_xyz)
+                self.latest_xyz_m = (
+                    None if self.grasp_xyz_m is None else self.grasp_xyz_m.copy()
+                )
                 newly_latched = True
         elif self.closing_started_at is not None:
             # An opening/mid-range command before a confirmed stall means the
@@ -212,6 +350,9 @@ class AgentEpisodeRecorder:
         self.writers: dict[str, StreamingVideoWriter] = {}
         self.dropped_samples = 0
         self.deadline_misses = 0
+        self._sampling_active = False
+        self._active_elapsed_s = 0.0
+        self._active_segment_started_at: float | None = None
         self.worker.start()
 
     @property
@@ -271,6 +412,10 @@ class AgentEpisodeRecorder:
         self.data = self._empty_data()
         self.dropped_samples = 0
         self.deadline_misses = 0
+        with self.lock:
+            self._sampling_active = False
+            self._active_elapsed_s = 0.0
+            self._active_segment_started_at = None
         self.writers = {
             name: StreamingVideoWriter(
                 self.episode_dir / f"{self.episode_name}_{name}.mp4", fps=self.fps
@@ -283,6 +428,34 @@ class AgentEpisodeRecorder:
         self.log_event("episode_started", context=self.context)
         self.is_recording = True
         self.accepting_samples = True
+
+    def set_sampling_active(self, active: bool, *, now: float | None = None) -> None:
+        """Start or stop the clock used for recorded training timestamps."""
+
+        now = time.monotonic() if now is None else float(now)
+        with self.lock:
+            active = bool(active)
+            if active == self._sampling_active:
+                return
+            if active:
+                self._active_segment_started_at = now
+            else:
+                if self._active_segment_started_at is not None:
+                    self._active_elapsed_s += max(
+                        0.0, now - self._active_segment_started_at
+                    )
+                self._active_segment_started_at = None
+            self._sampling_active = active
+
+    def active_timestamp(self, *, now: float | None = None) -> float:
+        """Return elapsed running time, excluding pause/inference-wait spans."""
+
+        now = time.monotonic() if now is None else float(now)
+        with self.lock:
+            elapsed = self._active_elapsed_s
+            if self._sampling_active and self._active_segment_started_at is not None:
+                elapsed += max(0.0, now - self._active_segment_started_at)
+            return float(elapsed)
 
     def log_event(self, event: str, **payload: Any) -> None:
         record = {"timestamp_utc": utc_now(), "event": event, **payload}
@@ -372,6 +545,7 @@ class AgentEpisodeRecorder:
         """Stop active sampling but retain the episode under pending."""
         if not self.is_recording:
             return
+        self.set_sampling_active(False)
         self.accepting_samples = False
         self.queue.join()
         self.is_recording = False
@@ -394,6 +568,9 @@ class AgentEpisodeRecorder:
         if outcome == "failure" and reason not in FAILURE_REASONS:
             raise ValueError(f"unsupported failure reason {reason!r}")
         sample_count = len(self.data.get("active_timestamps", ()))
+        timing = summarize_sampling_timing(
+            self.data.get("active_timestamps", ()), target_hz=self.fps
+        )
         manifest = {
             "schema": SCHEMA,
             "episode_name": self.episode_name,
@@ -404,11 +581,13 @@ class AgentEpisodeRecorder:
                 outcome == "success" and sample_count > 1
                 and self.dropped_samples == 0
                 and self.deadline_misses <= max(1, sample_count // 20)
+                and timing["eligible"]
             ),
             "sample_count": sample_count,
             "control_frequency_hz": self.fps,
             "dropped_samples": self.dropped_samples,
             "deadline_misses": self.deadline_misses,
+            "sampling_timing": timing,
             "context": self.context,
             "finalized_at": utc_now(),
         }
