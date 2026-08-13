@@ -141,6 +141,13 @@ class PolicyController:
         )
         self._agent_post_release_offset = self._agent_release_offset(agent_task)
         self._right_close_latch_enabled = self.agent_collection
+        descent = self.agent_profile.get("intervention", {}).get(
+            "terminal_vertical_descent", {}
+        )
+        self._terminal_descent_enabled = bool(descent.get("enabled", False))
+        self._terminal_descent_duration_s = float(descent.get("duration_s", 0.8))
+        self._terminal_descent_started_at = None
+        self._terminal_descent_anchor_pose = None
 
         # Per-arm EE offset in robot frame, applied in apply_action(). This
         # replaces the server-side --z-bias so the bias exists in exactly one
@@ -751,6 +758,8 @@ class PolicyController:
         self._resume_anchor_xyz = None
         self._resume_anchor_offset[:] = 0
         self._right_close_latch.reset()
+        self._terminal_descent_started_at = None
+        self._terminal_descent_anchor_pose = None
         self.starting_pose_left = self.starting_pose_right = None
         self._buffer_gen = None
         self.safety.reset()
@@ -1410,7 +1419,42 @@ class PolicyController:
         # constant offset stays constant -- safe to add every time. Applied in
         # the robot frame (post-H) so the numbers mean what the workspace bounds
         # and the EVAL_RESULTS z-bias figures mean.
-        p_target = X_Rtarget.translation() + self.xyz_bias[arm]
+        bias = self.xyz_bias[arm].copy()
+        terminal_descent_holds_open = False
+        if (arm == "right" and self._terminal_descent_enabled
+                and bias[2] < 0 and not self._right_close_latch.latched):
+            # Keep the approach at the demonstrated safe height.  A global
+            # negative Z patch makes the whole diagonal approach too low and
+            # can push the object before the gripper is above it.  The first
+            # policy close marks the demonstrated grasp XY; freeze there,
+            # descend vertically by the Z correction, then permit closure.
+            approach_bias = bias.copy()
+            approach_bias[2] = 0.0
+            p_target = X_Rtarget.translation() + approach_bias
+            if self._terminal_descent_started_at is None and float(gripper) < 0.5:
+                self._terminal_descent_started_at = time.monotonic()
+                self._terminal_descent_anchor_pose = mink.SE3(
+                    np.concatenate([X_Rtarget.rotation().wxyz, p_target])
+                )
+                if self.recorder.is_recording:
+                    self.recorder.log_event(
+                        "terminal_vertical_descent_started",
+                        z_correction_m=float(bias[2]),
+                        duration_s=self._terminal_descent_duration_s,
+                    )
+            if self._terminal_descent_started_at is not None:
+                elapsed = time.monotonic() - self._terminal_descent_started_at
+                alpha = min(1.0, max(0.0, elapsed / self._terminal_descent_duration_s))
+                anchor = self._terminal_descent_anchor_pose
+                p_target = anchor.translation().copy()
+                p_target[2] += float(bias[2]) * alpha
+                R_target = anchor.rotation()
+                terminal_descent_holds_open = alpha < 1.0
+            else:
+                R_target = X_Rtarget.rotation()
+        else:
+            p_target = X_Rtarget.translation() + bias
+            R_target = X_Rtarget.rotation()
         if arm == "right" and self._resume_anchor_xyz is not None:
             if not np.any(self._resume_anchor_offset):
                 self._resume_anchor_offset = self._resume_anchor_xyz - p_target
@@ -1420,8 +1464,6 @@ class PolicyController:
                         offset_m=self._resume_anchor_offset.tolist(),
                     )
             p_target = p_target + self._resume_anchor_offset
-        R_target = X_Rtarget.rotation()
-
         # Preserve the successful grasp pose.  A placement correction is
         # introduced only after ACT asks for its demonstrated final release;
         # the latch keeps the jaws closed for the configured settling time.
@@ -1435,15 +1477,20 @@ class PolicyController:
 
         target = mink.SE3(np.concatenate([R_target.wxyz, p_safe]))
         gripper_command = float(gripper)
+        if terminal_descent_holds_open:
+            gripper_command = 1.0
         if arm == "right" and self._right_close_latch_enabled:
             drop_was_detected = self._right_close_latch.dropped
             release_was_enabled = self._right_close_latch.release_enabled
             release_was_commanded = self._right_close_latch.release_commanded
             release_was_completed = self._right_close_latch.released
-            gripper_command, newly_latched = self._right_close_latch.apply(
-                gripper_command, self.latest_right_gripper_exact,
-                measured_xyz=self.latest_right_ee_xyz,
-            )
+            if terminal_descent_holds_open:
+                newly_latched = False
+            else:
+                gripper_command, newly_latched = self._right_close_latch.apply(
+                    gripper_command, self.latest_right_gripper_exact,
+                    measured_xyz=self.latest_right_ee_xyz,
+                )
             if newly_latched:
                 grasp_xyz = self._right_close_latch.grasp_xyz_m
                 self.recorder.log_event(
