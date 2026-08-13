@@ -969,13 +969,24 @@ class PolicyController:
                 or not self.episode_manager.is_active()
                 or self._agent_cycle_transition_active):
             return False
+        explicit_failure = None
+        grasp_deadline = float(
+            self.agent_profile.get("cycle", {}).get(
+                "grasp_confirmation_deadline_s", 0.0
+            )
+        )
+        if (grasp_deadline > 0 and self.agent_cycle.episode_started_at is not None
+                and time.monotonic() - self.agent_cycle.episode_started_at
+                >= grasp_deadline
+                and not self._right_close_latch.latched):
+            explicit_failure = "grasp_miss"
+        if self._right_close_latch.dropped:
+            explicit_failure = "drop"
         decision = self.agent_cycle.evaluate(
             terminal_release=self._right_close_latch.released,
             camera_ready=self._agent_camera_health(),
             safety_rejected_count=self.safety.rejected_count,
-            explicit_failure=(
-                "drop" if self._right_close_latch.dropped else None
-            ),
+            explicit_failure=explicit_failure,
         )
         if decision is None:
             return False

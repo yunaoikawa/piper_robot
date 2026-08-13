@@ -49,6 +49,7 @@
     "camera_failure_grace_s": 1.0,
     "inference_failure_grace_s": 10.0,
     "maximum_episode_s": 42.0,
+    "grasp_confirmation_deadline_s": 10.0,
     "bias_retry_offsets_m": {
       "lid_open": [
         [0.0, 0.0, 0.0],
