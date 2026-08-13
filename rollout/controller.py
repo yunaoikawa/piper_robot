@@ -23,7 +23,7 @@ from .manipulability import ManipulabilityCalculator
 from .safety import SafetyLayer
 from .agent_collection import (
     AgentEpisodeRecorder, AgentRecordingSample, ControllerClaim,
-    FAILURE_REASONS, InterventionState,
+    FAILURE_REASONS, GripperCloseLatch, InterventionState,
 )
 from .agent_collection_ui import AgentCollectionUI
 from .agent_home import run_agent_auto_home
@@ -80,6 +80,12 @@ class PolicyController:
         self._action_record_lock = threading.Lock()
         self._latest_ui_frames = {}
         self.agent_auto_home = bool(agent_auto_home)
+        # lid_open terminates while retaining the object.  A time-agnostic ACT
+        # policy can otherwise re-enter its approach phase and reopen after a
+        # successful grasp.  lid_close is deliberately excluded because its
+        # demonstrated terminal action is a release.
+        self._right_close_latch = GripperCloseLatch()
+        self._right_close_latch_enabled = self.agent_collection and agent_task == "lid_open"
 
         # Per-arm EE offset in robot frame, applied in apply_action(). This
         # replaces the server-side --z-bias so the bias exists in exactly one
@@ -536,6 +542,8 @@ class PolicyController:
                     "policy_mode": "absolute", "control_frequency_hz": 30,
                 })
                 self._agent_sample_index = 0
+                self._right_close_latch.reset()
+                metrics["gripper_close_latched"] = False
                 self.intervention.correction_revision = 0
                 with self._action_record_lock:
                     self._last_action_record = {
@@ -605,6 +613,7 @@ class PolicyController:
                 metrics["success_count"] = self.recorder.success_count(self.agent_task)
                 with self.intervention.lock:
                     self.intervention.target_selection = None
+                self._right_close_latch.reset()
             self.intervention.complete(request_id, mode=mode, **metrics)
         except Exception as error:
             self.intervention.complete(request_id, error=str(error))
@@ -790,15 +799,27 @@ class PolicyController:
             return
 
         target = mink.SE3(np.concatenate([R_target.wxyz, p_safe]))
+        gripper_command = float(gripper)
+        if arm == "right" and self._right_close_latch_enabled:
+            gripper_command, newly_latched = self._right_close_latch.apply(gripper_command)
+            if newly_latched:
+                self.recorder.log_event(
+                    "gripper_close_latched",
+                    policy_gripper=float(gripper),
+                    held_gripper_target=gripper_command,
+                )
+                with self.intervention.lock:
+                    self.intervention.latest_metrics["gripper_close_latched"] = True
+                    self.intervention.revision += 1
         set_target_fn(
             ee_target=target,
-            gripper_target=gripper, preview_time=0.5,
+            gripper_target=gripper_command, preview_time=0.5,
         )
         if self.agent_collection:
             commanded = np.full(16, np.nan, dtype=float)
             section = slice(0, 7) if arm == "left" else slice(7, 14)
             commanded[section] = np.concatenate([target.rotation().wxyz, target.translation()])
-            commanded[14 if arm == "left" else 15] = float(gripper)
+            commanded[14 if arm == "left" else 15] = gripper_command
             with self._action_record_lock:
                 self._last_action_record["commanded"] = commanded
 

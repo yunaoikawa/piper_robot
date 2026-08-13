@@ -8,7 +8,7 @@ import pytest
 
 from rollout.agent_collection import (
     AgentEpisodeRecorder, AgentRecordingSample, ControllerClaim,
-    InterventionState, intervention_slice_mask,
+    GripperCloseLatch, InterventionState, intervention_slice_mask,
 )
 from src.convert_to_lerobot import find_episode_pairs, load_episode
 from rollout.agent_collection_ui import AgentCollectionUI
@@ -60,6 +60,22 @@ def test_bias_mailbox_and_slice():
     revisions = np.array([0, 0, 1, 1])
     assert intervention_slice_mask(revisions, "all").tolist() == [True] * 4
     assert intervention_slice_mask(revisions, "post-intervention").tolist() == [False, False, True, True]
+
+
+def test_open_task_gripper_latch_never_releases_after_close():
+    latch = GripperCloseLatch()
+    output = [latch.apply(value)[0] for value in (1.0, .82, .34, .12, .9, 1.0)]
+    assert output == pytest.approx([1.0, .82, .34, .12, .12, .12])
+    assert latch.latched is True
+
+
+def test_gripper_latch_requires_open_then_close_and_resets():
+    latch = GripperCloseLatch()
+    assert latch.apply(.2) == pytest.approx((.2, False))
+    assert latch.apply(.9) == pytest.approx((.9, False))
+    assert latch.apply(.3) == pytest.approx((.3, True))
+    latch.reset()
+    assert latch.apply(.9) == pytest.approx((.9, False))
 
 
 def test_controller_claim_is_exclusive(tmp_path):

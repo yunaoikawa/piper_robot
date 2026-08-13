@@ -36,6 +36,44 @@ FAILURE_REASONS = {
 }
 
 
+class GripperCloseLatch:
+    """Prevent an open-task policy from releasing after its first grasp.
+
+    ACT is time-agnostic in this deployment.  Replanning after the demonstrated
+    trajectory can therefore start another open/close cycle.  For tasks whose
+    terminal state is *holding* the object, reopening is never a valid action.
+    The latch is armed only after an explicitly open command has been seen, so
+    a noisy first prediction cannot engage it accidentally.
+    """
+
+    def __init__(self, *, open_threshold: float = 0.75,
+                 close_threshold: float = 0.35):
+        if not 0.0 <= close_threshold < open_threshold <= 1.0:
+            raise ValueError("gripper thresholds must satisfy 0 <= close < open <= 1")
+        self.open_threshold = float(open_threshold)
+        self.close_threshold = float(close_threshold)
+        self.reset()
+
+    def reset(self) -> None:
+        self.seen_open = False
+        self.latched = False
+        self.target = 1.0
+
+    def apply(self, command: float) -> tuple[float, bool]:
+        value = float(np.clip(command, 0.0, 1.0))
+        newly_latched = False
+        if value >= self.open_threshold:
+            self.seen_open = True
+        if self.seen_open and value <= self.close_threshold and not self.latched:
+            self.latched = True
+            self.target = value
+            newly_latched = True
+        elif self.latched:
+            # Allow a later prediction to close more firmly, never to reopen.
+            self.target = min(self.target, value)
+        return (self.target if self.latched else value), newly_latched
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
