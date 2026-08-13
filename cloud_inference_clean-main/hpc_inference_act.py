@@ -25,9 +25,7 @@ import time
 import numpy as np
 import torch
 import zmq
-from scipy.spatial.transform import Rotation as R
-
-from act_inference import ACTInferencePolicy
+from act_inference import ACTInferencePolicy, matrix_to_quat_wxyz
 
 
 # ── Rotation helpers (identical to the Pi0.5 server) ──────────────────────────
@@ -41,7 +39,7 @@ def r6_absolute_to_quat(r6: np.ndarray) -> np.ndarray:
     b2 = b2 / np.linalg.norm(b2, axis=-1, keepdims=True)
     b3 = np.cross(b1, b2)
     mat = np.stack([b1, b2, b3], axis=-1)
-    quat = R.from_matrix(mat).as_quat(scalar_first=True)
+    quat = matrix_to_quat_wxyz(mat)
     if quat.ndim == 1:
         quat = quat[None, :]
     return quat

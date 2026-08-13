@@ -34,7 +34,6 @@ from typing import Any
 import numpy as np
 import torch
 from PIL import Image
-from scipy.spatial.transform import Rotation as R
 
 # Ensure local imports resolve
 _repo_root = Path(__file__).parent
@@ -55,6 +54,41 @@ except (ImportError, ModuleNotFoundError):
             "Could not import LeRobot ACT modules. Make sure lerobot is installed. "
             f"Error: {e}"
         )
+
+
+def matrix_to_quat_wxyz(matrix: np.ndarray) -> np.ndarray:
+    """Vectorized rotation-matrix to quaternion without SciPy binary deps."""
+    matrix = np.asarray(matrix, dtype=np.float64)
+    single = matrix.ndim == 2
+    if single:
+        matrix = matrix[None]
+    result = np.empty((len(matrix), 4), dtype=np.float64)
+    for index, value in enumerate(matrix):
+        trace = np.trace(value)
+        if trace > 0:
+            scale = np.sqrt(trace + 1.0) * 2
+            result[index] = [scale / 4, (value[2, 1] - value[1, 2]) / scale,
+                             (value[0, 2] - value[2, 0]) / scale,
+                             (value[1, 0] - value[0, 1]) / scale]
+        else:
+            axis = int(np.argmax(np.diag(value)))
+            if axis == 0:
+                scale = np.sqrt(1 + value[0, 0] - value[1, 1] - value[2, 2]) * 2
+                result[index] = [(value[2, 1] - value[1, 2]) / scale, scale / 4,
+                                 (value[0, 1] + value[1, 0]) / scale,
+                                 (value[0, 2] + value[2, 0]) / scale]
+            elif axis == 1:
+                scale = np.sqrt(1 + value[1, 1] - value[0, 0] - value[2, 2]) * 2
+                result[index] = [(value[0, 2] - value[2, 0]) / scale,
+                                 (value[0, 1] + value[1, 0]) / scale, scale / 4,
+                                 (value[1, 2] + value[2, 1]) / scale]
+            else:
+                scale = np.sqrt(1 + value[2, 2] - value[0, 0] - value[1, 1]) * 2
+                result[index] = [(value[1, 0] - value[0, 1]) / scale,
+                                 (value[0, 2] + value[2, 0]) / scale,
+                                 (value[1, 2] + value[2, 1]) / scale, scale / 4]
+    result /= np.linalg.norm(result, axis=1, keepdims=True)
+    return result[0] if single else result
 
 
 class ACTInferencePolicy:
@@ -184,14 +218,14 @@ class ACTInferencePolicy:
         mat = self._r6_to_matrix(r6)
         prev_mat = self._r6_to_matrix(state[..., 3:9])
         relative_mat = mat @ np.transpose(prev_mat, (0, 2, 1))  # world frame
-        quat = R.from_matrix(relative_mat).as_quat(scalar_first=True)
+        quat = matrix_to_quat_wxyz(relative_mat)
         return quat.squeeze() if quat.shape[0] == 1 else quat
 
     def r6_absolute_to_quat(self, r6: np.ndarray) -> np.ndarray:
         if r6.ndim == 1:
             r6 = r6[None]
         mat = self._r6_to_matrix(r6)
-        quat = R.from_matrix(mat).as_quat(scalar_first=True)
+        quat = matrix_to_quat_wxyz(mat)
         return quat.squeeze() if quat.shape[0] == 1 else quat
 
     @staticmethod
