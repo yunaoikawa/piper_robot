@@ -31,6 +31,8 @@
       "pilot_success_target": 10,
       "gripper_transport_release": {
         "minimum_transport_distance_m": 0.0476,
+        "minimum_open_command_time_s": 0.8,
+        "post_release_request_xyz_offset_m": [0.02, 0.0, 0.0],
         "calibration_source": "successful_demo_grasp_to_final_open_p10",
         "calibration_episode_count": 53
       }

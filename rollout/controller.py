@@ -136,6 +136,7 @@ class PolicyController:
         self._right_close_latch = GripperCloseLatch(
             **gripper_latch_config(self.agent_profile, agent_task)
         )
+        self._agent_post_release_offset = self._agent_release_offset(agent_task)
         self._right_close_latch_enabled = self.agent_collection
 
         # Per-arm EE offset in robot frame, applied in apply_action(). This
@@ -412,6 +413,7 @@ class PolicyController:
         self._right_close_latch = GripperCloseLatch(
             **gripper_latch_config(self.agent_profile, task)
         )
+        self._agent_post_release_offset = self._agent_release_offset(task)
         self.task = {
             "lid_open": "open the petri dish lid",
             "lid_close": "close the petri dish lid",
@@ -423,6 +425,17 @@ class PolicyController:
                     "inference_ports": list(sockets["ports"]),
                 })
                 self.intervention.revision += 1
+
+    def _agent_release_offset(self, task):
+        settings = self.agent_profile.get("tasks", {}).get(task, {})
+        release = settings.get("gripper_transport_release", {})
+        offset = np.asarray(
+            release.get("post_release_request_xyz_offset_m", [0.0, 0.0, 0.0]),
+            dtype=float,
+        )
+        if offset.shape != (3,) or not np.all(np.isfinite(offset)):
+            raise ValueError(f"invalid post-release offset for {task}")
+        return offset
 
     def get_observation(self):
         timestamp = time.time()
@@ -1394,6 +1407,13 @@ class PolicyController:
                     )
             p_target = p_target + self._resume_anchor_offset
         R_target = X_Rtarget.rotation()
+
+        # Preserve the successful grasp pose.  A placement correction is
+        # introduced only after ACT asks for its demonstrated final release;
+        # the latch keeps the jaws closed for the configured settling time.
+        if (arm == "right" and self._right_close_latch_enabled
+                and self._right_close_latch.release_requested_at is not None):
+            p_target = p_target + self._agent_post_release_offset
 
         p_safe = self.safety.check(arm, p_target)
         if p_safe is None:
