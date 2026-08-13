@@ -31,9 +31,9 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-import cv2
 import numpy as np
 import torch
+from PIL import Image
 from scipy.spatial.transform import Rotation as R
 
 # Ensure local imports resolve
@@ -223,7 +223,9 @@ class ACTInferencePolicy:
         def process_image(img):
             if isinstance(img, np.ndarray):
                 if img.shape[:2] != (480, 640):
-                    img = cv2.resize(img, (640, 480), interpolation=cv2.INTER_AREA)
+                    # Inference nodes are headless and need not provide libGL.
+                    # Pillow keeps this resize independent of GUI OpenCV wheels.
+                    img = np.asarray(Image.fromarray(img).resize((640, 480), Image.Resampling.BOX))
                 if img.dtype == np.uint8:
                     img = img.astype(np.float32) / 255.0
                 return torch.from_numpy(img).float().permute(2, 0, 1)
