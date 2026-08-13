@@ -10,7 +10,7 @@ ordinary LLM-control recorder or its datasets.
   `/tmp/piper_robot_right_arm_controller.lock`.
 - At collector startup, both arms follow a synchronized, pressure-guarded,
   gripper-neutral path to physical home. `HOME` repeats this only while idle.
-- ACT actions are absolute, served at 30 Hz, horizon 40, replanned when 12
+- ACT actions are absolute, served at 30 Hz, horizon 100, replanned when 12
   actions remain. Delta ACT is rejected.
 - A 10D right-arm ACT checkpoint receives only the right 10D state and commands
   only the right arm. Left bias is zero. The left arm may move during the
@@ -32,7 +32,7 @@ On the inference GPU:
 ```bash
 python cloud_inference_clean-main/hpc_inference_act.py \
   --checkpoint outputs/lab/act/horizon/lid_open/ep100/checkpoints/last/pretrained_model \
-  --pred_horizon 40 --replan-at 12 --active-arm right --hz 30
+  --pred_horizon 100 --replan-at 12 --active-arm right --hz 30
 ```
 
 On Pasteur, from this worktree:
@@ -44,7 +44,7 @@ python cloud_inference_control_collect_v2.py \
 ```
 
 Open `http://<PASTEUR_TAILSCALE_IP>:8780/`. Tap the lid in the head image,
-start, and use `PAUSE → X/Y/Z ± 1/2/5 mm → RESUME`. Move the physical lid by
+start, and use `PAUSE → physical 前/後/左/右/上/下 1/2/5 mm → RESUME`. Move the physical lid by
 hand between episodes. Confirm SUCCESS or select a failure reason. Repeat until
 10 successes, then repeat with `lid_close` and its checkpoint.
 

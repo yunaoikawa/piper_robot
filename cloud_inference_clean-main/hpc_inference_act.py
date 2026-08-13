@@ -236,7 +236,12 @@ class InferenceServer:
                         v = raw_chunk["action"]
                         raw_chunk = v.detach().cpu().numpy() if isinstance(v, torch.Tensor) else v
 
-                    quat_chunk = action_chunk_to_quat16(raw_chunk, self.active_arm)
+                    # ACT checkpoints may emit their full training chunk (100)
+                    # even when a shorter serving horizon was requested.  The
+                    # ActionBuffer length must match its declared chunk_size.
+                    quat_chunk = action_chunk_to_quat16(
+                        raw_chunk, self.active_arm
+                    )[:self.chunk_size]
                     inference_time = time.time() - start
 
                     action_list = []

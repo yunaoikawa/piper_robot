@@ -12,7 +12,7 @@ from pathlib import Path
 from scipy.spatial.transform import Rotation as R
 
 from robot.rpc import RPCClient
-from robot.camera_id import load_camera_map
+from robot.camera_id import configure_camera_map_by_udid, load_camera_map
 from loop_rate_limiters import RateLimiter
 
 from .camera import CameraFeedManager, USBWristCameraFeedManager
@@ -59,7 +59,7 @@ class PolicyController:
                  agent_collection=False, agent_task=None,
                  agent_ui_host="0.0.0.0", agent_ui_port=8780,
                  agent_ui_token="", controller_lock="/tmp/piper_robot_right_arm_controller.lock",
-                 agent_auto_home=True):
+                 agent_auto_home=True, agent_config="src/configs/lid_agent_collection.json"):
         self.stop_event = threading.Event()
         self.policy_active = False
         self.task = task
@@ -79,6 +79,8 @@ class PolicyController:
         }
         self._action_record_lock = threading.Lock()
         self._latest_ui_frames = {}
+        self._resume_anchor_xyz = None
+        self._resume_anchor_offset = np.zeros(3, dtype=float)
         self.agent_auto_home = bool(agent_auto_home)
         # lid_open terminates while retaining the object.  A time-agnostic ACT
         # policy can otherwise re-enter its approach phase and reopen after a
@@ -130,7 +132,14 @@ class PolicyController:
         }
         self.test_qpos = None
         save_path = Path(save_dir) if save_dir else DATA_DIR
-        cam_map = load_camera_map()
+        if self.agent_collection:
+            profile = json.loads(Path(agent_config).read_text())
+            cam_map, live_udids = configure_camera_map_by_udid(
+                profile["camera_udids"], preserve_unknown=False
+            )
+            print(f"[agent] camera map by UDID: {cam_map}; live={live_udids}")
+        else:
+            cam_map = load_camera_map()
 
         # The agent phone UI is the display surface.  Creating Qt/OpenCV
         # windows from a headless lab daemon aborts the whole process before
@@ -534,6 +543,10 @@ class PolicyController:
                     raise RuntimeError("episode is not idle")
                 if self.intervention.target_selection is None:
                     raise RuntimeError("tap the target in the head image first")
+                for camera in ("head", "right"):
+                    frame, frame_id = self._agent_frame_provider(camera)
+                    if frame is None or frame_id is None or np.std(frame) < 2.0:
+                        raise RuntimeError(f"required {camera} camera is missing/blank")
                 task = payload.get("task", self.agent_task)
                 if task != self.agent_task:
                     raise RuntimeError(f"controller is configured for {self.agent_task}, not {task}")
@@ -544,6 +557,8 @@ class PolicyController:
                     "policy_mode": "absolute", "control_frequency_hz": 30,
                 })
                 self._agent_sample_index = 0
+                self._resume_anchor_xyz = None
+                self._resume_anchor_offset[:] = 0
                 self._right_close_latch.reset()
                 metrics["gripper_close_latched"] = False
                 self.intervention.correction_revision = 0
@@ -582,11 +597,27 @@ class PolicyController:
                 bias[{"x": 0, "y": 1, "z": 2}[axis]] += direction * step_mm / 1000.0
                 self.intervention.set_bias(arm, bias)
                 self.set_bias(arm, bias)
+                # A phone direction button is a real Cartesian jog, not merely
+                # a future absolute-policy bias. Keep the measured gripper
+                # opening, including a successfully grasped object.
+                pose = self.cone_e.get_right_ee_pose()
+                delta = np.zeros(3, dtype=float)
+                delta[{"x": 0, "y": 1, "z": 2}[axis]] = direction * step_mm / 1000.0
+                target_xyz = pose.translation() + delta
+                safe_xyz = self.safety.check("right", target_xyz)
+                if safe_xyz is None:
+                    raise RuntimeError("Cartesian nudge rejected by pressure/motion safety")
+                target = mink.SE3(np.r_[pose.rotation().wxyz, safe_xyz])
+                gripper = float(self.cone_e.get_right_gripper_exact())
+                self.cone_e.set_right_ee_target(
+                    ee_target=target, gripper_target=gripper, preview_time=0.20
+                )
                 self.intervention.correction_revision += 1
                 if self.recorder.is_recording:
                     self.recorder.log_event(
                         "bias_nudge", arm=arm, axis=axis, direction=direction,
                         step_mm=step_mm, bias_m=bias.tolist(),
+                        direct_cartesian_target_xyz=safe_xyz.tolist(),
                         correction_revision=self.intervention.correction_revision,
                     )
                 metrics["last_nudge"] = {
@@ -597,6 +628,8 @@ class PolicyController:
                 if mode != "paused":
                     raise RuntimeError("resume requires paused mode")
                 self._resume_after_obs_timestamp = time.time()
+                self._resume_anchor_xyz = self.cone_e.get_right_ee_pose().translation().copy()
+                self._resume_anchor_offset[:] = 0
                 self._clear_actions_after(self._resume_after_obs_timestamp)
                 self.starting_pose_left = self.starting_pose_right = None
                 self.safety.reset()
@@ -616,6 +649,8 @@ class PolicyController:
                 with self.intervention.lock:
                     self.intervention.target_selection = None
                 self._right_close_latch.reset()
+                self._resume_anchor_xyz = None
+                self._resume_anchor_offset[:] = 0
             self.intervention.complete(request_id, mode=mode, **metrics)
         except Exception as error:
             self.intervention.complete(request_id, error=str(error))
@@ -794,6 +829,15 @@ class PolicyController:
         # the robot frame (post-H) so the numbers mean what the workspace bounds
         # and the EVAL_RESULTS z-bias figures mean.
         p_target = X_Rtarget.translation() + self.xyz_bias[arm]
+        if arm == "right" and self._resume_anchor_xyz is not None:
+            if not np.any(self._resume_anchor_offset):
+                self._resume_anchor_offset = self._resume_anchor_xyz - p_target
+                if self.recorder.is_recording:
+                    self.recorder.log_event(
+                        "resume_anchor",
+                        offset_m=self._resume_anchor_offset.tolist(),
+                    )
+            p_target = p_target + self._resume_anchor_offset
         R_target = X_Rtarget.rotation()
 
         p_safe = self.safety.check(arm, p_target)

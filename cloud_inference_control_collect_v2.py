@@ -47,6 +47,8 @@ def main():
     parser.add_argument('--agent-ui-host', default='0.0.0.0')
     parser.add_argument('--agent-ui-port', type=int, default=8780)
     parser.add_argument('--agent-ui-token', default='')
+    parser.add_argument('--agent-config', default='src/configs/lid_agent_collection.json',
+                        help='Agent config containing immutable camera_udids')
     parser.add_argument('--agent-no-auto-home', action='store_true',
                         help='Emergency/debug opt-out; agent collection homes both arms by default')
     parser.add_argument('--controller-lock',
@@ -84,6 +86,7 @@ def main():
         agent_ui_host=args.agent_ui_host,
         agent_ui_port=args.agent_ui_port,
         agent_ui_token=args.agent_ui_token,
+        agent_config=args.agent_config,
         controller_lock=args.controller_lock,
         agent_auto_home=not args.agent_no_auto_home,
     )

@@ -5,9 +5,14 @@
   "policy": {
     "type": "ACT",
     "action_mode": "absolute",
-    "prediction_horizon": 40,
+    "prediction_horizon": 100,
     "replan_at_remaining": 12,
     "active_arm": "right"
+  },
+  "camera_udids": {
+    "head": "00008101-0015486E1412001E",
+    "right": "00008030-00121D820EE0802E",
+    "left": "00008030-001D39EA2646802E"
   },
   "tasks": {
     "lid_open": {
