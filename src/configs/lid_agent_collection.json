@@ -27,7 +27,7 @@
     },
     "lid_close": {
       "checkpoint": "outputs/lab/act/horizon/lid_close/ep100/checkpoints/last/pretrained_model",
-      "initial_right_xyz_bias_m": [0.0, -0.02, -0.065],
+      "initial_right_xyz_bias_m": [0.0, 0.02, -0.05],
       "pilot_success_target": 10,
       "gripper_transport_release": {
         "minimum_transport_distance_m": 0.0476,
@@ -49,7 +49,7 @@
     "camera_failure_grace_s": 1.0,
     "inference_failure_grace_s": 10.0,
     "maximum_episode_s": 42.0,
-    "grasp_confirmation_deadline_s": 10.0,
+    "grasp_confirmation_deadline_s": 16.0,
     "bias_retry_offsets_m": {
       "lid_open": [
         [0.0, 0.0, 0.0],
@@ -59,11 +59,7 @@
         [0.0, 0.04, 0.0]
       ],
       "lid_close": [
-        [0.0, 0.0, 0.0],
-        [0.0, 0.01, 0.0],
-        [0.0, -0.01, 0.0],
-        [0.0, 0.02, 0.0],
-        [0.0, -0.02, 0.0]
+        [0.0, 0.0, 0.0]
       ]
     }
   },
@@ -73,7 +69,7 @@
     "pause_excluded_from_training_time": true,
     "resume_requires_fresh_observation": true,
     "terminal_vertical_descent": {
-      "enabled": true,
+      "enabled": false,
       "duration_s": 0.8
     },
     "gripper_transport_release": {
