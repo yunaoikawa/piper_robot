@@ -142,6 +142,7 @@ class InferenceServer:
         chunk_size: int = 50,
         replan_at: int = 0,
         active_arm: str = "both",
+        legacy_full_chunk: bool = False,
     ):
         self.model = model
         self.device = device
@@ -152,6 +153,7 @@ class InferenceServer:
             raise ValueError("active_arm must be left, right, or both")
         self.replan_at = replan_at
         self.active_arm = active_arm
+        self.legacy_full_chunk = bool(legacy_full_chunk)
         self.minimum_obs_timestamp = float("-inf")
         self.action_buffer = ActionBuffer(chunk_size)
 
@@ -175,6 +177,12 @@ class InferenceServer:
         print(f"Using device: {device}", flush=True)
         print(f"Action chunk size: {chunk_size}", flush=True)
         print(f"Replan threshold: {replan_at}; active arm: {active_arm}", flush=True)
+        if self.legacy_full_chunk:
+            print(
+                "[legacy-2026-06] serving the checkpoint's complete action chunk; "
+                "pred_horizon is metadata only",
+                flush=True,
+            )
 
         print("Warming up model...", flush=True)
         self.model.warmup()
@@ -236,12 +244,15 @@ class InferenceServer:
                         v = raw_chunk["action"]
                         raw_chunk = v.detach().cpu().numpy() if isinstance(v, torch.Tensor) else v
 
-                    # ACT checkpoints may emit their full training chunk (100)
-                    # even when a shorter serving horizon was requested.  The
-                    # ActionBuffer length must match its declared chunk_size.
                     quat_chunk = action_chunk_to_quat16(
                         raw_chunk, self.active_arm
-                    )[:self.chunk_size]
+                    )
+                    # The June-25 rollout declared pred_horizon=50 but served
+                    # all 100 actions emitted by the checkpoint before the next
+                    # inference.  Preserve that historical behavior only behind
+                    # an explicit compatibility flag; normal runs are sliced.
+                    if not self.legacy_full_chunk:
+                        quat_chunk = quat_chunk[:self.chunk_size]
                     inference_time = time.time() - start
 
                     action_list = []
@@ -427,6 +438,11 @@ def main():
     parser.add_argument("--replan-at", default=0, type=int,
                         help="Refresh the chunk when this many actions remain")
     parser.add_argument("--active-arm", choices=("left", "right", "both"), default="both")
+    parser.add_argument(
+        "--legacy-full-chunk", action="store_true",
+        help="Reproduce June-2026 inference: serve the checkpoint's complete "
+             "chunk even when pred_horizon is shorter",
+    )
     parser.add_argument("--hz", default=30, type=float, help="Control frequency (Hz)")
     parser.add_argument(
         "--primary-camera", type=str, default="cam_high",
@@ -457,6 +473,7 @@ def main():
     print(f"  Control frequency:  {args.hz} Hz", flush=True)
     print(f"  Replan at:          {args.replan_at}", flush=True)
     print(f"  Active arm:         {args.active_arm}", flush=True)
+    print(f"  Legacy full chunk:  {args.legacy_full_chunk}", flush=True)
 
     server = InferenceServer(
         model,
@@ -466,6 +483,7 @@ def main():
         chunk_size=chunk_size,
         replan_at=args.replan_at,
         active_arm=args.active_arm,
+        legacy_full_chunk=args.legacy_full_chunk,
     )
     server.run()
 
