@@ -27,7 +27,7 @@
     },
     "lid_close": {
       "checkpoint": "outputs/lab/act/horizon/lid_close/ep100/checkpoints/last/pretrained_model",
-      "initial_right_xyz_bias_m": [0.0, 0.02, -0.05],
+      "initial_right_xyz_bias_m": [0.0, 0.02, -0.06],
       "pilot_success_target": 10,
       "gripper_transport_release": {
         "minimum_transport_distance_m": 0.0476,
@@ -63,13 +63,23 @@
         [0.0, -0.02, 0.0],
         [0.0, 0.02, 0.0],
         [0.0, -0.04, 0.0],
-        [0.0, 0.04, 0.0]
+        [0.0, 0.04, 0.0],
+        [0.0, 0.0, -0.01],
+        [0.0, -0.02, -0.01],
+        [0.0, 0.02, -0.01],
+        [0.0, -0.04, -0.01],
+        [0.0, 0.04, -0.01],
+        [0.0, 0.0, -0.02],
+        [0.0, -0.02, -0.02],
+        [0.0, 0.02, -0.02],
+        [0.0, -0.04, -0.02],
+        [0.0, 0.04, -0.02]
       ]
     }
   },
   "intervention": {
     "steps_mm": [1, 2, 5],
-    "maximum_absolute_bias_m": 0.06,
+    "maximum_absolute_bias_m": 0.08,
     "pause_excluded_from_training_time": true,
     "resume_requires_fresh_observation": true,
     "gripper_transport_release": {

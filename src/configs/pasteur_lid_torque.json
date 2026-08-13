@@ -5,6 +5,7 @@
   "consecutive_samples": 5,
   "agent_auto_home": {
     "maximum_speed_rad_s": 0.1,
+    "maximum_final_error_rad": 0.16,
     "residual_floor_nm": 0.2,
     "residual_ceiling_nm": 0.5,
     "residual_duration_s": 2.0

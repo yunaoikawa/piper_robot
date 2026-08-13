@@ -78,6 +78,11 @@ class PolicyController:
             json.loads(Path(agent_config).read_text())
             if self.agent_collection else {}
         )
+        self.maximum_bias_m = float(
+            self.agent_profile.get("intervention", {}).get(
+                "maximum_absolute_bias_m", 0.06
+            )
+        )
         self.agent_cycle_enabled = bool(agent_cycle)
         if self.agent_cycle_enabled and not self.agent_collection:
             raise ValueError("agent_cycle requires agent_collection")
@@ -100,11 +105,7 @@ class PolicyController:
             for name, settings in self.agent_profile.get("tasks", {}).items()
         }
         if self.agent_cycle is not None:
-            maximum_bias = float(
-                self.agent_profile.get("intervention", {}).get(
-                    "maximum_absolute_bias_m", 0.06
-                )
-            )
+            maximum_bias = self.maximum_bias_m
             for task_name, offsets in self.agent_cycle.bias_retry_offsets_m.items():
                 scheduled = (
                     self._agent_task_bias[task_name][None, :]
@@ -1371,8 +1372,8 @@ class PolicyController:
         b = np.asarray(bias, dtype=float).reshape(3)
         if not np.all(np.isfinite(b)):
             raise ValueError(f"bias must contain three finite values, got {bias!r}")
-        if np.any(np.abs(b) > 0.06 + 1e-12):
-            raise ValueError("bias is limited to ±0.06 m")
+        if np.any(np.abs(b) > self.maximum_bias_m + 1e-12):
+            raise ValueError(f"bias is limited to ±{self.maximum_bias_m:.3f} m")
         self.xyz_bias[arm] = b
         # Changing the bias jumps the next target by the delta -- a legitimate
         # discontinuity, not a runaway. Drop the step reference so the safety

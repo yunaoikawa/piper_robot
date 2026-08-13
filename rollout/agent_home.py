@@ -173,7 +173,10 @@ def run_agent_auto_home(
         arm: float(np.max(np.abs(final[arm] - physical_home_q(arm))))
         for arm in ("left", "right")
     }
-    if any(error > 0.12 for error in errors.values()):
+    maximum_final_error_rad = float(
+        config.get("agent_auto_home", {}).get("maximum_final_error_rad", 0.12)
+    )
+    if any(error > maximum_final_error_rad for error in errors.values()):
         raise RuntimeError(f"agent auto-home did not converge: {errors}")
     return {
         "completed": completed,
