@@ -4,6 +4,7 @@
 set -euo pipefail
 
 cd /home/yoikawa/src/robot-vla-data
+export PYTHONPATH="/home/yoikawa/src/robot-vla-data/.runtime_deps${PYTHONPATH:+:${PYTHONPATH}}"
 exec /home/yoikawa/miniconda3/envs/lerobot/bin/python \
   cloud_inference_clean-main/hpc_inference_act.py \
   --checkpoint /home/yoikawa/src/robot/outputs/lab/act/after0610/petri/microscope/checkpoints/last/pretrained_model \
