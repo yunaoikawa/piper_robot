@@ -47,31 +47,72 @@ class GripperCloseLatch:
     """
 
     def __init__(self, *, open_threshold: float = 0.75,
-                 close_threshold: float = 0.35):
+                 close_threshold: float = 0.35,
+                 empty_closed_threshold: float = 0.08,
+                 minimum_close_time_s: float = 1.0,
+                 stall_window_s: float = 0.35,
+                 stall_range: float = 0.02):
         if not 0.0 <= close_threshold < open_threshold <= 1.0:
             raise ValueError("gripper thresholds must satisfy 0 <= close < open <= 1")
         self.open_threshold = float(open_threshold)
         self.close_threshold = float(close_threshold)
+        self.empty_closed_threshold = float(empty_closed_threshold)
+        self.minimum_close_time_s = float(minimum_close_time_s)
+        self.stall_window_s = float(stall_window_s)
+        self.stall_range = float(stall_range)
         self.reset()
 
     def reset(self) -> None:
         self.seen_open = False
         self.latched = False
         self.target = 1.0
+        self.closing_started_at: float | None = None
+        self.measured_history: list[tuple[float, float]] = []
 
-    def apply(self, command: float) -> tuple[float, bool]:
+    def apply(self, command: float, measured: float,
+              *, now: float | None = None) -> tuple[float, bool]:
         value = float(np.clip(command, 0.0, 1.0))
+        measured = float(np.clip(measured, 0.0, 1.0))
+        now = time.monotonic() if now is None else float(now)
         newly_latched = False
+        if self.latched:
+            self.target = min(self.target, value)
+            return self.target, False
+
         if value >= self.open_threshold:
             self.seen_open = True
-        if self.seen_open and value <= self.close_threshold and not self.latched:
-            self.latched = True
-            self.target = value
-            newly_latched = True
-        elif self.latched:
-            # Allow a later prediction to close more firmly, never to reopen.
-            self.target = min(self.target, value)
-        return (self.target if self.latched else value), newly_latched
+            self.closing_started_at = None
+            self.measured_history.clear()
+            return value, False
+
+        if self.seen_open and value <= self.close_threshold:
+            if self.closing_started_at is None:
+                self.closing_started_at = now
+                self.measured_history.clear()
+            self.measured_history.append((now, measured))
+            cutoff = now - self.stall_window_s
+            self.measured_history = [
+                sample for sample in self.measured_history if sample[0] >= cutoff
+            ]
+            close_age = now - self.closing_started_at
+            recent = [sample[1] for sample in self.measured_history]
+            blocked = (
+                close_age >= self.minimum_close_time_s
+                and len(recent) >= 2
+                and measured > self.empty_closed_threshold
+                and max(recent) - min(recent) <= self.stall_range
+            )
+            if blocked:
+                self.latched = True
+                self.target = value
+                newly_latched = True
+        elif self.closing_started_at is not None:
+            # An opening/mid-range command before a confirmed stall means the
+            # grasp was not proven.  Do not trap an empty closed gripper.
+            self.closing_started_at = None
+            self.measured_history.clear()
+
+        return value, newly_latched
 
 
 def utc_now() -> str:

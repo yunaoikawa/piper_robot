@@ -64,18 +64,31 @@ def test_bias_mailbox_and_slice():
 
 def test_open_task_gripper_latch_never_releases_after_close():
     latch = GripperCloseLatch()
-    output = [latch.apply(value)[0] for value in (1.0, .82, .34, .12, .9, 1.0)]
-    assert output == pytest.approx([1.0, .82, .34, .12, .12, .12])
+    steps = (
+        (1.0, 1.0, 0.0),
+        (.3, .7, 1.0),
+        (.2, .61, 1.7),
+        (.15, .605, 1.9),
+        (.1, .60, 2.1),
+        (.9, .60, 2.2),
+        (1.0, .60, 2.3),
+    )
+    output = [latch.apply(command, measured, now=now)[0]
+              for command, measured, now in steps]
+    assert output == pytest.approx([1.0, .3, .2, .15, .1, .1, .1])
     assert latch.latched is True
 
 
-def test_gripper_latch_requires_open_then_close_and_resets():
+def test_gripper_latch_does_not_hold_an_empty_fully_closed_gripper():
     latch = GripperCloseLatch()
-    assert latch.apply(.2) == pytest.approx((.2, False))
-    assert latch.apply(.9) == pytest.approx((.9, False))
-    assert latch.apply(.3) == pytest.approx((.3, True))
+    assert latch.apply(.2, .2, now=0) == pytest.approx((.2, False))
+    assert latch.apply(.9, .9, now=1) == pytest.approx((.9, False))
+    assert latch.apply(.2, .7, now=2) == pytest.approx((.2, False))
+    assert latch.apply(.1, .04, now=3.1) == pytest.approx((.1, False))
+    assert latch.apply(1.0, .01, now=3.2) == pytest.approx((1.0, False))
+    assert latch.latched is False
     latch.reset()
-    assert latch.apply(.9) == pytest.approx((.9, False))
+    assert latch.apply(.9, .9, now=4) == pytest.approx((.9, False))
 
 
 def test_controller_claim_is_exclusive(tmp_path):

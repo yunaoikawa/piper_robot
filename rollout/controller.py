@@ -118,6 +118,7 @@ class PolicyController:
 
         self.last_left_gripper = 1.0
         self.last_right_gripper = 1.0
+        self.latest_right_gripper_exact = 1.0
         self.last_left_gripper_binary = 1.0
         self.last_right_gripper_binary = 1.0
         self.starting_pose_left = None
@@ -297,6 +298,7 @@ class PolicyController:
             right_gripper = self.obs_cone_e.get_right_gripper_exact()
             left_joint_positions = self.obs_cone_e.get_left_joint_positions()
             right_joint_positions = self.obs_cone_e.get_right_joint_positions()
+        self.latest_right_gripper_exact = float(right_gripper)
 
         left_gripper_binary, right_gripper_binary = self._process_gripper_states(
             left_gripper, right_gripper
@@ -801,7 +803,9 @@ class PolicyController:
         target = mink.SE3(np.concatenate([R_target.wxyz, p_safe]))
         gripper_command = float(gripper)
         if arm == "right" and self._right_close_latch_enabled:
-            gripper_command, newly_latched = self._right_close_latch.apply(gripper_command)
+            gripper_command, newly_latched = self._right_close_latch.apply(
+                gripper_command, self.latest_right_gripper_exact
+            )
             if newly_latched:
                 self.recorder.log_event(
                     "gripper_close_latched",
