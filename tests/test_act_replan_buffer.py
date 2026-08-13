@@ -10,6 +10,7 @@ def load_server_module():
     sys.modules.setdefault("torch", torch)
     act = types.ModuleType("act_inference")
     act.ACTInferencePolicy = type("ACTInferencePolicy", (), {})
+    act.matrix_to_quat_wxyz = lambda matrix: matrix
     sys.modules.setdefault("act_inference", act)
     path = Path(__file__).parents[1] / "cloud_inference_clean-main" / "hpc_inference_act.py"
     spec = importlib.util.spec_from_file_location("hpc_inference_act_test", path)
