@@ -31,7 +31,6 @@ from .agent_home import run_agent_auto_home
 DATA_DIR = Path("./your_save_dir_here")
 DEFAULT_TASK = "put the flask in the incubator"
 TARGET_H, TARGET_W = 480, 640
-DEFAULT_AGENT_LEFT_BIAS_M = (-0.0016, -0.0028, -0.0003)
 
 
 def quat_to_r6(quat, batched=False):
@@ -60,8 +59,7 @@ class PolicyController:
                  agent_collection=False, agent_task=None,
                  agent_ui_host="0.0.0.0", agent_ui_port=8780,
                  agent_ui_token="", controller_lock="/tmp/piper_robot_right_arm_controller.lock",
-                 agent_auto_home=True,
-                 agent_left_bias=DEFAULT_AGENT_LEFT_BIAS_M):
+                 agent_auto_home=True):
         self.stop_event = threading.Event()
         self.policy_active = False
         self.task = task
@@ -82,7 +80,6 @@ class PolicyController:
         self._action_record_lock = threading.Lock()
         self._latest_ui_frames = {}
         self.agent_auto_home = bool(agent_auto_home)
-        self.agent_left_reference_pose = None
 
         # Per-arm EE offset in robot frame, applied in apply_action(). This
         # replaces the server-side --z-bias so the bias exists in exactly one
@@ -104,7 +101,6 @@ class PolicyController:
             self.agent_start_home_report = None
             if self.agent_auto_home:
                 self.agent_start_home_report = self._agent_home_both_arms()
-            self.agent_left_reference_pose = self.cone_e.get_left_ee_pose()
         else:
             self.agent_start_home_report = None
             self.cone_e.home_left_arm()
@@ -172,13 +168,10 @@ class PolicyController:
         self.agent_ui = None
         if self.agent_collection:
             self.set_bias("right", [0.0, 0.0, -0.03])
-            self.set_bias("left", agent_left_bias)
-            self._command_agent_left_bias()
             self.intervention.set_bias("right", self.xyz_bias["right"])
             self.intervention.set_bias("left", self.xyz_bias["left"])
             self.intervention.latest_metrics["task"] = agent_task
             self.intervention.latest_metrics["auto_home"] = self.agent_start_home_report
-            self.intervention.latest_metrics["left_bias_source"] = "lid_open_demo_start_mean"
             self.intervention.latest_metrics["pilot_success_target"] = 10
             self.intervention.latest_metrics["success_count"] = self.recorder.success_count(agent_task)
             self.agent_ui = AgentCollectionUI(
@@ -206,21 +199,6 @@ class PolicyController:
         )
         print("[agent] auto-home " + json.dumps(report, sort_keys=True), flush=True)
         return report
-
-    def _command_agent_left_bias(self):
-        """Move left once to home-relative observer bias; never integrate it."""
-
-        if self.agent_left_reference_pose is None:
-            raise RuntimeError("left observer home reference has not been latched")
-        reference = self.agent_left_reference_pose
-        target = mink.SE3(np.concatenate([
-            reference.rotation().wxyz,
-            reference.translation() + self.xyz_bias["left"],
-        ]))
-        self.cone_e.set_left_ee_target(
-            ee_target=target, gripper_target=None, preview_time=0.5
-        )
-        return target
 
     def _bias_control_loop(self):
         """REP socket for changing the EE bias without restarting anything.
@@ -444,7 +422,11 @@ class PolicyController:
     def _observation_publishing_loop(self):
         print("Observation publishing thread started")
         observation_rate = 30 if self.agent_collection else 2
-        rate_limiter = RateLimiter(observation_rate)
+        rate_limiter = RateLimiter(
+            observation_rate,
+            name="agent observation" if self.agent_collection else "observation",
+            warn=not self.agent_collection,
+        )
 
         while not self.stop_event.is_set():
             started = time.monotonic()
@@ -520,8 +502,6 @@ class PolicyController:
                     raise RuntimeError("HOME is accepted only while idle")
                 self.episode_manager.clear_action_queue()
                 report = self._agent_home_both_arms()
-                self.agent_left_reference_pose = self.cone_e.get_left_ee_pose()
-                self._command_agent_left_bias()
                 self.starting_pose_left = self.starting_pose_right = None
                 self.safety.reset()
                 metrics["auto_home"] = report
@@ -580,9 +560,7 @@ class PolicyController:
             elif command == "nudge":
                 if mode not in {"idle", "paused"}:
                     raise RuntimeError("nudge is accepted only while idle or paused")
-                arm = payload.get("arm", "right")
-                if arm not in {"left", "right"}:
-                    raise ValueError("arm must be left or right")
+                arm = "right"
                 axis = payload.get("axis")
                 if axis not in {"x", "y", "z"}:
                     raise ValueError("axis must be x, y, or z")
@@ -594,8 +572,6 @@ class PolicyController:
                 bias[{"x": 0, "y": 1, "z": 2}[axis]] += direction * step_mm / 1000.0
                 self.intervention.set_bias(arm, bias)
                 self.set_bias(arm, bias)
-                if arm == "left":
-                    self._command_agent_left_bias()
                 self.intervention.correction_revision += 1
                 if self.recorder.is_recording:
                     self.recorder.log_event(
@@ -829,7 +805,11 @@ class PolicyController:
     def control_loop(self, control_rate=30):
         if self.agent_collection and control_rate != 30:
             raise ValueError("agent collection must run at exactly 30 Hz")
-        rate_limiter = RateLimiter(control_rate)
+        rate_limiter = RateLimiter(
+            control_rate,
+            name="agent control" if self.agent_collection else "control",
+            warn=not self.agent_collection,
+        )
         self.policy_active = True
         self._print_startup_info(control_rate)
         self.episode_manager.set_controller_start_time()

@@ -16,6 +16,39 @@ from .recovery_teleop_safety import (
 )
 
 
+def _agent_pressure_guard(rpc, torque_config_path, audit_path, provenance):
+    config = json.loads(Path(torque_config_path).read_text())
+    right_threshold = np.asarray(config["thresholds"]["right"], dtype=float)
+    thresholds = {"left": right_threshold.copy(), "right": right_threshold.copy()}
+    left_fallback = extend_fallback_threshold_for_stationary_pose(
+        rpc,
+        thresholds,
+        arm="left",
+        sample_count=25,
+        sample_interval_s=0.01,
+        margin=1.20,
+    )
+    recovery = config["recovery_teleop"]
+    return RecoveryTorqueGuard(
+        rpc,
+        thresholds,
+        consecutive_samples=int(config.get("consecutive_samples", 5)),
+        preview_time_s=0.05,
+        residual_fraction=float(recovery["residual_fraction"]),
+        residual_floor_nm=float(recovery["residual_floor_nm"]),
+        residual_ceiling_nm=float(recovery["residual_ceiling_nm"]),
+        residual_duration_s=float(recovery["residual_duration_s"]),
+        baseline_slew_nm_per_s=float(recovery["baseline_slew_nm_per_s"]),
+        hard_limit_multiplier=float(recovery["hard_limit_multiplier"]),
+        enforce=True,
+        audit_path=audit_path,
+        provenance={
+            **dict(provenance),
+            "left_fallback_calibration": left_fallback,
+        },
+    )
+
+
 def agent_home_trajectory(
     start_by_arm: dict[str, np.ndarray],
     *,
@@ -74,35 +107,11 @@ def run_agent_auto_home(
         for arm in ("left", "right")
     }
     paths, duration = agent_home_trajectory(starts, control_hz=control_hz)
-    config = json.loads(Path(torque_config_path).read_text())
-    right_threshold = np.asarray(config["thresholds"]["right"], dtype=float)
-    thresholds = {"left": right_threshold.copy(), "right": right_threshold.copy()}
-    left_fallback = extend_fallback_threshold_for_stationary_pose(
+    guard = _agent_pressure_guard(
         rpc,
-        thresholds,
-        arm="left",
-        sample_count=25,
-        sample_interval_s=0.01,
-        margin=1.20,
-    )
-    recovery = config["recovery_teleop"]
-    guard = RecoveryTorqueGuard(
-        rpc,
-        thresholds,
-        consecutive_samples=int(config.get("consecutive_samples", 5)),
-        preview_time_s=0.05,
-        residual_fraction=float(recovery["residual_fraction"]),
-        residual_floor_nm=float(recovery["residual_floor_nm"]),
-        residual_ceiling_nm=float(recovery["residual_ceiling_nm"]),
-        residual_duration_s=float(recovery["residual_duration_s"]),
-        baseline_slew_nm_per_s=float(recovery["baseline_slew_nm_per_s"]),
-        hard_limit_multiplier=float(recovery["hard_limit_multiplier"]),
-        enforce=True,
-        audit_path=audit_path,
-        provenance={
-            "primitive": "agent_auto_home",
-            "left_fallback_calibration": left_fallback,
-        },
+        torque_config_path,
+        audit_path,
+        {"primitive": "agent_auto_home"},
     )
 
     started = time.monotonic()

@@ -13,11 +13,8 @@ ordinary LLM-control recorder or its datasets.
 - ACT actions are absolute, served at 30 Hz, horizon 40, replanned when 12
   actions remain. Delta ACT is rejected.
 - A 10D right-arm ACT checkpoint receives only the right 10D state and commands
-  only the right arm. The left arm is moved once from home by its observer bias;
-  it is never fed into or commanded by the right-only ACT policy.
-- Left observer bias defaults to `[-0.0016, -0.0028, -0.0003]` m. This is the
-  difference between the present home EE and the mean left EE at the start of
-  the original `lid_open` demonstrations, not a guessed pixel offset.
+  only the right arm. Left bias is zero. The left arm may move during the
+  synchronized auto-home, but is never fed into or commanded by this policy.
 - Right bias starts at `[0, 0, -0.03]` m when the collector starts, remains at
   the last UI-adjusted value across episodes, and is applied exactly once per
   absolute target in the client, in robot coordinates.
@@ -51,11 +48,8 @@ start, and use `PAUSE → X/Y/Z ± 1/2/5 mm → RESUME`. Move the physical lid b
 hand between episodes. Confirm SUCCESS or select a failure reason. Repeat until
 10 successes, then repeat with `lid_close` and its checkpoint.
 
-The arm selector applies nudges to either the right ACT bias or the left
-home-relative observer bias. A left nudge always recomputes `left_home + bias`;
-it is never added to the last target, so repeated 30 Hz integration cannot make
-the left arm drift. Use `--agent-left-bias X Y Z` to override the measured
-default. `--agent-no-auto-home` exists only as an emergency/debug opt-out.
+UI nudges apply only to the right ACT bias. `--agent-no-auto-home` exists only
+as an emergency/debug opt-out.
 
 ## Audit and training conversion
 
