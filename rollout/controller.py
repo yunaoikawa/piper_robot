@@ -7,6 +7,7 @@ import mink
 import numpy as np
 import threading
 import hashlib
+import json
 from pathlib import Path
 from scipy.spatial.transform import Rotation as R
 
@@ -25,10 +26,13 @@ from .agent_collection import (
     FAILURE_REASONS, InterventionState,
 )
 from .agent_collection_ui import AgentCollectionUI
+from .agent_home import run_agent_auto_home
 
 DATA_DIR = Path("./your_save_dir_here")
 DEFAULT_TASK = "put the flask in the incubator"
 TARGET_H, TARGET_W = 480, 640
+DEFAULT_AGENT_LEFT_BIAS_M = (-0.0016, -0.0028, -0.0003)
+
 
 def quat_to_r6(quat, batched=False):
     rot_mat = R.from_quat(quat, scalar_first=True).as_matrix()
@@ -55,7 +59,9 @@ class PolicyController:
                  task=DEFAULT_TASK, safety_config=None, bias_port=5560,
                  agent_collection=False, agent_task=None,
                  agent_ui_host="0.0.0.0", agent_ui_port=8780,
-                 agent_ui_token="", controller_lock="/tmp/piper_robot_right_arm_controller.lock"):
+                 agent_ui_token="", controller_lock="/tmp/piper_robot_right_arm_controller.lock",
+                 agent_auto_home=True,
+                 agent_left_bias=DEFAULT_AGENT_LEFT_BIAS_M):
         self.stop_event = threading.Event()
         self.policy_active = False
         self.task = task
@@ -75,6 +81,8 @@ class PolicyController:
         }
         self._action_record_lock = threading.Lock()
         self._latest_ui_frames = {}
+        self.agent_auto_home = bool(agent_auto_home)
+        self.agent_left_reference_pose = None
 
         # Per-arm EE offset in robot frame, applied in apply_action(). This
         # replaces the server-side --z-bias so the bias exists in exactly one
@@ -92,8 +100,15 @@ class PolicyController:
 
         self.cone_e = RPCClient("localhost", 8081)
         self.cone_e.init()
-        self.cone_e.home_left_arm()
-        self.cone_e.home_right_arm()
+        if self.agent_collection:
+            self.agent_start_home_report = None
+            if self.agent_auto_home:
+                self.agent_start_home_report = self._agent_home_both_arms()
+            self.agent_left_reference_pose = self.cone_e.get_left_ee_pose()
+        else:
+            self.agent_start_home_report = None
+            self.cone_e.home_left_arm()
+            self.cone_e.home_right_arm()
 
         self._setup_zmq(hpc_host, obs_port, action_port)
 
@@ -114,7 +129,12 @@ class PolicyController:
         save_path = Path(save_dir) if save_dir else DATA_DIR
         cam_map = load_camera_map()
 
-        self.camera = CameraFeedManager(self.stop_event)
+        # The agent phone UI is the display surface.  Creating Qt/OpenCV
+        # windows from a headless lab daemon aborts the whole process before
+        # the operator can press START.
+        self.camera = CameraFeedManager(
+            self.stop_event, display=not self.agent_collection
+        )
         self.camera.autonomous_mode = autonomous_mode
         self.camera.start()
 
@@ -152,8 +172,13 @@ class PolicyController:
         self.agent_ui = None
         if self.agent_collection:
             self.set_bias("right", [0.0, 0.0, -0.03])
+            self.set_bias("left", agent_left_bias)
+            self._command_agent_left_bias()
             self.intervention.set_bias("right", self.xyz_bias["right"])
+            self.intervention.set_bias("left", self.xyz_bias["left"])
             self.intervention.latest_metrics["task"] = agent_task
+            self.intervention.latest_metrics["auto_home"] = self.agent_start_home_report
+            self.intervention.latest_metrics["left_bias_source"] = "lid_open_demo_start_mean"
             self.intervention.latest_metrics["pilot_success_target"] = 10
             self.intervention.latest_metrics["success_count"] = self.recorder.success_count(agent_task)
             self.agent_ui = AgentCollectionUI(
@@ -170,6 +195,32 @@ class PolicyController:
 
         self.bias_thread = threading.Thread(target=self._bias_control_loop, daemon=True)
         self.bias_thread.start()
+
+    def _agent_home_both_arms(self):
+        root = Path(__file__).resolve().parents[1]
+        report = run_agent_auto_home(
+            self.cone_e,
+            torque_config_path=root / "src/configs/pasteur_lid_torque.json",
+            audit_path="/var/tmp/piper-agent-collection/auto_home_torque.jsonl",
+            control_hz=30.0,
+        )
+        print("[agent] auto-home " + json.dumps(report, sort_keys=True), flush=True)
+        return report
+
+    def _command_agent_left_bias(self):
+        """Move left once to home-relative observer bias; never integrate it."""
+
+        if self.agent_left_reference_pose is None:
+            raise RuntimeError("left observer home reference has not been latched")
+        reference = self.agent_left_reference_pose
+        target = mink.SE3(np.concatenate([
+            reference.rotation().wxyz,
+            reference.translation() + self.xyz_bias["left"],
+        ]))
+        self.cone_e.set_left_ee_target(
+            ee_target=target, gripper_target=None, preview_time=0.5
+        )
+        return target
 
     def _bias_control_loop(self):
         """REP socket for changing the EE bias without restarting anything.
@@ -420,12 +471,14 @@ class PolicyController:
         return self._latest_ui_frames.get(camera, (None, None))
 
     def _submit_agent_command(self, command, payload):
-        allowed = {"select_target", "start", "pause", "nudge", "resume", "success", "failure"}
+        allowed = {"home", "select_target", "start", "pause", "nudge", "resume", "success", "failure"}
         if command not in allowed:
             raise ValueError(f"unknown command {command!r}")
         request_id = self.intervention.submit(command, payload)
         return self.intervention.wait(
-            request_id, timeout_s=12.0 if command in {"success", "failure"} else 4.0
+            request_id, timeout_s=45.0 if command == "home" else (
+                12.0 if command in {"success", "failure"} else 4.0
+            )
         )
 
     def _clear_actions_after(self, minimum_obs_timestamp):
@@ -462,7 +515,17 @@ class PolicyController:
         try:
             mode = self.intervention.mode
             metrics = {}
-            if command == "select_target":
+            if command == "home":
+                if mode != "idle" or self.episode_manager.is_active():
+                    raise RuntimeError("HOME is accepted only while idle")
+                self.episode_manager.clear_action_queue()
+                report = self._agent_home_both_arms()
+                self.agent_left_reference_pose = self.cone_e.get_left_ee_pose()
+                self._command_agent_left_bias()
+                self.starting_pose_left = self.starting_pose_right = None
+                self.safety.reset()
+                metrics["auto_home"] = report
+            elif command == "select_target":
                 if mode != "idle":
                     raise RuntimeError("target can only be selected while idle")
                 u, v = float(payload["u"]), float(payload["v"])
@@ -486,8 +549,6 @@ class PolicyController:
                 task = payload.get("task", self.agent_task)
                 if task != self.agent_task:
                     raise RuntimeError(f"controller is configured for {self.agent_task}, not {task}")
-                self.set_bias("right", [0.0, 0.0, -0.03])
-                self.intervention.set_bias("right", self.xyz_bias["right"])
                 self.recorder.configure_episode({
                     "task": task,
                     "target_selection": dict(self.intervention.target_selection),
@@ -517,8 +578,11 @@ class PolicyController:
                 self.recorder.log_event("paused", bias=self.xyz_bias["right"].tolist())
                 mode = "paused"
             elif command == "nudge":
-                if mode != "paused":
-                    raise RuntimeError("nudge is accepted only while paused")
+                if mode not in {"idle", "paused"}:
+                    raise RuntimeError("nudge is accepted only while idle or paused")
+                arm = payload.get("arm", "right")
+                if arm not in {"left", "right"}:
+                    raise ValueError("arm must be left or right")
                 axis = payload.get("axis")
                 if axis not in {"x", "y", "z"}:
                     raise ValueError("axis must be x, y, or z")
@@ -526,16 +590,23 @@ class PolicyController:
                 direction = int(payload.get("direction", 0))
                 if step_mm not in {1, 2, 5} or direction not in {-1, 1}:
                     raise ValueError("step must be 1/2/5 mm and direction ±1")
-                bias = self.xyz_bias["right"].copy()
+                bias = self.xyz_bias[arm].copy()
                 bias[{"x": 0, "y": 1, "z": 2}[axis]] += direction * step_mm / 1000.0
-                self.intervention.set_bias("right", bias)
-                self.set_bias("right", bias)
+                self.intervention.set_bias(arm, bias)
+                self.set_bias(arm, bias)
+                if arm == "left":
+                    self._command_agent_left_bias()
                 self.intervention.correction_revision += 1
-                self.recorder.log_event(
-                    "bias_nudge", axis=axis, direction=direction, step_mm=step_mm,
-                    bias_m=bias.tolist(), correction_revision=self.intervention.correction_revision,
-                )
-                metrics["last_nudge"] = {"axis": axis, "direction": direction, "step_mm": step_mm}
+                if self.recorder.is_recording:
+                    self.recorder.log_event(
+                        "bias_nudge", arm=arm, axis=axis, direction=direction,
+                        step_mm=step_mm, bias_m=bias.tolist(),
+                        correction_revision=self.intervention.correction_revision,
+                    )
+                metrics["last_nudge"] = {
+                    "arm": arm, "axis": axis,
+                    "direction": direction, "step_mm": step_mm,
+                }
             elif command == "resume":
                 if mode != "paused":
                     raise RuntimeError("resume requires paused mode")

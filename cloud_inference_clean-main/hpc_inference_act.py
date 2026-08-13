@@ -26,6 +26,10 @@ import numpy as np
 import torch
 import zmq
 from act_inference import ACTInferencePolicy, matrix_to_quat_wxyz
+from act_arm_adapter import (
+    action_chunk_to_quat16,
+    adapt_observation_for_active_arm,
+)
 
 
 # ── Rotation helpers (identical to the Pi0.5 server) ──────────────────────────
@@ -217,8 +221,13 @@ class InferenceServer:
                     start = time.time()
 
                     with torch.no_grad():
+                        model_observation = adapt_observation_for_active_arm(
+                            observation,
+                            expected_state_dim=self.model.expected_state_dim,
+                            active_arm=self.active_arm,
+                        )
                         raw_chunk = self.model.predict_action_chunk(
-                            observation, transform_to_quat=False
+                            model_observation, transform_to_quat=False
                         )
 
                     if isinstance(raw_chunk, torch.Tensor):
@@ -227,7 +236,7 @@ class InferenceServer:
                         v = raw_chunk["action"]
                         raw_chunk = v.detach().cpu().numpy() if isinstance(v, torch.Tensor) else v
 
-                    quat_chunk = r20_to_quat16(raw_chunk)
+                    quat_chunk = action_chunk_to_quat16(raw_chunk, self.active_arm)
                     inference_time = time.time() - start
 
                     action_list = []

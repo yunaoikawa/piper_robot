@@ -99,6 +99,27 @@ def test_success_promotion_and_converter_slice(tmp_path):
     assert episode["action"][0, 10] == pytest.approx(.003)
 
 
+def test_converter_can_match_existing_right_only_act_checkpoint(tmp_path):
+    stop = threading.Event()
+    recorder = AgentEpisodeRecorder(tmp_path / "agent", stop)
+    recorder.configure_episode({
+        "task": "lid_open", "target_selection": {"u": .5, "v": .5},
+        "initial_bias_m": {"left": [0, 0, 0], "right": [0, 0, -.03]},
+    })
+    recorder.start_episode()
+    recorder.record_sample(sample(0))
+    recorder.record_sample(sample(1))
+    recorder.end_episode()
+    destination = recorder.finalize("success")
+    recorder.stop()
+    episode = load_episode(
+        str(next(destination.glob("*.hdf5"))), active_arm="right"
+    )
+    assert episode["state"].shape == (2, 10)
+    assert episode["action"].shape == (2, 10)
+    assert episode["action"][0, 0] == pytest.approx(.001)
+
+
 def test_failure_is_quarantined(tmp_path):
     recorder = AgentEpisodeRecorder(tmp_path / "agent", threading.Event())
     recorder.configure_episode({

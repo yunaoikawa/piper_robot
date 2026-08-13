@@ -80,7 +80,11 @@ def build_state_r6(pos, quat, gripper) -> np.ndarray:
 # Episode loading
 # ---------------------------------------------------------------------------
 
-def load_episode(hdf5_path: str, intervention_slice: str = "all") -> dict:
+def load_episode(
+    hdf5_path: str,
+    intervention_slice: str = "all",
+    active_arm: str = "both",
+) -> dict:
     with h5py.File(hdf5_path, "r") as f:
         left_pos   = f["left_ee_pos"][()]
         left_quat  = f["left_ee_quat"][()]
@@ -104,7 +108,14 @@ def load_episode(hdf5_path: str, intervention_slice: str = "all") -> dict:
 
     left_state  = build_state_r6(left_pos,  left_quat,  left_grip)
     right_state = build_state_r6(right_pos, right_quat, right_grip)
-    state  = np.concatenate([left_state, right_state], axis=-1).astype(np.float32)
+    if active_arm == "left":
+        state = left_state.astype(np.float32)
+    elif active_arm == "right":
+        state = right_state.astype(np.float32)
+    elif active_arm == "both":
+        state = np.concatenate([left_state, right_state], axis=-1).astype(np.float32)
+    else:
+        raise ValueError("active_arm must be left, right, or both")
     action = np.concatenate([state[1:], state[-1:]], axis=0)
 
     actual_fps = (len(timestamps) - 1) / max(timestamps[-1] - timestamps[0], 1e-6)
@@ -162,9 +173,12 @@ def find_episode_pairs(data_dir: str, camera_keys: list, require_success_manifes
     return pairs
 
 
-def state_names() -> list:
+def state_names(active_arm: str = "both") -> list:
     names = []
-    for side in ["left", "right"]:
+    sides = ["left", "right"] if active_arm == "both" else [active_arm]
+    if any(side not in {"left", "right"} for side in sides):
+        raise ValueError("active_arm must be left, right, or both")
+    for side in sides:
         for ax in ["x", "y", "z"]:
             names.append(f"{side}_pos_{ax}")
         for i in range(6):
@@ -226,6 +240,7 @@ def _write_single_dataset(
     camera_keys: list,
     label: str = "train",
     intervention_slice: str = "all",
+    active_arm: str = "both",
 ):
     """Write a single LeRobot v3.0 dataset from a list of episodes."""
     if not episodes:
@@ -256,7 +271,11 @@ def _write_single_dataset(
         print(f"  [{label}] Episode {ep_idx:04d} (task {task_idx}): {Path(h5_path).name}")
 
         try:
-            ep = load_episode(h5_path, intervention_slice=intervention_slice)
+            ep = load_episode(
+                h5_path,
+                intervention_slice=intervention_slice,
+                active_arm=active_arm,
+            )
         except (OSError, KeyError, ValueError) as e:
             print(f"    SKIPPING corrupt HDF5 ({type(e).__name__}): {e}")
             skipped.append(h5_path)
@@ -366,9 +385,9 @@ def _write_single_dataset(
     tasks_df.to_parquet(meta_dir / "tasks.parquet", index=True)
 
     # ── info.json ──
-    state_dim  = 20
-    action_dim = 20
-    _names = state_names()
+    state_dim = 20 if active_arm == "both" else 10
+    action_dim = state_dim
+    _names = state_names(active_arm)
 
     features = {
         "episode_index": {"dtype": "int64",   "shape": [1], "names": None},
@@ -393,7 +412,7 @@ def _write_single_dataset(
     info = {
         "codebase_version": "v3.0",
         "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:06d}.mp4",
-        "robot_type": "bimanual",
+        "robot_type": "bimanual" if active_arm == "both" else f"piper_{active_arm}",
         "total_episodes": n_kept,
         "total_frames": global_frame_idx,
         "total_tasks": len(task_names),
@@ -473,6 +492,7 @@ def write_lerobot_dataset(
     seed: int = 42,
     require_success_manifest: bool = False,
     intervention_slice: str = "all",
+    active_arm: str = "both",
 ):
     if camera_keys is None:
         camera_keys = ["cam_high", "cam_left_wrist", "cam_right_wrist"]
@@ -531,14 +551,14 @@ def write_lerobot_dataset(
             print(f"  [{task_idx}] '{task_name}': {n_train} train, {n_val_t} val")
 
         print(f"\n--- Writing train dataset ---")
-        _write_single_dataset(train_episodes, task_names, output_dir, repo_id, fps, camera_keys, "train", intervention_slice)
+        _write_single_dataset(train_episodes, task_names, output_dir, repo_id, fps, camera_keys, "train", intervention_slice, active_arm)
 
         print(f"\n--- Writing val dataset ---")
-        _write_single_dataset(val_episodes, task_names, val_output_dir, val_repo_id, fps, camera_keys, "val", intervention_slice)
+        _write_single_dataset(val_episodes, task_names, val_output_dir, val_repo_id, fps, camera_keys, "val", intervention_slice, active_arm)
 
     else:
         print(f"\n--- Writing dataset (no val split) ---")
-        _write_single_dataset(all_episodes, task_names, output_dir, repo_id, fps, camera_keys, "all", intervention_slice)
+        _write_single_dataset(all_episodes, task_names, output_dir, repo_id, fps, camera_keys, "all", intervention_slice, active_arm)
 
     # ── Summary ──
     print(f"\n{'='*60}")
@@ -569,6 +589,8 @@ def main():
     parser.add_argument("--require-success-manifest", action="store_true",
                         help="Only import human-confirmed agent successes")
     parser.add_argument("--intervention-slice", choices=("all", "post-intervention"), default="all")
+    parser.add_argument("--active-arm", choices=("left", "right", "both"), default="both",
+                        help="Export matching 10D single-arm or 20D bimanual state/action")
     args = parser.parse_args()
 
     assert len(args.data_dirs) == len(args.task_names)
@@ -586,6 +608,7 @@ def main():
         seed=args.seed,
         require_success_manifest=args.require_success_manifest,
         intervention_slice=args.intervention_slice,
+        active_arm=args.active_arm,
     )
 
 

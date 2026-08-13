@@ -6,13 +6,21 @@ ordinary LLM-control recorder or its datasets.
 
 ## Invariants
 
-- One process owns the right arm through
+- One collector owns robot control through
   `/tmp/piper_robot_right_arm_controller.lock`.
+- At collector startup, both arms follow a synchronized, pressure-guarded,
+  gripper-neutral path to physical home. `HOME` repeats this only while idle.
 - ACT actions are absolute, served at 30 Hz, horizon 40, replanned when 12
   actions remain. Delta ACT is rejected.
-- Only the right arm is commanded. The left arm remains available as a camera.
-- Right bias starts at `[0, 0, -0.03]` m on every episode and is applied exactly
-  once in the client, in robot coordinates.
+- A 10D right-arm ACT checkpoint receives only the right 10D state and commands
+  only the right arm. The left arm is moved once from home by its observer bias;
+  it is never fed into or commanded by the right-only ACT policy.
+- Left observer bias defaults to `[-0.0016, -0.0028, -0.0003]` m. This is the
+  difference between the present home EE and the mean left EE at the start of
+  the original `lid_open` demonstrations, not a guessed pixel offset.
+- Right bias starts at `[0, 0, -0.03]` m when the collector starts, remains at
+  the last UI-adjusted value across episodes, and is applied exactly once per
+  absolute target in the client, in robot coordinates.
 - Pause holds the measured EE pose and gripper, then clears both server queues.
   Resume clears again and rejects actions generated from pre-resume images.
 - Pause time is omitted from the training timeline.
@@ -43,6 +51,12 @@ start, and use `PAUSE → X/Y/Z ± 1/2/5 mm → RESUME`. Move the physical lid b
 hand between episodes. Confirm SUCCESS or select a failure reason. Repeat until
 10 successes, then repeat with `lid_close` and its checkpoint.
 
+The arm selector applies nudges to either the right ACT bias or the left
+home-relative observer bias. A left nudge always recomputes `left_home + bias`;
+it is never added to the last target, so repeated 30 Hz integration cannot make
+the left arm drift. Use `--agent-left-bias X Y Z` to override the measured
+default. `--agent-no-auto-home` exists only as an emergency/debug opt-out.
+
 ## Audit and training conversion
 
 ```bash
@@ -53,7 +67,8 @@ python src/convert_to_lerobot.py \
   --data_dirs data/vla_agent/lid_bias/success/lid_open \
   --task_names "open the petri dish lid" \
   --output_dir data/train/lid_open_agent --repo_id yunaoikawa/lid_open_agent \
-  --fps 30 --require-success-manifest --intervention-slice all
+  --fps 30 --camera_keys cam_high cam_right_wrist --active-arm right \
+  --require-success-manifest --intervention-slice all
 ```
 
 `all` trains from the complete corrected measured trajectory. For an ablation,

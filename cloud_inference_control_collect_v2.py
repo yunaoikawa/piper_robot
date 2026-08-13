@@ -47,6 +47,12 @@ def main():
     parser.add_argument('--agent-ui-host', default='0.0.0.0')
     parser.add_argument('--agent-ui-port', type=int, default=8780)
     parser.add_argument('--agent-ui-token', default='')
+    parser.add_argument('--agent-left-bias', type=float, nargs=3,
+                        metavar=('X', 'Y', 'Z'),
+                        default=(-0.0016, -0.0028, -0.0003),
+                        help='One-time left observer offset from home, metres')
+    parser.add_argument('--agent-no-auto-home', action='store_true',
+                        help='Emergency/debug opt-out; agent collection homes both arms by default')
     parser.add_argument('--controller-lock',
                         default='/tmp/piper_robot_right_arm_controller.lock')
     args = parser.parse_args()
@@ -83,6 +89,8 @@ def main():
         agent_ui_port=args.agent_ui_port,
         agent_ui_token=args.agent_ui_token,
         controller_lock=args.controller_lock,
+        agent_auto_home=not args.agent_no_auto_home,
+        agent_left_bias=args.agent_left_bias,
     )
 
     if args.bias is not None and not args.agent_collection:
