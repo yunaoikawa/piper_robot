@@ -24,6 +24,7 @@ from .safety import SafetyLayer
 from .agent_collection import (
     AgentEpisodeRecorder, AgentRecordingSample, ControllerClaim,
     FAILURE_REASONS, GripperCloseLatch, InterventionState,
+    gripper_latch_config,
 )
 from .agent_collection_ui import AgentCollectionUI
 from .agent_cycle import AlternatingAgentCycle
@@ -92,11 +93,28 @@ class PolicyController:
                     "inference_failure_grace_s", 10.0
                 ),
                 maximum_episode_s=cycle.get("maximum_episode_s", 60.0),
+                bias_retry_offsets_m=cycle.get("bias_retry_offsets_m"),
             )
         self._agent_task_bias = {
             name: np.asarray(settings["initial_right_xyz_bias_m"], dtype=float)
             for name, settings in self.agent_profile.get("tasks", {}).items()
         }
+        if self.agent_cycle is not None:
+            maximum_bias = float(
+                self.agent_profile.get("intervention", {}).get(
+                    "maximum_absolute_bias_m", 0.06
+                )
+            )
+            for task_name, offsets in self.agent_cycle.bias_retry_offsets_m.items():
+                scheduled = (
+                    self._agent_task_bias[task_name][None, :]
+                    + np.asarray(offsets, dtype=float)
+                )
+                if np.any(np.abs(scheduled) > maximum_bias + 1e-12):
+                    raise ValueError(
+                        f"{task_name} bias retry schedule exceeds configured "
+                        f"±{maximum_bias:.3f} m limit"
+                    )
         self._agent_cycle_transition_active = False
         self._agent_camera_last_id = {}
         self._agent_camera_last_change_s = {}
@@ -115,16 +133,8 @@ class PolicyController:
         # after a successful grasp.  Both pilot tasks transport before their
         # demonstrated final release, so the same measured-displacement gate
         # protects their grasp without suppressing that release.
-        release_gate = self.agent_profile.get("intervention", {}).get(
-            "gripper_transport_release", {}
-        )
         self._right_close_latch = GripperCloseLatch(
-            minimum_transport_distance_m=float(
-                release_gate.get("minimum_transport_distance_m", 0.03)
-            ),
-            minimum_release_command_time_s=float(
-                release_gate.get("minimum_open_command_time_s", 0.15)
-            ),
+            **gripper_latch_config(self.agent_profile, agent_task)
         )
         self._right_close_latch_enabled = self.agent_collection
 
@@ -396,6 +406,12 @@ class PolicyController:
         self.control_port = sockets["ports"][2]
         self.episode_manager.control_socket = self.control_socket
         self.agent_task = task
+        # Task switches can change the demo-derived terminal transport gate.
+        # Construct a fresh latch before the next episode; never carry grasp
+        # evidence across tasks.
+        self._right_close_latch = GripperCloseLatch(
+            **gripper_latch_config(self.agent_profile, task)
+        )
         self.task = {
             "lid_open": "open the petri dish lid",
             "lid_close": "close the petri dish lid",
@@ -745,6 +761,8 @@ class PolicyController:
             },
             "policy_mode": "absolute", "control_frequency_hz": 30,
             "automatic_cycle": True,
+            "bias_attempt_index": self.agent_cycle.current_bias_attempt_index,
+            "bias_offset_m": list(self.agent_cycle.current_bias_offset_m),
         })
         self._reset_agent_episode_runtime()
         self.episode_manager.start_episode()
@@ -761,7 +779,10 @@ class PolicyController:
                 "gripper_close_latched": False,
                 "gripper_release_enabled": False,
                 "gripper_released_after_transport": False,
+                "gripper_transport_drop_detected": False,
                 "cycle_state": "running",
+                "bias_attempt_index": self.agent_cycle.current_bias_attempt_index,
+                "bias_offset_m": list(self.agent_cycle.current_bias_offset_m),
             })
             self.intervention.revision += 1
 
@@ -782,7 +803,12 @@ class PolicyController:
                 reason=f"cycle_stop:{reason}", home_after=False
             )
             if self.recorder.episode_dir is not None:
-                destination = self.recorder.finalize("failure", reason="abort")
+                failure_reason = (
+                    str(reason) if str(reason) in FAILURE_REASONS else "abort"
+                )
+                destination = self.recorder.finalize(
+                    "failure", reason=failure_reason
+                )
             else:
                 destination = None
         else:
@@ -802,6 +828,83 @@ class PolicyController:
             })
             self.intervention.last_error = str(reason)
             self.intervention.revision += 1
+
+    @staticmethod
+    def _cycle_failure_manifest_reason(reason):
+        reason = str(reason)
+        return reason if reason in FAILURE_REASONS else "abort"
+
+    def _retry_or_exhaust_agent_cycle(self, decision):
+        """Save a failed attempt, guarded-home, then retry the same task.
+
+        Bias is applied after homing and before the next recorder/episode is
+        started.  If the finite configured schedule is exhausted, the final
+        failure is still saved and pressure-homed before the cycle is disabled.
+        """
+        if decision.action not in {"retry_failure", "stop_retry_exhausted"}:
+            raise ValueError("decision is not a bias retry transition")
+        self._agent_cycle_transition_active = True
+        task = decision.task
+        try:
+            self.recorder.log_event(
+                "cycle_attempt_failed",
+                failure_reason=decision.reason,
+                task=task,
+                bias_attempt_index=self.agent_cycle.current_bias_attempt_index,
+                bias_m=self.xyz_bias["right"].tolist(),
+            )
+            self.episode_manager.end_episode(
+                reason=f"cycle_retry:{decision.reason}", home_after=False
+            )
+            destination = self.recorder.finalize(
+                "failure",
+                reason=self._cycle_failure_manifest_reason(decision.reason),
+            )
+            self.episode_manager.clear_action_queue()
+            with self.intervention.lock:
+                self.intervention.mode = "cycle_homing"
+                self.intervention.latest_metrics.update({
+                    "cycle_state": "homing_after_failure",
+                    "last_episode": str(destination),
+                    "last_failure_reason": decision.reason,
+                })
+                self.intervention.revision += 1
+
+            report = self._agent_home_both_arms()
+            if decision.action == "stop_retry_exhausted":
+                stopped = self.agent_cycle.stop_after_retry_exhausted(decision)
+                with self.intervention.lock:
+                    self.intervention.mode = "cycle_stopped"
+                    self.intervention.latest_metrics.update({
+                        "cycle_state": "stopped",
+                        "cycle_stop_reason": stopped.reason,
+                        "auto_home": report,
+                    })
+                    self.intervention.last_error = stopped.reason
+                    self.intervention.revision += 1
+                return
+
+            self.agent_cycle.advance_after_retry(decision)
+            offset = np.asarray(decision.bias_offset_m, dtype=float)
+            next_bias = self._agent_task_bias[task] + offset
+            self.set_bias("right", next_bias)
+            self.intervention.set_bias("right", next_bias)
+            self.episode_manager.clear_action_queue()
+            with self.intervention.lock:
+                self.intervention.latest_metrics.update({
+                    "auto_home": report,
+                    "retry_task": task,
+                    "bias_attempt_index": decision.bias_attempt_index,
+                    "bias_offset_m": offset.tolist(),
+                    "retry_bias_m": next_bias.tolist(),
+                })
+            self._start_cycle_episode(task)
+        except Exception as error:
+            self._stop_agent_cycle(
+                f"cycle_retry_transition:{type(error).__name__}:{error}"
+            )
+        finally:
+            self._agent_cycle_transition_active = False
 
     def _complete_and_advance_agent_cycle(self, decision):
         """Promote success, guarded-home, route the next ACT, and restart."""
@@ -857,11 +960,16 @@ class PolicyController:
             terminal_release=self._right_close_latch.released,
             camera_ready=self._agent_camera_health(),
             safety_rejected_count=self.safety.rejected_count,
+            explicit_failure=(
+                "drop" if self._right_close_latch.dropped else None
+            ),
         )
         if decision is None:
             return False
         if decision.action == "complete_success":
             self._complete_and_advance_agent_cycle(decision)
+        elif decision.action in {"retry_failure", "stop_retry_exhausted"}:
+            self._retry_or_exhaust_agent_cycle(decision)
         else:
             self._stop_agent_cycle(decision.reason)
         return True
@@ -961,6 +1069,7 @@ class PolicyController:
                 metrics["gripper_release_enabled"] = False
                 metrics["gripper_release_commanded"] = False
                 metrics["gripper_released_after_transport"] = False
+                metrics["gripper_transport_drop_detected"] = False
                 self.intervention.correction_revision = 0
                 with self._action_record_lock:
                     self._last_action_record = {
@@ -1052,11 +1161,27 @@ class PolicyController:
                         raise RuntimeError(
                             "cycle success is automatic after measured terminal release"
                         )
-                    reason = f"operator_failure:{payload.get('reason')}"
-                    self._stop_agent_cycle(reason)
-                    mode = "cycle_stopped"
-                    metrics["cycle_state"] = "stopped"
-                    metrics["cycle_stop_reason"] = reason
+                    failure_reason = str(payload.get("reason"))
+                    decision = self.agent_cycle.evaluate(
+                        terminal_release=False,
+                        camera_ready=self._agent_camera_health(),
+                        safety_rejected_count=self.safety.rejected_count,
+                        explicit_failure=failure_reason,
+                    )
+                    if decision is None:
+                        raise RuntimeError("cycle did not accept explicit failure")
+                    if decision.action in {
+                        "retry_failure", "stop_retry_exhausted"
+                    }:
+                        self._retry_or_exhaust_agent_cycle(decision)
+                    else:
+                        self._stop_agent_cycle(
+                            f"operator_failure:{failure_reason}"
+                        )
+                    mode = self.intervention.mode
+                    metrics["cycle_state"] = self.intervention.latest_metrics.get(
+                        "cycle_state", mode
+                    )
                     self.intervention.complete(
                         request_id, mode=mode, **metrics
                     )
@@ -1277,6 +1402,7 @@ class PolicyController:
         target = mink.SE3(np.concatenate([R_target.wxyz, p_safe]))
         gripper_command = float(gripper)
         if arm == "right" and self._right_close_latch_enabled:
+            drop_was_detected = self._right_close_latch.dropped
             release_was_enabled = self._right_close_latch.release_enabled
             release_was_commanded = self._right_close_latch.release_commanded
             release_was_completed = self._right_close_latch.released
@@ -1291,11 +1417,47 @@ class PolicyController:
                     policy_gripper=float(gripper),
                     held_gripper_target=gripper_command,
                     grasp_xyz_m=None if grasp_xyz is None else grasp_xyz.tolist(),
+                    grasp_measured_opening=(
+                        self._right_close_latch.grasp_measured_opening
+                    ),
                 )
                 with self.intervention.lock:
                     self.intervention.latest_metrics["gripper_close_latched"] = True
                     self.intervention.revision += 1
-            if not release_was_enabled and self._right_close_latch.release_enabled:
+            if not drop_was_detected and self._right_close_latch.dropped:
+                self.recorder.log_event(
+                    "gripper_transport_drop_detected",
+                    grasp_measured_opening=(
+                        self._right_close_latch.grasp_measured_opening
+                    ),
+                    measured_opening=float(self.latest_right_gripper_exact),
+                    opening_decrease=(
+                        self._right_close_latch.drop_opening_decrease
+                    ),
+                    minimum_opening_decrease=(
+                        self._right_close_latch.drop_opening_decrease_threshold
+                    ),
+                    confirmation_elapsed_s=(
+                        self._right_close_latch.drop_confirmation_elapsed_s
+                    ),
+                    required_confirmation_s=(
+                        self._right_close_latch.drop_confirmation_time_s
+                    ),
+                    transport_displacement_m=(
+                        self._right_close_latch.transport_displacement_m
+                    ),
+                )
+                with self.intervention.lock:
+                    self.intervention.latest_metrics.update({
+                        "gripper_transport_drop_detected": True,
+                        "gripper_drop_opening_decrease": (
+                            self._right_close_latch.drop_opening_decrease
+                        ),
+                    })
+                    self.intervention.revision += 1
+            if (not self._right_close_latch.dropped
+                    and not release_was_enabled
+                    and self._right_close_latch.release_enabled):
                 grasp_xyz = self._right_close_latch.grasp_xyz_m
                 measured_xyz = self._right_close_latch.latest_xyz_m
                 self.recorder.log_event(

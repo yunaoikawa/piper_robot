@@ -18,12 +18,22 @@
     "lid_open": {
       "checkpoint": "outputs/lab/act/horizon/lid_open/ep100/checkpoints/last/pretrained_model",
       "initial_right_xyz_bias_m": [0.0, 0.0, -0.03],
-      "pilot_success_target": 10
+      "pilot_success_target": 10,
+      "gripper_transport_release": {
+        "minimum_transport_distance_m": 0.0544,
+        "calibration_source": "successful_demo_grasp_to_final_open_p10",
+        "calibration_episode_count": 55
+      }
     },
     "lid_close": {
       "checkpoint": "outputs/lab/act/horizon/lid_close/ep100/checkpoints/last/pretrained_model",
-      "initial_right_xyz_bias_m": [0.0, 0.0, -0.03],
-      "pilot_success_target": 10
+      "initial_right_xyz_bias_m": [0.0, 0.02, -0.05],
+      "pilot_success_target": 10,
+      "gripper_transport_release": {
+        "minimum_transport_distance_m": 0.0476,
+        "calibration_source": "successful_demo_grasp_to_final_open_p10",
+        "calibration_episode_count": 53
+      }
     }
   },
   "inference_endpoints": {
@@ -36,7 +46,27 @@
     "camera_stale_after_s": 1.0,
     "camera_failure_grace_s": 1.0,
     "inference_failure_grace_s": 10.0,
-    "maximum_episode_s": 60.0
+    "maximum_episode_s": 42.0,
+    "bias_retry_offsets_m": {
+      "lid_open": [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.005, 0.0],
+        [0.0, -0.005, 0.0],
+        [0.0, 0.0, -0.005],
+        [0.0, 0.005, -0.005],
+        [0.0, -0.005, -0.005],
+        [0.0, 0.0, -0.01]
+      ],
+      "lid_close": [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.005, 0.0],
+        [0.0, -0.005, 0.0],
+        [0.0, 0.0, -0.005],
+        [0.0, 0.005, -0.005],
+        [0.0, -0.005, -0.005],
+        [0.0, 0.0, -0.01]
+      ]
+    }
   },
   "intervention": {
     "steps_mm": [1, 2, 5],
@@ -44,13 +74,17 @@
     "pause_excluded_from_training_time": true,
     "resume_requires_fresh_observation": true,
     "gripper_transport_release": {
-      "minimum_transport_distance_m": 0.03,
-      "minimum_open_command_time_s": 0.15
+      "minimum_blocked_opening": 0.3,
+      "minimum_transport_distance_m": 0.055,
+      "minimum_open_command_time_s": 0.15,
+      "drop_monitor_transport_distance_m": 0.01,
+      "drop_opening_decrease": 0.2,
+      "drop_confirmation_time_s": 0.2
     }
   },
   "storage": {
     "root": "data/vla_agent/lid_bias",
     "success_is_training_eligible": true,
-    "failure_reasons": ["grasp_miss", "jam", "drop", "wrong_placement", "abort"]
+    "failure_reasons": ["grasp_miss", "jam", "drop", "wrong_placement", "episode_timeout", "abort"]
   }
 }

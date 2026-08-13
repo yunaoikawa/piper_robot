@@ -32,8 +32,46 @@ FAILURE_REASONS = {
     "jam",
     "drop",
     "wrong_placement",
+    "episode_timeout",
     "abort",
 }
+
+
+def gripper_latch_config(
+    profile: Mapping[str, Any], task: str | None
+) -> dict[str, float]:
+    """Resolve portable grasp/release evidence gates for one task.
+
+    Common detector settings live under ``intervention``.  A task may override
+    the required transport distance with a statistic measured from successful
+    demonstrations.  Keeping this selection in data makes the latch portable
+    without embedding task coordinates or image pixels in control flow.
+    """
+    common = dict(
+        profile.get("intervention", {}).get("gripper_transport_release", {})
+    )
+    task_settings = profile.get("tasks", {}).get(task, {}) if task else {}
+    common.update(task_settings.get("gripper_transport_release", {}))
+    return {
+        "empty_closed_threshold": float(
+            common.get("minimum_blocked_opening", 0.30)
+        ),
+        "minimum_transport_distance_m": float(
+            common.get("minimum_transport_distance_m", 0.03)
+        ),
+        "minimum_release_command_time_s": float(
+            common.get("minimum_open_command_time_s", 0.15)
+        ),
+        "drop_monitor_transport_distance_m": float(
+            common.get("drop_monitor_transport_distance_m", 0.01)
+        ),
+        "drop_opening_decrease": float(
+            common.get("drop_opening_decrease", 0.20)
+        ),
+        "drop_confirmation_time_s": float(
+            common.get("drop_confirmation_time_s", 0.20)
+        ),
+    }
 
 
 def summarize_sampling_timing(
@@ -123,13 +161,25 @@ class GripperCloseLatch:
                  stall_window_s: float = 0.35,
                  stall_range: float = 0.02,
                  minimum_transport_distance_m: float = 0.03,
-                 minimum_release_command_time_s: float = 0.15):
+                 minimum_release_command_time_s: float = 0.15,
+                 drop_monitor_transport_distance_m: float = 0.01,
+                 drop_opening_decrease: float = 0.20,
+                 drop_confirmation_time_s: float = 0.20):
         if not 0.0 <= close_threshold < open_threshold <= 1.0:
             raise ValueError("gripper thresholds must satisfy 0 <= close < open <= 1")
         if minimum_transport_distance_m <= 0:
             raise ValueError("minimum transport distance must be positive")
         if minimum_release_command_time_s < 0:
             raise ValueError("minimum release command time cannot be negative")
+        if not 0 < drop_monitor_transport_distance_m <= minimum_transport_distance_m:
+            raise ValueError(
+                "drop monitor distance must be positive and no greater than "
+                "the release transport distance"
+            )
+        if not 0 < drop_opening_decrease <= 1:
+            raise ValueError("drop opening decrease must be in (0, 1]")
+        if drop_confirmation_time_s < 0:
+            raise ValueError("drop confirmation time cannot be negative")
         self.open_threshold = float(open_threshold)
         self.close_threshold = float(close_threshold)
         self.empty_closed_threshold = float(empty_closed_threshold)
@@ -138,6 +188,11 @@ class GripperCloseLatch:
         self.stall_range = float(stall_range)
         self.minimum_transport_distance_m = float(minimum_transport_distance_m)
         self.minimum_release_command_time_s = float(minimum_release_command_time_s)
+        self.drop_monitor_transport_distance_m = float(
+            drop_monitor_transport_distance_m
+        )
+        self.drop_opening_decrease_threshold = float(drop_opening_decrease)
+        self.drop_confirmation_time_s = float(drop_confirmation_time_s)
         self.reset()
 
     def reset(self) -> None:
@@ -153,6 +208,12 @@ class GripperCloseLatch:
         self.release_requested_at: float | None = None
         self.release_commanded = False
         self.released = False
+        self.grasp_measured_opening: float | None = None
+        self.drop_monitoring_started = False
+        self.drop_candidate_started_at: float | None = None
+        self.drop_opening_decrease = 0.0
+        self.drop_confirmation_elapsed_s = 0.0
+        self.dropped = False
 
     @staticmethod
     def _validated_xyz(measured_xyz: Any | None) -> np.ndarray | None:
@@ -168,7 +229,7 @@ class GripperCloseLatch:
         if xyz is None:
             return
         self.latest_xyz_m = xyz
-        if not self.latched or self.release_enabled:
+        if not self.latched:
             return
         # A controller can receive its first valid observation just after the
         # stall was confirmed.  Capture that first measured pose rather than
@@ -176,9 +237,46 @@ class GripperCloseLatch:
         if self.grasp_xyz_m is None:
             self.grasp_xyz_m = xyz.copy()
             return
-        self.transport_displacement_m = float(np.linalg.norm(xyz - self.grasp_xyz_m))
+        displacement = float(np.linalg.norm(xyz - self.grasp_xyz_m))
+        self.transport_displacement_m = max(
+            self.transport_displacement_m, displacement
+        )
+        if self.transport_displacement_m >= self.drop_monitor_transport_distance_m:
+            self.drop_monitoring_started = True
         if self.transport_displacement_m >= self.minimum_transport_distance_m:
             self.release_enabled = True
+
+    def _update_drop_detection(self, measured: float, now: float) -> None:
+        """Latch a pre-release drop from sustained loss of blocked opening.
+
+        A held object prevents the jaws from fully closing.  Once Cartesian
+        transport has begun, a material decrease from that confirmed blocked
+        opening is therefore direct, task-independent evidence that the object
+        slipped out.  Monitoring is disabled before transport and after the
+        intentional final release command.
+        """
+        if self.dropped:
+            return
+        if (not self.latched or self.release_commanded
+                or not self.drop_monitoring_started
+                or self.grasp_measured_opening is None):
+            self.drop_candidate_started_at = None
+            self.drop_confirmation_elapsed_s = 0.0
+            return
+
+        decrease = max(0.0, self.grasp_measured_opening - measured)
+        self.drop_opening_decrease = decrease
+        if decrease < self.drop_opening_decrease_threshold:
+            self.drop_candidate_started_at = None
+            self.drop_confirmation_elapsed_s = 0.0
+            return
+        if self.drop_candidate_started_at is None:
+            self.drop_candidate_started_at = now
+        self.drop_confirmation_elapsed_s = max(
+            0.0, now - self.drop_candidate_started_at
+        )
+        if self.drop_confirmation_elapsed_s >= self.drop_confirmation_time_s:
+            self.dropped = True
 
     def apply(self, command: float, measured: float,
               *, measured_xyz: Any | None = None,
@@ -195,6 +293,12 @@ class GripperCloseLatch:
             return self.target, False
         if self.latched:
             self._update_transport(measured_xyz)
+            self._update_drop_detection(measured, now)
+            if self.dropped:
+                # Preserve the existing close target.  The controller converts
+                # this terminal evidence into a measured-state hold and a
+                # failed episode; never continue toward release/success.
+                return self.target, False
             if self.release_commanded:
                 self.target = max(self.target, value, self.open_threshold)
                 if measured >= self.open_threshold:
@@ -243,6 +347,7 @@ class GripperCloseLatch:
                 self.latest_xyz_m = (
                     None if self.grasp_xyz_m is None else self.grasp_xyz_m.copy()
                 )
+                self.grasp_measured_opening = measured
                 newly_latched = True
         elif self.closing_started_at is not None:
             # An opening/mid-range command before a confirmed stall means the

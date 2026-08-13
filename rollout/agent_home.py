@@ -36,7 +36,9 @@ def _agent_pressure_guard(rpc, torque_config_path, audit_path, provenance):
         consecutive_samples=int(config.get("consecutive_samples", 5)),
         preview_time_s=0.05,
         residual_fraction=float(recovery["residual_fraction"]),
-        residual_floor_nm=float(recovery["residual_floor_nm"]),
+        residual_floor_nm=float(home.get(
+            "residual_floor_nm", recovery["residual_floor_nm"]
+        )),
         # Planned, slow gravity-compensated homing changes joint load even
         # without contact.  Use its separately calibrated residual envelope;
         # the absolute hard limit and sustained-residual stop remain enforced.

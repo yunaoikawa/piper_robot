@@ -8,7 +8,8 @@ import pytest
 
 from rollout.agent_collection import (
     AgentEpisodeRecorder, AgentRecordingSample, ControllerClaim,
-    GripperCloseLatch, InterventionState, intervention_slice_mask,
+    GripperCloseLatch, InterventionState, gripper_latch_config,
+    intervention_slice_mask,
     summarize_sampling_timing,
 )
 from src.convert_to_lerobot import find_episode_pairs, load_episode
@@ -172,6 +173,85 @@ def test_gripper_latch_recovers_when_pose_arrives_after_grasp_confirmation():
     moved = late_grasp_pose + [0, 0, .021]
     assert latch.apply(1.0, .6, measured_xyz=moved, now=2.3)[0] == 1.0
     assert latch.release_enabled and latch.release_commanded
+
+
+def test_gripper_latch_detects_sustained_opening_loss_during_transport():
+    latch = GripperCloseLatch(
+        minimum_transport_distance_m=.05,
+        drop_monitor_transport_distance_m=.01,
+        drop_opening_decrease=.20,
+        drop_confirmation_time_s=.20,
+    )
+    grasp_xyz = np.array([.1, .2, .7])
+    latch.apply(1.0, 1.0, measured_xyz=grasp_xyz, now=0)
+    latch.apply(.1, .66, measured_xyz=grasp_xyz, now=1)
+    latch.apply(.1, .66, measured_xyz=grasp_xyz, now=1.9)
+    latch.apply(.1, .66, measured_xyz=grasp_xyz, now=2.1)
+    assert latch.latched
+    assert latch.grasp_measured_opening == pytest.approx(.66)
+
+    moved = grasp_xyz + [0, .012, 0]
+    # A 0.13 decrease, like the latest real run, remains holding evidence and
+    # is not misclassified as an empty-gripper slip.
+    latch.apply(.1, .53, measured_xyz=moved, now=2.2)
+    latch.apply(.1, .53, measured_xyz=moved, now=2.5)
+    assert not latch.dropped
+    # A larger loss must persist; a single sample cannot stop the cycle.
+    latch.apply(.1, .43, measured_xyz=moved, now=2.6)
+    assert not latch.dropped
+    latch.apply(.1, .55, measured_xyz=moved, now=2.7)
+    assert not latch.dropped
+    latch.apply(.1, .43, measured_xyz=moved, now=2.8)
+    latch.apply(.1, .43, measured_xyz=moved, now=3.01)
+    assert latch.dropped
+    assert not latch.released
+    assert not latch.release_commanded
+
+
+def test_gripper_drop_monitor_is_disabled_before_transport_and_final_release():
+    latch = GripperCloseLatch(
+        minimum_transport_distance_m=.03,
+        drop_monitor_transport_distance_m=.01,
+        drop_opening_decrease=.1,
+        drop_confirmation_time_s=0,
+        minimum_release_command_time_s=0,
+    )
+    grasp_xyz = np.array([0, 0, .5])
+    latch.apply(1.0, 1.0, measured_xyz=grasp_xyz, now=0)
+    latch.apply(.1, .6, measured_xyz=grasp_xyz, now=1)
+    latch.apply(.1, .6, measured_xyz=grasp_xyz, now=1.9)
+    latch.apply(.1, .6, measured_xyz=grasp_xyz, now=2.1)
+    latch.apply(.1, .2, measured_xyz=grasp_xyz, now=2.2)
+    assert not latch.dropped
+
+    released_xyz = grasp_xyz + [.031, 0, 0]
+    latch.apply(1.0, .6, measured_xyz=released_xyz, now=2.3)
+    assert latch.release_commanded
+    latch.apply(1.0, .2, measured_xyz=released_xyz, now=2.4)
+    assert not latch.dropped
+
+
+def test_gripper_latch_config_applies_demo_gate_per_task():
+    profile = {
+        "intervention": {"gripper_transport_release": {
+            "minimum_transport_distance_m": .055,
+            "drop_opening_decrease": .2,
+        }},
+        "tasks": {
+            "lid_open": {"gripper_transport_release": {
+                "minimum_transport_distance_m": .0544,
+            }},
+            "lid_close": {"gripper_transport_release": {
+                "minimum_transport_distance_m": .0476,
+            }},
+        },
+    }
+    assert gripper_latch_config(profile, "lid_open")[
+        "minimum_transport_distance_m"
+    ] == pytest.approx(.0544)
+    assert gripper_latch_config(profile, "lid_close")[
+        "minimum_transport_distance_m"
+    ] == pytest.approx(.0476)
 
 
 def test_gripper_latch_does_not_hold_an_empty_fully_closed_gripper():
