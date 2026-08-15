@@ -245,7 +245,7 @@ class GuidedLidRuntime:
     def submit(self, command: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         allowed = {
             "home", "start", "adjust", "success", "failure",
-            "enable_auto", "stop",
+            "enable_auto", "stop", "jog",
         }
         if command not in allowed:
             raise ValueError(f"unsupported command {command!r}")
@@ -587,6 +587,37 @@ class GuidedLidRuntime:
         with self.lock:
             self.metrics["last_home"] = report
 
+    def _safe_jog(self, payload: Mapping[str, Any]) -> None:
+        """Execute one explicit Cartesian displacement while ready.
+
+        Semantic direction is deliberately fixed here: on Pasteur, physical
+        ``toward the operator`` is robot X-negative.  Keeping the mapping in
+        the adapter prevents UI wording from silently changing robot motion.
+        """
+        if self.cycle.phase not in {CollectionPhase.READY, CollectionPhase.STOPPED}:
+            raise RuntimeError("JOG is allowed only while ready/stopped")
+        delta = np.asarray(payload.get("delta_xyz_m"), dtype=float)
+        if delta.shape != (3,) or not np.all(np.isfinite(delta)):
+            raise ValueError("jog delta_xyz_m must be three finite values")
+        if float(np.linalg.norm(delta)) > 0.10 + 1e-9:
+            raise ValueError("jog displacement exceeds 100 mm")
+        start = self._measured_pose()
+        target = start.copy()
+        target[4:7] += delta
+        duration = max(0.5, float(np.linalg.norm(delta)) / 0.03)
+        commands = sample_pose_segment(
+            start, target, duration_s=duration, stage="operator_metric_jog",
+            gripper_start=float(self.command_rpc.get_right_gripper_exact()),
+        )
+        report = self._execute(commands)
+        measured = self._measured_pose()
+        with self.lock:
+            self.metrics["last_jog"] = {
+                "requested_delta_xyz_m": delta.tolist(),
+                "measured_delta_xyz_m": (measured[4:7] - start[4:7]).tolist(),
+                "report": report,
+            }
+
     def _command_loop(self) -> None:
         while not self.stop_event.is_set():
             try:
@@ -632,6 +663,10 @@ class GuidedLidRuntime:
                         )
                 elif command == "home":
                     self._safe_home()
+                    with self.lock:
+                        self.metrics["runner"] = "ready"
+                elif command == "jog":
+                    self._safe_jog(payload)
                     with self.lock:
                         self.metrics["runner"] = "ready"
                 elif command == "stop":
