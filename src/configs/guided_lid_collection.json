@@ -19,7 +19,7 @@
     "hover_clearance_m": 0.03,
     "transit_speed_m_s": 0.05,
     "descent_speed_m_s": 0.1,
-    "close_duration_s": 1.2,
+    "close_duration_s": 4.0,
     "verification_lift_m": 0.02,
     "reposition_lift_m": 0.02,
     "grasp_review_timeout_s": 10.0,
