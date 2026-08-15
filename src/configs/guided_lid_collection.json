@@ -1,6 +1,13 @@
 {
   "schema": "piper_robot.guided_lid_collection_config/v1",
   "control_frequency_hz": 30,
+  "pose_locked_descent": {
+    "production_model": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",
+    "level_config": "src/configs/pasteur_fast_lid_grasp_level.json",
+    "recovery_lift_m": 0.03,
+    "descent_m": 0.03,
+    "measured_joint5_lower_rad": -1.32
+  },
   "policy": {
     "type": "deterministic_operator_cartesian",
     "inference_enabled": false,
