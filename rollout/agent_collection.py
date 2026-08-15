@@ -676,6 +676,35 @@ class AgentEpisodeRecorder:
         timing = summarize_sampling_timing(
             self.data.get("active_timestamps", ()), target_hz=self.fps
         )
+        camera_values = np.asarray(
+            self.data.get("camera_timestamps", ()), dtype=float
+        )
+        camera_names = ("head", "left", "right")
+        required_cameras = tuple(
+            self.context.get("required_cameras", ("head", "right"))
+        )
+        unknown_cameras = set(required_cameras) - set(camera_names)
+        if unknown_cameras:
+            raise ValueError(
+                f"unknown required cameras: {sorted(unknown_cameras)}"
+            )
+        camera_completeness = {}
+        for index, camera in enumerate(camera_names):
+            if camera_values.shape == (sample_count, 3) and sample_count:
+                finite_count = int(np.count_nonzero(
+                    np.isfinite(camera_values[:, index])
+                ))
+            else:
+                finite_count = 0
+            camera_completeness[camera] = {
+                "finite_samples": finite_count,
+                "sample_count": sample_count,
+                "complete": bool(sample_count and finite_count == sample_count),
+            }
+        required_cameras_complete = all(
+            camera_completeness[name]["complete"]
+            for name in required_cameras
+        )
         manifest = {
             "schema": SCHEMA,
             "episode_name": self.episode_name,
@@ -687,12 +716,15 @@ class AgentEpisodeRecorder:
                 and self.dropped_samples == 0
                 and self.deadline_misses <= max(1, sample_count // 20)
                 and timing["eligible"]
+                and required_cameras_complete
             ),
             "sample_count": sample_count,
             "control_frequency_hz": self.fps,
             "dropped_samples": self.dropped_samples,
             "deadline_misses": self.deadline_misses,
             "sampling_timing": timing,
+            "required_cameras": list(required_cameras),
+            "camera_completeness": camera_completeness,
             "context": self.context,
             "finalized_at": utc_now(),
         }

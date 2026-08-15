@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 import threading
 import urllib.request
 
@@ -322,6 +323,27 @@ def test_converter_can_match_existing_right_only_act_checkpoint(tmp_path):
     assert episode["state"].shape == (2, 10)
     assert episode["action"].shape == (2, 10)
     assert episode["action"][0, 0] == pytest.approx(.001)
+
+
+def test_missing_required_right_camera_quarantines_nominal_success(tmp_path):
+    recorder = AgentEpisodeRecorder(tmp_path / "agent", threading.Event())
+    recorder.configure_episode({
+        "task": "lid_open", "target_selection": {"source": "test"},
+        "initial_bias_m": {"left": [0, 0, 0], "right": [0, 0, 0]},
+        "required_cameras": ["head", "right"],
+    })
+    recorder.start_episode()
+    for index in range(3):
+        recorder.record_sample(replace(
+            sample(index), camera_timestamps=(1.0, 2.0, np.nan)
+        ))
+    recorder.end_episode()
+    destination = recorder.finalize("success")
+    recorder.stop()
+    manifest = json.loads((destination / "manifest.json").read_text())
+    assert manifest["outcome"] == "success"
+    assert manifest["training_eligible"] is False
+    assert manifest["camera_completeness"]["right"]["complete"] is False
 
 
 def test_failure_is_quarantined(tmp_path):

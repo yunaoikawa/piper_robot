@@ -230,10 +230,16 @@ class ConeE:
 
         left_gripper = None
         right_gripper = None
+        left_torque = None
+        right_torque = None
         if active_arm in {None, "left"} and self.left_arm.gripper is not None:
             left_gripper = self.left_arm.gripper.get_open_ratio()
+        if active_arm in {None, "left"}:
+            left_torque = self.left_arm.get_joint_torque()
         if active_arm in {None, "right"} and self.right_arm.gripper is not None:
             right_gripper = self.right_arm.gripper.get_open_ratio()
+        if active_arm in {None, "right"}:
+            right_torque = self.right_arm.get_joint_torque()
 
         return {
             "sampled_at": sampled_at,
@@ -241,6 +247,8 @@ class ConeE:
             "right_ee_pose": right_pose,
             "left_gripper_exact": left_gripper,
             "right_gripper_exact": right_gripper,
+            "left_joint_torque": left_torque,
+            "right_joint_torque": right_torque,
             "left_joint_positions": left_joints,
             "right_joint_positions": right_joints,
         }

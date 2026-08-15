@@ -33,6 +33,7 @@ class _Arm:
         self.marker = marker
         self.gripper = gripper
         self.joint_reads = 0
+        self.torque_reads = 0
         self.pose_inputs = []
 
     def get_joint_positions(self):
@@ -42,6 +43,10 @@ class _Arm:
     def get_ee_pose(self, joints):
         self.pose_inputs.append(np.asarray(joints).copy())
         return _Pose(self.marker)
+
+    def get_joint_torque(self):
+        self.torque_reads += 1
+        return np.full(6, self.marker / 10.0)
 
 
 def _fake_cone():
@@ -60,6 +65,9 @@ def test_single_arm_observation_snapshot_reads_joints_once_and_only_active_gripp
     assert cone.right_arm.joint_reads == 1
     assert cone.left_arm.gripper.reads == 0
     assert cone.right_arm.gripper.reads == 1
+    assert cone.left_arm.torque_reads == 0
+    assert cone.right_arm.torque_reads == 1
+    assert state["right_joint_torque"].tolist() == [.2] * 6
     assert state["left_gripper_exact"] is None
     assert state["right_gripper_exact"] == .6
     assert cone.left_arm.pose_inputs[0].tolist() == [1.0] * 6
@@ -74,3 +82,5 @@ def test_bimanual_observation_snapshot_reads_both_grippers():
     assert state["right_gripper_exact"] == .6
     assert cone.left_arm.gripper.reads == 1
     assert cone.right_arm.gripper.reads == 1
+    assert cone.left_arm.torque_reads == 1
+    assert cone.right_arm.torque_reads == 1

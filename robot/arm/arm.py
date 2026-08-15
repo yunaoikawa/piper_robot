@@ -95,9 +95,17 @@ def _read_pos(packet, port, dxl_id):
     return struct.unpack("i", struct.pack("I", raw))[0]
 
 
-def _write_pos(packet, port, dxl_id, pos):
+def _write_pos(packet, port, dxl_id, pos, *, wait_for_status=True):
     unsigned = struct.unpack("I", struct.pack("i", pos))[0]
-    packet.write4ByteTxRx(port, dxl_id, ADDR_GOAL_POSITION, unsigned)
+    if wait_for_status:
+        packet.write4ByteTxRx(port, dxl_id, ADDR_GOAL_POSITION, unsigned)
+    else:
+        # High-rate Cartesian streaming reads the measured aperture on the
+        # observation path.  Waiting for a second status packet on every 30 Hz
+        # command serialized the shared USB bus and reduced collection to
+        # roughly 10 Hz.  TxOnly keeps the command path non-blocking; HOME and
+        # explicit open/close still use TxRx below.
+        packet.write4ByteTxOnly(port, dxl_id, ADDR_GOAL_POSITION, unsigned)
 
 
 class DynamixelGripper:
@@ -133,10 +141,13 @@ class DynamixelGripper:
 
         print(f"[Gripper] ID={self.dxl_id} initialized: open={self.pos_open}, close={self.pos_close}")
 
-    def set_open_ratio(self, ratio: float):
+    def set_open_ratio(self, ratio: float, *, wait_for_status: bool = True):
         ratio = float(np.clip(ratio, 0.0, 1.0))
         pos = int(self.pos_close + ratio * (self.pos_open - self.pos_close))
-        _write_pos(self.packet, self.port, self.dxl_id, pos)
+        _write_pos(
+            self.packet, self.port, self.dxl_id, pos,
+            wait_for_status=wait_for_status,
+        )
 
     def get_open_ratio(self) -> float:
         pos = _read_pos(self.packet, self.port, self.dxl_id)
@@ -173,6 +184,7 @@ class ArmNode:
         self.can_port = can_port
         self.is_left_arm = is_left_arm
         self._last_ik_warning_time = 0.0
+        self._last_streamed_gripper_target = None
 
         if urdf_path is None:
             if is_left_arm:
@@ -254,6 +266,7 @@ class ArmNode:
         time.sleep(1.0)
         if self.gripper is not None:
             self.gripper.open()
+            self._last_streamed_gripper_target = 1.0
 
     def home(self, gripper_target: float = 1.0):
         cmd = JointState(self.robot_config.joint_dof)
@@ -262,6 +275,9 @@ class ArmNode:
         self.piper.set_joint_cmd(cmd)
         if self.gripper is not None:
             self.gripper.set_open_ratio(gripper_target)
+            self._last_streamed_gripper_target = float(
+                np.clip(gripper_target, 0.0, 1.0)
+            )
         time.sleep(2.0)
 
     def set_joint_target(self, joint_target, gripper_target=None, preview_time=0.1):
@@ -270,7 +286,7 @@ class ArmNode:
         cmd.timestamp = self.piper.get_timestamp() + preview_time
         self.piper.set_joint_cmd(cmd)
         if gripper_target is not None and self.gripper is not None:
-            self.gripper.set_open_ratio(gripper_target)
+            self._stream_gripper_target(gripper_target)
 
     def set_ee_target(self, ee_target, gripper_target=None, preview_time=0.01):
         # Solve from measured joints, not from the previous requested target.
@@ -305,16 +321,30 @@ class ArmNode:
         cmd.timestamp = self.piper.get_timestamp() + preview_time
         self.piper.set_joint_cmd(cmd)
         if gripper_target is not None and self.gripper is not None:
-            self.gripper.set_open_ratio(gripper_target)
+            self._stream_gripper_target(gripper_target)
         return True
+
+    def _stream_gripper_target(self, gripper_target):
+        """Send changed high-rate targets without waiting for a status echo."""
+
+        value = float(np.clip(gripper_target, 0.0, 1.0))
+        if (
+            self._last_streamed_gripper_target is not None
+            and abs(value - self._last_streamed_gripper_target) < 1e-5
+        ):
+            return
+        self.gripper.set_open_ratio(value, wait_for_status=False)
+        self._last_streamed_gripper_target = value
 
     def open_gripper(self):
         if self.gripper is not None:
             self.gripper.open()
+            self._last_streamed_gripper_target = 1.0
 
     def close_gripper(self):
         if self.gripper is not None:
             self.gripper.close()
+            self._last_streamed_gripper_target = 0.0
 
     def set_gain(self, kp, kd):
         self.piper.set_gain(Gain(kp, kd))

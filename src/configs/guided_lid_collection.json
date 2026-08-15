@@ -1,0 +1,49 @@
+{
+  "schema": "piper_robot.guided_lid_collection_config/v1",
+  "control_frequency_hz": 30,
+  "policy": {
+    "type": "deterministic_operator_cartesian",
+    "inference_enabled": false,
+    "active_arm": "right"
+  },
+  "camera_udids": {
+    "head": "00008101-0015486E1412001E",
+    "right": "00008030-00121D820EE0802E",
+    "left": "00008030-001D39EA2646802E"
+  },
+  "baselines": {
+    "lid_open": "data/vla_agent/lid_bias/success/lid_open/agent_lid_open_20260813_154817_0000/agent_lid_open_20260813_154817_0000.hdf5",
+    "lid_close": "data/vla_agent/lid_bias/success/lid_close/agent_lid_close_20260813_164436_0000/agent_lid_close_20260813_164436_0000.hdf5"
+  },
+  "motion": {
+    "hover_clearance_m": 0.03,
+    "transit_speed_m_s": 0.05,
+    "descent_speed_m_s": 0.1,
+    "close_duration_s": 1.2,
+    "verification_lift_m": 0.02,
+    "reposition_lift_m": 0.02,
+    "grasp_review_timeout_s": 10.0,
+    "minimum_blocked_opening": 0.3,
+    "pressure_guard": {
+      "config": "src/configs/pasteur_lid_torque.json",
+      "enforce": true
+    }
+  },
+  "sweep": {
+    "physical_right_mm": [0, 10, 20, 30, 20, 10, 0, -10, -20, -30, -20, -10],
+    "maximum_operator_correction_m": 0.08,
+    "automatic_depth_search": false,
+    "lock_depth_after_success": true
+  },
+  "storage": {
+    "root": "data/vla_agent/guided_lid",
+    "controller_lock": "/tmp/piper_robot_right_arm_controller.lock",
+    "failures_retained": true,
+    "reposition_training_eligible": false
+  },
+  "ui": {
+    "host": "0.0.0.0",
+    "port": 8780,
+    "token": ""
+  }
+}

@@ -1,5 +1,8 @@
 # Piper Bimanual Robot — Teleop, Training & Inference Pipeline
 
+ACTを使わないユーザー誘導型の蓋デモ収集は
+[`docs/GUIDED_LID_DATA_COLLECTION.md`](docs/GUIDED_LID_DATA_COLLECTION.md)を参照。
+
 End-to-end pipeline for bimanual robot manipulation using Piper arms, VR teleoperation, and Pi0.5 policy learning.
 
 > **New: WetRobo** — a code-based autonomous wet-lab robot that learns tasks by performing

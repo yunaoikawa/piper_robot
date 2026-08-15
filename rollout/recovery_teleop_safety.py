@@ -182,7 +182,7 @@ class RecoveryTorqueGuard:
         self._residual_started_s[arm] = np.full(6, np.nan)
         self._hard_counts[arm] = np.zeros(6, dtype=int)
 
-    def check(self, arm: str) -> bool:
+    def check(self, arm: str, *, torque_sample: Any | None = None) -> bool:
         """Return True when safe; otherwise latch a measured joint hold."""
 
         if arm in self.latched:
@@ -190,7 +190,8 @@ class RecoveryTorqueGuard:
         try:
             now = self.clock()
             torque = np.asarray(
-                getattr(self.rpc, f"get_{arm}_joint_torque")(),
+                getattr(self.rpc, f"get_{arm}_joint_torque")()
+                if torque_sample is None else torque_sample,
                 dtype=float,
             )
             if torque.shape != (6,) or not np.all(np.isfinite(torque)):
