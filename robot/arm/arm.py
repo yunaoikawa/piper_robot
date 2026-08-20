@@ -241,6 +241,20 @@ class ArmNode:
         if self.gripper is not None:
             self.gripper.open()
 
+    def machine_zero(self):
+        """Return to Piper's all-zero joint pose and resync Cartesian IK.
+
+        Piper calls this pose ``home`` internally, but it is the folded
+        mechanical-zero pose (q = 0), not this repository's upright
+        manipulation home stored in ``self.home_q``.  ``reset()`` is also used
+        before the IK solver is initialized, while this method is the explicit
+        runtime operation exposed to inference/teleoperation clients.
+        """
+        self.reset()
+        q = np.asarray(self.piper.get_joint_state().pos, dtype=float).copy()
+        self.ik_solver.update_configuration(q)
+        return q
+
     def home(self, gripper_target: float = 1.0):
         cmd = JointState(self.robot_config.joint_dof)
         cmd.pos = self.home_q

@@ -40,6 +40,9 @@ def main():
                              'on the bias port instead of restarting.')
     parser.add_argument('--bias-port', type=int, default=5560,
                         help='Port serving set_bias/get_bias (default: 5560)')
+    parser.add_argument('--attach-current', action='store_true',
+                        help='Explicitly attach to the currently held robot pose; '
+                             'skip both true machine-zero and manipulation-home moves')
     args = parser.parse_args()
 
     # Create controller
@@ -55,6 +58,7 @@ def main():
         task=args.task,
         safety_config=args.safety_config,
         bias_port=args.bias_port,
+        home_on_init=not args.attach_current,
     )
 
     if args.bias is not None:

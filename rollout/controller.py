@@ -24,6 +24,25 @@ DATA_DIR = Path("./your_save_dir_here")
 DEFAULT_TASK = "put the flask in the incubator"
 TARGET_H, TARGET_W = 480, 640
 
+
+def prepare_arms_for_inference(robot_rpc):
+    """Reproduce the normal teleop startup pose sequence.
+
+    The robot first visits Piper's true, folded q=0 pose and only then moves to
+    the upright manipulation home expected by demonstrations and policies.
+    Keeping this sequence here makes it run for every inference-controller
+    launch even when the long-lived ConeE server is already initialized.
+    """
+    print("[startup] Returning both arms to true machine zero (q=0)...",
+          flush=True)
+    robot_rpc.machine_zero_arms()
+    print("[startup] Moving left arm to manipulation home...", flush=True)
+    robot_rpc.home_left_arm()
+    print("[startup] Moving right arm to manipulation home...", flush=True)
+    robot_rpc.home_right_arm()
+    print("[startup] Inference arm initialization complete.", flush=True)
+
+
 def quat_to_r6(quat, batched=False):
     rot_mat = R.from_quat(quat, scalar_first=True).as_matrix()
     if batched:
@@ -46,7 +65,8 @@ class PolicyController:
     def __init__(self, hpc_host="192.168.1.50", obs_port=5555, action_port=5556,
                  enable_recording=False, save_dir=None, autonomous_mode=False,
                  episode_timeout=600.0, manipulability_threshold=0.05,
-                 task=DEFAULT_TASK, safety_config=None, bias_port=5560):
+                 task=DEFAULT_TASK, safety_config=None, bias_port=5560,
+                 home_on_init=True):
         self.stop_event = threading.Event()
         self.policy_active = False
         self.task = task
@@ -62,13 +82,20 @@ class PolicyController:
         self.bias_port = bias_port
 
         self.obs_cone_e = RPCClient("localhost", 8081)
-        self.obs_cone_e.init()
+        # Connect without motion first.  The explicit sequence below then
+        # performs exactly one machine-zero visit per inference launch.  It
+        # also makes --attach-current genuinely motion-free when ConeE has not
+        # yet been initialized by another client.
+        self.obs_cone_e.init(reset_arms=False)
         self.obs_rpc_lock = threading.Lock()
 
         self.cone_e = RPCClient("localhost", 8081)
-        self.cone_e.init()
-        self.cone_e.home_left_arm()
-        self.cone_e.home_right_arm()
+        self.cone_e.init(reset_arms=False)
+        if home_on_init:
+            prepare_arms_for_inference(self.cone_e)
+        else:
+            print("[startup] Attaching to current arm pose; machine zero and "
+                  "manipulation home are both skipped.", flush=True)
 
         self._setup_zmq(hpc_host, obs_port, action_port)
 

@@ -42,14 +42,16 @@ class ConeE:
                 use_gripper=True,
             )
 
-    def init(self):
+    def init(self, reset_arms: bool | None = None):
         if self._initialized:
             print("Warning: ConeE already initialized")
             return
 
         if not self.no_arms:
-            self.left_arm.init(reset=self.reset_arms_on_init)
-            self.right_arm.init(reset=self.reset_arms_on_init)
+            if reset_arms is None:
+                reset_arms = self.reset_arms_on_init
+            self.left_arm.init(reset=reset_arms)
+            self.right_arm.init(reset=reset_arms)
 
         self._initialized = True
 
@@ -76,6 +78,20 @@ class ConeE:
     # ----------------------------------------------------------------------
     # Left arm
     # ----------------------------------------------------------------------
+    @require_initialization
+    def machine_zero_arms(self):
+        """Fold both arms to their true q=0 pose, matching server startup.
+
+        Keep the same deterministic left-then-right order used by ``init``.
+        This is intentionally distinct from ``home_left_arm`` and
+        ``home_right_arm``, which select the upright manipulation pose.
+        """
+        print("Returning left arm to machine zero (q=0)...", flush=True)
+        self.left_arm.machine_zero()
+        print("Returning right arm to machine zero (q=0)...", flush=True)
+        self.right_arm.machine_zero()
+        print("Both arms are at machine zero.", flush=True)
+
     @require_initialization
     def set_left_joint_target(
         self, joint_target: np.ndarray, gripper_target: float | None = None, preview_time: float = 0.1
