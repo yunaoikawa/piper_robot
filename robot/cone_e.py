@@ -188,6 +188,12 @@ class ConeE:
             return self.left_arm.gripper.get_open_ratio()
         return 0.0
 
+    @require_initialization
+    def get_left_gripper_status(self) -> dict:
+        if self.left_arm.gripper is not None:
+            return self.left_arm.gripper.get_status()
+        return {}
+
     # ----------------------------------------------------------------------
     # Right arm
     # ----------------------------------------------------------------------
@@ -252,6 +258,12 @@ class ConeE:
         if self.right_arm.gripper is not None:
             return self.right_arm.gripper.get_open_ratio()
         return 0.0
+
+    @require_initialization
+    def get_right_gripper_status(self) -> dict:
+        if self.right_arm.gripper is not None:
+            return self.right_arm.gripper.get_status()
+        return {}
 
     # ----------------------------------------------------------------------
     # Rest positions (for rollout controller 'h' key)

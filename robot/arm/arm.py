@@ -104,8 +104,23 @@ def _resolve_dynamixel_port() -> str:
 
 
 def _read_pos(packet, port, dxl_id):
-    raw, _, _ = packet.read4ByteTxRx(port, dxl_id, ADDR_PRESENT_POSITION)
+    raw, comm_result, dxl_error = packet.read4ByteTxRx(
+        port, dxl_id, ADDR_PRESENT_POSITION
+    )
+    if comm_result != COMM_SUCCESS or dxl_error != 0:
+        raise RuntimeError(
+            f"Dynamixel ID={dxl_id} position read failed: "
+            f"comm_result={comm_result}, dxl_error={dxl_error}"
+        )
     return struct.unpack("i", struct.pack("I", raw))[0]
+
+
+def _read_signed_4byte(packet, port, dxl_id, address):
+    raw, comm_result, dxl_error = packet.read4ByteTxRx(
+        port, dxl_id, address
+    )
+    value = struct.unpack("i", struct.pack("I", raw))[0]
+    return value, comm_result, dxl_error
 
 
 def _write_pos(packet, port, dxl_id, pos):
@@ -162,6 +177,17 @@ class DynamixelGripper:
         )
         if comm_result == COMM_SUCCESS and dxl_error == 0:
             self._last_commanded_pos = pos
+            print(
+                f"[Gripper] ID={self.dxl_id} goal={pos} "
+                f"open_ratio={ratio:.3f}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[Gripper] ID={self.dxl_id} write failed: goal={pos}, "
+                f"comm_result={comm_result}, dxl_error={dxl_error}",
+                flush=True,
+            )
         return True
 
     def get_open_ratio(self) -> float:
@@ -171,6 +197,40 @@ class DynamixelGripper:
             return 0.0
         ratio = (pos - self.pos_close) / denom
         return float(max(0.0, min(1.0, ratio)))
+
+    def get_status(self) -> dict:
+        present, present_comm, present_error = _read_signed_4byte(
+            self.packet,
+            self.port,
+            self.dxl_id,
+            ADDR_PRESENT_POSITION,
+        )
+        goal, goal_comm, goal_error = _read_signed_4byte(
+            self.packet,
+            self.port,
+            self.dxl_id,
+            ADDR_GOAL_POSITION,
+        )
+        torque, torque_comm, torque_error = self.packet.read1ByteTxRx(
+            self.port,
+            self.dxl_id,
+            ADDR_TORQUE_ENABLE,
+        )
+        return {
+            "id": self.dxl_id,
+            "present_position": present,
+            "present_comm_result": present_comm,
+            "present_device_error": present_error,
+            "goal_position": goal,
+            "goal_comm_result": goal_comm,
+            "goal_device_error": goal_error,
+            "torque_enabled": torque,
+            "torque_comm_result": torque_comm,
+            "torque_device_error": torque_error,
+            "calibrated_open": self.pos_open,
+            "calibrated_close": self.pos_close,
+            "last_commanded_position": self._last_commanded_pos,
+        }
 
     def close(self):
         self.set_open_ratio(0.0)

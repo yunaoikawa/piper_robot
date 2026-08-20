@@ -63,6 +63,22 @@ def test_failed_gripper_write_is_retried(monkeypatch):
     assert writes == [6300, 6300]
 
 
+def test_failed_gripper_read_is_not_reported_as_open():
+    class Packet:
+        def read4ByteTxRx(self, _port, _dxl_id, _address):
+            return 0, COMM_SUCCESS + 1, 0
+
+    gripper = _gripper()
+    gripper.packet = Packet()
+
+    try:
+        gripper.get_open_ratio()
+    except RuntimeError as exc:
+        assert "position read failed" in str(exc)
+    else:
+        raise AssertionError("a failed read was silently interpreted as open")
+
+
 def test_stream_preview_bridges_measured_tail_and_controller_is_schedulable():
     assert TELEOP_COMMAND_PREVIEW_S >= 3.0 / CONTROL_FREQ
     assert PIPER_CONTROLLER_DT_S == 0.01
