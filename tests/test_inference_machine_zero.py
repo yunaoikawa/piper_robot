@@ -5,6 +5,7 @@ import numpy as np
 from robot.arm.arm import ArmNode
 from robot.arm.startup import prepare_arms_for_manipulation
 from robot.cone_e import ConeE
+import robot.cone_e as cone_e_module
 from rollout.controller import prepare_arms_for_inference
 
 
@@ -109,6 +110,71 @@ def test_cone_e_default_init_keeps_normal_teleop_machine_zero_behavior():
     cone.init()
 
     assert calls == [("left", True), ("right", True)]
+
+
+def test_cone_e_main_initializes_normal_server_before_listening(monkeypatch):
+    calls = []
+
+    class _MainCone:
+        def __init__(self, *, no_arms, reset_arms_on_init):
+            calls.append(("construct", no_arms, reset_arms_on_init))
+
+        def init(self):
+            calls.append(("init",))
+
+    class _MainRPCServer:
+        def __init__(self, cone, host, port, threaded):
+            calls.append(("server", host, port, threaded))
+
+        def start(self):
+            calls.append(("start",))
+
+        def stop(self):
+            calls.append(("stop",))
+
+    monkeypatch.setattr(cone_e_module, "ConeE", _MainCone)
+    monkeypatch.setattr(cone_e_module, "RPCServer", _MainRPCServer)
+    monkeypatch.setattr(cone_e_module.atexit, "register", lambda _fn: None)
+    monkeypatch.setattr(cone_e_module.atexit, "unregister", lambda _fn: None)
+
+    cone_e_module.main([])
+
+    assert calls[:4] == [
+        ("construct", False, True),
+        ("init",),
+        ("server", "0.0.0.0", 8081, False),
+        ("start",),
+    ]
+
+
+def test_cone_e_main_initializes_attach_current_without_reset(monkeypatch):
+    calls = []
+
+    class _MainCone:
+        def __init__(self, *, no_arms, reset_arms_on_init):
+            calls.append(("construct", no_arms, reset_arms_on_init))
+
+        def init(self):
+            calls.append(("init",))
+
+    class _MainRPCServer:
+        def __init__(self, _cone, _host, _port, threaded):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(cone_e_module, "ConeE", _MainCone)
+    monkeypatch.setattr(cone_e_module, "RPCServer", _MainRPCServer)
+    monkeypatch.setattr(cone_e_module.atexit, "register", lambda _fn: None)
+    monkeypatch.setattr(cone_e_module.atexit, "unregister", lambda _fn: None)
+
+    cone_e_module.main(["--attach-current"])
+
+    assert calls == [("construct", False, False), ("init",)]
 
 
 class _FakePiper:

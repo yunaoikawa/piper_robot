@@ -277,13 +277,12 @@ def main(argv: list[str] | None = None):
         no_arms=args.no_arms,
         reset_arms_on_init=not args.attach_current,
     )
-    if args.attach_current:
-        # An attach-current server must expose valid state before any motion
-        # client connects.  This latches measured joints and enables position
-        # gains without calling reset/home.  Historically teleop happened to
-        # call init() after connecting; read-only tools correctly do not, which
-        # otherwise leaves every guarded getter returning None.
-        cone.init()
+    # Every server mode must expose valid state before a client connects.
+    # In normal mode init() performs Piper's true q=0 reset; attach-current
+    # latches the measured pose without moving because reset_arms_on_init is
+    # false.  Omitting this call leaves every guarded getter uninitialized even
+    # though the RPC socket appears healthy.
+    cone.init()
     rpc_server = RPCServer(cone, args.host, args.port, threaded=False)
     stop_callback = rpc_server.stop
     atexit.register(stop_callback)
