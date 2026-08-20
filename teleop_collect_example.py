@@ -67,6 +67,10 @@ DEFAULT_VR_TCP_HOST = "192.168.1.106"
 DEFAULT_VR_TCP_PORT = 5555
 VR_CONTROLLER_TOPIC = b"oculus_controller"
 CONTROL_FREQ = 30
+# The camera/recording path has measured 60--80 ms tail latency even though
+# nominal commands are 30 Hz.  Keep each Piper interpolation alive across that
+# tail so carrying an object does not become a stop/restart sequence.
+TELEOP_COMMAND_PREVIEW_S = 0.10
 DATA_DIR = Path("./teleop_demonstrations")
 CAMERA_LABELS = ["head", "right", "left"]
 
@@ -504,11 +508,10 @@ class MinimalTeleopCollector:
     def _finish_episode_after_disengage(self):
         """Save an episode while holding its final robot/object pose.
 
-        Returning both arms home while a gripper still holds an object causes
-        exactly the large, unintended transport motion that recording users
-        observed.  Homing is therefore an explicit opt-in for legacy
-        workflows; continuous task collection holds the final pose so the next
-        task can re-anchor there.
+        Homing while a gripper may still hold an object is unsafe and is kept
+        as an explicit legacy opt-in.  This final-pose behavior is independent
+        of in-motion carrying smoothness, which is handled by command preview
+        and latched gripper goals.
         """
         if self.args.home_after_episode:
             print("[LOOP] Legacy home-after-episode enabled.", flush=True)
@@ -842,7 +845,8 @@ class MinimalTeleopCollector:
                         if p is not None:
                             self.robot.set_left_ee_target(
                                 ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
-                                gripper_target=gr, preview_time=0.05,
+                                gripper_target=gr,
+                                preview_time=TELEOP_COMMAND_PREVIEW_S,
                             )
                         else:
                             # A discontinuous Quest target is rejected for this
@@ -878,7 +882,8 @@ class MinimalTeleopCollector:
                         if p is not None:
                             self.robot.set_right_ee_target(
                                 ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
-                                gripper_target=gr, preview_time=0.05,
+                                gripper_target=gr,
+                                preview_time=TELEOP_COMMAND_PREVIEW_S,
                             )
                         else:
                             self.start_teleop_right = False

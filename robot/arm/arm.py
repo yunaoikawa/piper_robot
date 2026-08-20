@@ -46,6 +46,13 @@ DXL_POS_RIGHT_CLOSE = 6300
 DXL_ID_RIGHT = 1
 DXL_ID_LEFT = 2
 
+# Two physical Piper controllers share the host and CAN/USB workload.  The
+# historical 3 ms setting routinely overran at 4--7 ms on Pasteur, which makes
+# streamed trajectories repeatedly miss their interpolation deadlines.  A
+# 10 ms controller period is the previously verified non-ticking setting and
+# still runs much faster than the 30 Hz teleoperation command stream.
+PIPER_CONTROLLER_DT_S = 0.01
+
 LEFT_CAL_FILE = Path(__file__).parent / "left_gripper_cal.json"
 
 
@@ -97,7 +104,7 @@ def _read_pos(packet, port, dxl_id):
 
 def _write_pos(packet, port, dxl_id, pos):
     unsigned = struct.unpack("I", struct.pack("i", pos))[0]
-    packet.write4ByteTxRx(port, dxl_id, ADDR_GOAL_POSITION, unsigned)
+    return packet.write4ByteTxRx(port, dxl_id, ADDR_GOAL_POSITION, unsigned)
 
 
 class DynamixelGripper:
@@ -105,6 +112,7 @@ class DynamixelGripper:
         self.dxl_id = dxl_id
         self.inverted = inverted
         self.port, self.packet = _SharedDynamixelPort.get()
+        self._last_commanded_pos: int | None = None
 
         # Reboot right servo only
         if self.dxl_id != DXL_ID_LEFT:
@@ -136,7 +144,19 @@ class DynamixelGripper:
     def set_open_ratio(self, ratio: float):
         ratio = float(np.clip(ratio, 0.0, 1.0))
         pos = int(self.pos_close + ratio * (self.pos_open - self.pos_close))
-        _write_pos(self.packet, self.port, self.dxl_id, pos)
+        # Position-mode Dynamixels retain and regulate their last goal.  Sending
+        # the same close target on every 30 Hz arm pose blocks the arm RPC on a
+        # synchronous USB round-trip and makes object transport visibly tick.
+        # Latch the goal and write again only when it actually changes.  Failed
+        # writes are deliberately not cached, so the next frame retries.
+        if pos == self._last_commanded_pos:
+            return False
+        comm_result, dxl_error = _write_pos(
+            self.packet, self.port, self.dxl_id, pos
+        )
+        if comm_result == COMM_SUCCESS and dxl_error == 0:
+            self._last_commanded_pos = pos
+        return True
 
     def get_open_ratio(self) -> float:
         pos = _read_pos(self.packet, self.port, self.dxl_id)
@@ -185,7 +205,7 @@ class ArmNode:
         self.controller_config = ControllerConfigFactory.get_instance().get_config("joint_controller")
         self.robot_config.urdf_path = self.urdf_path
         self.robot_config.joint_vel_max = np.ones(6) * 5.0
-        self.controller_config.controller_dt = 0.003
+        self.controller_config.controller_dt = PIPER_CONTROLLER_DT_S
         self.controller_config.default_kp = np.ones(6) * 2.5
         self.controller_config.default_kd = np.ones(6) * 0.2
         self.controller_config.gravity_compensation = True
