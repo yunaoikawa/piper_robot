@@ -501,6 +501,24 @@ class MinimalTeleopCollector:
         with self.robot_rpc_lock:
             self.recovery_torque_guard.reset(arm)
 
+    def _finish_episode_after_disengage(self):
+        """Save an episode while holding its final robot/object pose.
+
+        Returning both arms home while a gripper still holds an object causes
+        exactly the large, unintended transport motion that recording users
+        observed.  Homing is therefore an explicit opt-in for legacy
+        workflows; continuous task collection holds the final pose so the next
+        task can re-anchor there.
+        """
+        if self.args.home_after_episode:
+            print("[LOOP] Legacy home-after-episode enabled.", flush=True)
+            with self.robot_rpc_lock:
+                self.robot.home_left_arm()
+                self.robot.home_right_arm()
+        else:
+            print("[LOOP] Episode ended; holding final arm poses.", flush=True)
+        self._end_episode_and_save()
+
     def _recording_worker(self):
         while not self.stop_event.is_set():
             try:
@@ -763,8 +781,8 @@ class MinimalTeleopCollector:
                 self.X_Cinit_left = cs.left_SE3
                 self.X_ee_init_left = eeL
                 self.start_teleop_left = True
+                self.recovery_safety.reset("left")
                 if self.mode == "recovery":
-                    self.recovery_safety.reset("left")
                     self._reset_recovery_torque_guard("left")
             if cs.left_y:
                 self.start_teleop_left = False
@@ -773,8 +791,8 @@ class MinimalTeleopCollector:
                 self.X_Cinit_right = cs.right_SE3
                 self.X_ee_init_right = eeR
                 self.start_teleop_right = True
+                self.recovery_safety.reset("right")
                 if self.mode == "recovery":
-                    self.recovery_safety.reset("right")
                     self._reset_recovery_torque_guard("right")
             if cs.right_b:
                 self.start_teleop_right = False
@@ -793,10 +811,7 @@ class MinimalTeleopCollector:
                 if any_teleop and not prev_any_teleop and not self._quit_requested:
                     self._start_episode()
                 if all_stopped and not prev_all_stopped:
-                    with self.robot_rpc_lock:
-                        self.robot.home_left_arm()
-                        self.robot.home_right_arm()
-                    self._end_episode_and_save()
+                    self._finish_episode_after_disengage()
 
             prev_any_teleop = any_teleop
             prev_all_stopped = all_stopped
@@ -820,13 +835,16 @@ class MinimalTeleopCollector:
                         p = self.X_ee_init_left.translation() + Rd.translation()
                         R = Rd.rotation() @ self.X_ee_init_left.rotation()
                         gr = 1.0 if cs.left_index_trigger < 0.5 else 0.0
-                        p = self.recovery_safety.check("left", p) if self.mode == "recovery" else p
+                        # Apply only the measured consecutive-target jump gate
+                        # in ordinary recording mode. With no safety config the
+                        # layer has no workspace/keep-out clamps.
+                        p = self.recovery_safety.check("left", p)
                         if p is not None:
                             self.robot.set_left_ee_target(
                                 ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
                                 gripper_target=gr, preview_time=0.05,
                             )
-                        elif self.mode == "recovery":
+                        else:
                             # A discontinuous Quest target is rejected for this
                             # frame.  Drop engagement so the next held X frame
                             # re-anchors controller and robot poses instead of
@@ -834,7 +852,7 @@ class MinimalTeleopCollector:
                             self.start_teleop_left = False
                             self.X_Cinit_left = self.X_ee_init_left = None
                             print(
-                                "[RECOVERY] LEFT target rejected; "
+                                "[TELEOP] LEFT target rejected; "
                                 "re-anchoring without motion.",
                                 flush=True,
                             )
@@ -856,17 +874,17 @@ class MinimalTeleopCollector:
                         p = self.X_ee_init_right.translation() + Rd.translation()
                         R = Rd.rotation() @ self.X_ee_init_right.rotation()
                         gr = 1.0 if cs.right_index_trigger < 0.5 else 0.0
-                        p = self.recovery_safety.check("right", p) if self.mode == "recovery" else p
+                        p = self.recovery_safety.check("right", p)
                         if p is not None:
                             self.robot.set_right_ee_target(
                                 ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
                                 gripper_target=gr, preview_time=0.05,
                             )
-                        elif self.mode == "recovery":
+                        else:
                             self.start_teleop_right = False
                             self.X_Cinit_right = self.X_ee_init_right = None
                             print(
-                                "[RECOVERY] RIGHT target rejected; "
+                                "[TELEOP] RIGHT target rejected; "
                                 "re-anchoring without motion.",
                                 flush=True,
                             )
@@ -997,6 +1015,14 @@ def main():
         help=(
             "Preserve current arm poses at startup; skip both true machine-zero "
             "and manipulation-home moves."
+        ),
+    )
+    ap.add_argument(
+        "--home-after-episode",
+        action="store_true",
+        help=(
+            "Legacy opt-in: return both arms to manipulation home after each "
+            "recorded episode. Default is to hold the final poses."
         ),
     )
     ap.add_argument("--no-head-stream", action="store_true",
