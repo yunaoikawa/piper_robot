@@ -45,6 +45,7 @@ DXL_POS_RIGHT_CLOSE = 6300
 
 DXL_ID_RIGHT = 1
 DXL_ID_LEFT = 2
+DXL_SINGLE_TURN_TICKS = 4096
 
 # Two physical Piper controllers share the host and CAN/USB workload.  The
 # historical 3 ms setting routinely overran at 4--7 ms on Pasteur, which makes
@@ -128,12 +129,53 @@ def _write_pos(packet, port, dxl_id, pos):
     return packet.write4ByteTxRx(port, dxl_id, ADDR_GOAL_POSITION, unsigned)
 
 
+def align_extended_position_calibration(
+    pos_open: int,
+    pos_close: int,
+    present_position: int,
+    *,
+    ticks_per_turn: int = DXL_SINGLE_TURN_TICKS,
+) -> tuple[int, int, int]:
+    """Align multi-turn endpoints to the servo's post-reboot turn.
+
+    Dynamixel extended-position values can lose an integer turn at reboot.
+    The gripper aperture span is less than one turn, so choose the common
+    integer-turn shift whose calibrated interval is closest to the current
+    raw position.  Both endpoints receive the same shift; aperture and motion
+    direction therefore remain unchanged.
+    """
+    if ticks_per_turn <= 0:
+        raise ValueError("ticks_per_turn must be positive")
+    midpoint = 0.5 * (int(pos_open) + int(pos_close))
+    center_turn = int(round((int(present_position) - midpoint) / ticks_per_turn))
+
+    def interval_distance(turn):
+        shift = turn * ticks_per_turn
+        lo = min(pos_open + shift, pos_close + shift)
+        hi = max(pos_open + shift, pos_close + shift)
+        if present_position < lo:
+            distance = lo - present_position
+        elif present_position > hi:
+            distance = present_position - hi
+        else:
+            distance = 0
+        return distance, abs(present_position - (midpoint + shift)), abs(turn)
+
+    turn = min(
+        range(center_turn - 2, center_turn + 3),
+        key=interval_distance,
+    )
+    shift = turn * ticks_per_turn
+    return int(pos_open + shift), int(pos_close + shift), int(shift)
+
+
 class DynamixelGripper:
     def __init__(self, dxl_id: int = DXL_ID_RIGHT, inverted: bool = False):
         self.dxl_id = dxl_id
         self.inverted = inverted
         self.port, self.packet = _SharedDynamixelPort.get()
         self._last_commanded_pos: int | None = None
+        self._calibration_turn_shift = 0
 
         # Reboot right servo only
         if self.dxl_id != DXL_ID_LEFT:
@@ -159,6 +201,27 @@ class DynamixelGripper:
         else:
             self.pos_open = DXL_POS_RIGHT_OPEN
             self.pos_close = DXL_POS_RIGHT_CLOSE
+
+        # ID=1 is rebooted above. In extended-position mode that can change
+        # the reported turn even though the mechanism did not move. Rebase the
+        # calibrated endpoints together so open/close remain on the physical
+        # mechanism's current turn. This is harmless for ID=2 as well and
+        # protects it if its power is cycled independently.
+        present_position = _read_pos(self.packet, self.port, self.dxl_id)
+        self.pos_open, self.pos_close, self._calibration_turn_shift = (
+            align_extended_position_calibration(
+                self.pos_open,
+                self.pos_close,
+                present_position,
+            )
+        )
+        if self._calibration_turn_shift:
+            print(
+                f"[Gripper] ID={self.dxl_id} aligned calibration by "
+                f"{self._calibration_turn_shift:+d} ticks from raw "
+                f"position {present_position}",
+                flush=True,
+            )
 
         print(f"[Gripper] ID={self.dxl_id} initialized: open={self.pos_open}, close={self.pos_close}")
 
@@ -230,6 +293,7 @@ class DynamixelGripper:
             "calibrated_open": self.pos_open,
             "calibrated_close": self.pos_close,
             "last_commanded_position": self._last_commanded_pos,
+            "calibration_turn_shift": self._calibration_turn_shift,
         }
 
     def close(self):

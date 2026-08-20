@@ -4,6 +4,7 @@ from robot.arm.arm import (
     COMM_SUCCESS,
     DynamixelGripper,
     PIPER_CONTROLLER_DT_S,
+    align_extended_position_calibration,
 )
 from teleop_collect_example import (
     CONTROL_FREQ,
@@ -77,6 +78,27 @@ def test_failed_gripper_read_is_not_reported_as_open():
         assert "position read failed" in str(exc)
     else:
         raise AssertionError("a failed read was silently interpreted as open")
+
+
+def test_right_gripper_calibration_rebases_after_reboot_turn_reset():
+    opened, closed, shift = align_extended_position_calibration(
+        2800,
+        6300,
+        2232,
+    )
+
+    assert (opened, closed, shift) == (-1296, 2204, -4096)
+    assert closed - opened == 3500
+
+
+def test_right_gripper_calibration_keeps_turn_when_already_in_interval():
+    opened, closed, shift = align_extended_position_calibration(
+        2800,
+        6300,
+        4000,
+    )
+
+    assert (opened, closed, shift) == (2800, 6300, 0)
 
 
 def test_stream_preview_bridges_measured_tail_and_controller_is_schedulable():
