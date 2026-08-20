@@ -10,6 +10,7 @@ import mink
 from robot.teleop.oculus_msgs import parse_controller_state
 
 from robot.rpc import RPCClient
+from robot.arm.startup import prepare_arms_for_manipulation
 
 
 def apply_deadzone(arr, deadzone_size=0.01):
@@ -39,9 +40,11 @@ class OculusReader:
         self.X_ee_init_right = None
 
         self.cone_e = RPCClient("localhost", 8081)
-        self.cone_e.init()
-        self.cone_e.home_left_arm()
-        self.cone_e.home_right_arm()
+        self.cone_e.init(reset_arms=False)
+        prepare_arms_for_manipulation(
+            self.cone_e,
+            context="teleop startup",
+        )
 
         # self.interval_history = []
         self.stop_event = threading.Event()

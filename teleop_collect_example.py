@@ -45,6 +45,7 @@ from loop_rate_limiters import RateLimiter
 from record3d import Record3DStream
 
 from robot.rpc import RPCClient
+from robot.arm.startup import prepare_arms_for_manipulation
 from robot.teleop.oculus_msgs import parse_controller_state
 from robot.camera_id import load_camera_map
 from rollout.calibration_keyboard_jog import load_torque_thresholds
@@ -209,12 +210,17 @@ class MinimalTeleopCollector:
         self.robot = RPCClient("localhost", 8081)
         self.robot_rpc_lock = threading.Lock()
         with self.robot_rpc_lock:
-            self.robot.init()
-            if self.mode != "recovery":
-                self.robot.home_left_arm()
-                self.robot.home_right_arm()
+            # Connect without moving first, then run the same explicit
+            # machine-zero -> manipulation-home sequence as inference.
+            self.robot.init(reset_arms=False)
+            if self.mode != "recovery" and not args.attach_current:
+                prepare_arms_for_manipulation(
+                    self.robot,
+                    context="teleop startup",
+                )
             else:
-                print("[RECOVERY] Preserving the current arm poses (no automatic home).")
+                print("[INIT] Preserving the current arm poses (no machine-zero "
+                      "or manipulation-home move).")
 
         self.recovery_safety = SafetyLayer.from_config(args.safety_config)
         self.recovery_torque_guard = None
@@ -889,6 +895,14 @@ def main():
     )
     ap.add_argument("--no-display", action="store_true",
                     help="Disable local OpenCV windows (useful on a headless robot PC).")
+    ap.add_argument(
+        "--attach-current",
+        action="store_true",
+        help=(
+            "Preserve current arm poses at startup; skip both true machine-zero "
+            "and manipulation-home moves."
+        ),
+    )
     ap.add_argument("--no-head-stream", action="store_true",
                     help="Disable the phone/Quest head-camera web stream.")
     ap.add_argument("--head-stream-host", default="0.0.0.0",

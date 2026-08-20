@@ -11,6 +11,9 @@ from scipy.spatial.transform import Rotation as R
 
 from robot.rpc import RPCClient
 from robot.camera_id import load_camera_map
+from robot.arm.startup import (
+    prepare_arms_for_manipulation as prepare_arms_for_inference,
+)
 from loop_rate_limiters import RateLimiter
 
 from .camera import CameraFeedManager, USBWristCameraFeedManager
@@ -23,24 +26,6 @@ from .safety import SafetyLayer
 DATA_DIR = Path("./your_save_dir_here")
 DEFAULT_TASK = "put the flask in the incubator"
 TARGET_H, TARGET_W = 480, 640
-
-
-def prepare_arms_for_inference(robot_rpc):
-    """Reproduce the normal teleop startup pose sequence.
-
-    The robot first visits Piper's true, folded q=0 pose and only then moves to
-    the upright manipulation home expected by demonstrations and policies.
-    Keeping this sequence here makes it run for every inference-controller
-    launch even when the long-lived ConeE server is already initialized.
-    """
-    print("[startup] Returning both arms to true machine zero (q=0)...",
-          flush=True)
-    robot_rpc.machine_zero_arms()
-    print("[startup] Moving left arm to manipulation home...", flush=True)
-    robot_rpc.home_left_arm()
-    print("[startup] Moving right arm to manipulation home...", flush=True)
-    robot_rpc.home_right_arm()
-    print("[startup] Inference arm initialization complete.", flush=True)
 
 
 def quat_to_r6(quat, batched=False):

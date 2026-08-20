@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from robot.arm.arm import ArmNode
+from robot.arm.startup import prepare_arms_for_manipulation
 from robot.cone_e import ConeE
 from rollout.controller import prepare_arms_for_inference
 
@@ -13,6 +14,12 @@ class _RecordingRobotRPC:
 
     def machine_zero_arms(self):
         self.calls.append("machine_zero_arms")
+
+    def machine_zero_left_arm(self):
+        self.calls.append("machine_zero_left_arm")
+
+    def machine_zero_right_arm(self):
+        self.calls.append("machine_zero_right_arm")
 
     def home_left_arm(self):
         self.calls.append("home_left_arm")
@@ -31,6 +38,18 @@ def test_inference_start_visits_machine_zero_before_manipulation_home():
         "home_left_arm",
         "home_right_arm",
     ]
+
+
+def test_single_arm_teleop_visits_its_machine_zero_before_home():
+    robot = _RecordingRobotRPC()
+
+    prepare_arms_for_manipulation(
+        robot,
+        arms=("right",),
+        context="test teleop",
+    )
+
+    assert robot.calls == ["machine_zero_right_arm", "home_right_arm"]
 
 
 class _RecordingArm:

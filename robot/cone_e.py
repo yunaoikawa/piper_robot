@@ -79,6 +79,16 @@ class ConeE:
     # Left arm
     # ----------------------------------------------------------------------
     @require_initialization
+    def machine_zero_left_arm(self):
+        """Fold the left arm to Piper's true q=0 pose."""
+        return self.left_arm.machine_zero()
+
+    @require_initialization
+    def machine_zero_right_arm(self):
+        """Fold the right arm to Piper's true q=0 pose."""
+        return self.right_arm.machine_zero()
+
+    @require_initialization
     def machine_zero_arms(self):
         """Fold both arms to their true q=0 pose, matching server startup.
 
@@ -87,9 +97,9 @@ class ConeE:
         ``home_right_arm``, which select the upright manipulation pose.
         """
         print("Returning left arm to machine zero (q=0)...", flush=True)
-        self.left_arm.machine_zero()
+        self.machine_zero_left_arm()
         print("Returning right arm to machine zero (q=0)...", flush=True)
-        self.right_arm.machine_zero()
+        self.machine_zero_right_arm()
         print("Both arms are at machine zero.", flush=True)
 
     @require_initialization
