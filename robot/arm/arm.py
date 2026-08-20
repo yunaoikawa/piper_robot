@@ -54,11 +54,11 @@ DXL_SINGLE_TURN_TICKS = 4096
 # still runs much faster than the 30 Hz teleoperation command stream.
 PIPER_CONTROLLER_DT_S = 0.01
 
-# Interactive Cartesian commands arrive at 30 Hz.  Keep their default joint
-# step below Piper's configured 5 rad/s velocity limit while leaving some
-# margin for scheduling jitter.  Callers may provide a different value when
-# their stream rate differs.
-TELEOP_DEFAULT_MAX_JOINT_STEP_RAD = 4.0 / 30.0
+# Piper interpolates each streamed target over the command preview, rather
+# than over the 30 Hz arrival period. A 0.40 rad step over the normal 0.10 s
+# preview is 4 rad/s, leaving margin below the configured 5 rad/s limit.
+TELEOP_DEFAULT_MAX_JOINT_STEP_RAD = 4.0 * 0.10
+TELEOP_IK_ITERATIONS = 3
 
 LEFT_CAL_FILE = Path(__file__).parent / "left_gripper_cal.json"
 
@@ -471,16 +471,19 @@ class ArmNode:
         single arm command should.  Solving a distant pose to convergence and
         then rejecting the remote IK solution causes a permanent stop: every
         following frame repeats the same rejection.  Teleoperation instead
-        takes one best-effort IK iteration from measured joints and uniformly
-        bounds that joint increment.  Repeated 30 Hz calls converge toward the
-        live controller pose without ever issuing a branch jump.
+        takes a small fixed number of IK iterations from measured joints and
+        uniformly bounds that joint increment. Repeated 30 Hz calls converge
+        toward the live controller pose without ever issuing a branch jump.
 
         The ordinary ``set_ee_target`` path remains fail-closed for autonomous
         commands; this incremental behavior is deliberately teleop-specific.
         """
         current_q = np.asarray(self.get_joint_positions(), dtype=float)
         self.ik_solver.update_configuration(current_q)
-        qd, _ = self.ik_solver.solve_ik(ee_target, max_iter=1)
+        qd, _ = self.ik_solver.solve_ik(
+            ee_target,
+            max_iter=TELEOP_IK_ITERATIONS,
+        )
         qd = np.asarray(qd, dtype=float)
         delta = qd - current_q
         if not np.all(np.isfinite(delta)):

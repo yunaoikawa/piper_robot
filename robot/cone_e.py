@@ -120,7 +120,7 @@ class ConeE:
         ee_target: mink.SE3,
         gripper_target: float | None = None,
         preview_time: float = 0.1,
-        max_joint_step_rad: float = 4.0 / 30.0,
+        max_joint_step_rad: float = 4.0 * 0.1,
     ):
         return self.left_arm.set_teleop_ee_target(
             ee_target,
@@ -215,7 +215,7 @@ class ConeE:
         ee_target: mink.SE3,
         gripper_target: float | None = None,
         preview_time: float = 0.1,
-        max_joint_step_rad: float = 4.0 / 30.0,
+        max_joint_step_rad: float = 4.0 * 0.1,
     ):
         return self.right_arm.set_teleop_ee_target(
             ee_target,

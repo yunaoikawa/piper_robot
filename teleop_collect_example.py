@@ -71,11 +71,14 @@ CONTROL_FREQ = 30
 # nominal commands are 30 Hz.  Keep each Piper interpolation alive across that
 # tail so carrying an object does not become a stop/restart sequence.
 TELEOP_COMMAND_PREVIEW_S = 0.10
-# Piper is configured for at most 5 rad/s.  Limit each 30 Hz interactive IK
-# update to the equivalent of 4 rad/s, leaving timing margin without imposing
-# a Cartesian workspace clamp or reducing the controller's total reach.
+# Piper is configured for at most 5 rad/s. Its interpolation velocity is the
+# target joint delta divided by preview time, not by the 30 Hz command period.
+# Limit each update to 4 rad/s over that preview, leaving timing margin without
+# imposing a Cartesian workspace clamp or reducing the controller's reach.
 TELEOP_MAX_JOINT_SPEED_RAD_S = 4.0
-TELEOP_MAX_JOINT_STEP_RAD = TELEOP_MAX_JOINT_SPEED_RAD_S / CONTROL_FREQ
+TELEOP_MAX_JOINT_STEP_RAD = (
+    TELEOP_MAX_JOINT_SPEED_RAD_S * TELEOP_COMMAND_PREVIEW_S
+)
 DATA_DIR = Path("./teleop_demonstrations")
 CAMERA_LABELS = ["head", "right", "left"]
 

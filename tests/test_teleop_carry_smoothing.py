@@ -4,6 +4,7 @@ from robot.arm.arm import (
     COMM_SUCCESS,
     DynamixelGripper,
     PIPER_CONTROLLER_DT_S,
+    TELEOP_IK_ITERATIONS,
     align_extended_position_calibration,
 )
 from teleop_collect_example import (
@@ -103,6 +104,7 @@ def test_right_gripper_calibration_keeps_turn_when_already_in_interval():
 
 def test_stream_preview_bridges_measured_tail_and_controller_is_schedulable():
     assert TELEOP_COMMAND_PREVIEW_S >= 3.0 / CONTROL_FREQ
+    assert TELEOP_MAX_JOINT_STEP_RAD / TELEOP_COMMAND_PREVIEW_S == 4.0
     assert PIPER_CONTROLLER_DT_S == 0.01
 
 
@@ -153,7 +155,7 @@ def _teleop_arm(q, qd):
     return arm
 
 
-def test_teleop_ik_uses_one_iteration_and_steps_toward_far_target():
+def test_teleop_ik_uses_bounded_iterations_and_steps_toward_far_target():
     arm = _teleop_arm(np.zeros(6), np.array([1.5, -0.6, 0.3, 0, 0, 0]))
 
     assert arm.set_teleop_ee_target(
@@ -163,7 +165,7 @@ def test_teleop_ik_uses_one_iteration_and_steps_toward_far_target():
         max_joint_step_rad=TELEOP_MAX_JOINT_STEP_RAD,
     )
 
-    assert arm.ik_solver.max_iters == [1]
+    assert arm.ik_solver.max_iters == [TELEOP_IK_ITERATIONS]
     np.testing.assert_array_equal(arm.ik_solver.updated[0], np.zeros(6))
     assert len(arm.piper.commands) == 1
     command = arm.piper.commands[0]
