@@ -115,6 +115,21 @@ class ConeE:
         )
 
     @require_initialization
+    def set_left_teleop_ee_target(
+        self,
+        ee_target: mink.SE3,
+        gripper_target: float | None = None,
+        preview_time: float = 0.1,
+        max_joint_step_rad: float = 4.0 / 30.0,
+    ):
+        return self.left_arm.set_teleop_ee_target(
+            ee_target,
+            gripper_target,
+            preview_time,
+            max_joint_step_rad,
+        )
+
+    @require_initialization
     def set_left_gain(self, kp: np.ndarray, kd: np.ndarray):
         self.left_arm.set_gain(kp, kd)
 
@@ -186,6 +201,21 @@ class ConeE:
     def set_right_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
         return self.right_arm.set_ee_target(
             ee_target, gripper_target, preview_time
+        )
+
+    @require_initialization
+    def set_right_teleop_ee_target(
+        self,
+        ee_target: mink.SE3,
+        gripper_target: float | None = None,
+        preview_time: float = 0.1,
+        max_joint_step_rad: float = 4.0 / 30.0,
+    ):
+        return self.right_arm.set_teleop_ee_target(
+            ee_target,
+            gripper_target,
+            preview_time,
+            max_joint_step_rad,
         )
 
     @require_initialization

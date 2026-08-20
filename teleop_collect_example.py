@@ -71,6 +71,11 @@ CONTROL_FREQ = 30
 # nominal commands are 30 Hz.  Keep each Piper interpolation alive across that
 # tail so carrying an object does not become a stop/restart sequence.
 TELEOP_COMMAND_PREVIEW_S = 0.10
+# Piper is configured for at most 5 rad/s.  Limit each 30 Hz interactive IK
+# update to the equivalent of 4 rad/s, leaving timing margin without imposing
+# a Cartesian workspace clamp or reducing the controller's total reach.
+TELEOP_MAX_JOINT_SPEED_RAD_S = 4.0
+TELEOP_MAX_JOINT_STEP_RAD = TELEOP_MAX_JOINT_SPEED_RAD_S / CONTROL_FREQ
 DATA_DIR = Path("./teleop_demonstrations")
 CAMERA_LABELS = ["head", "right", "left"]
 
@@ -351,10 +356,17 @@ class MinimalTeleopCollector:
         self.video_writers = None
         self.recording_queue = queue.Queue(maxsize=300)
         self.episode_lock = threading.Lock()
+        # Serializes start/stop against the independent camera sampler so an
+        # old episode cannot enqueue a late sample into the next one.
+        self.recording_capture_lock = threading.Lock()
 
         self.oculus_thread = threading.Thread(target=self._oculus_thread, daemon=True)
         self.robot_state_thread = threading.Thread(target=self._robot_state_thread, daemon=True)
         self.recording_thread = threading.Thread(target=self._recording_worker, daemon=True)
+        self.recording_sampler_thread = threading.Thread(
+            target=self._recording_sampler,
+            daemon=True,
+        )
         self.display_thread = None
         if not args.no_display:
             self.display_thread = threading.Thread(target=self._display_loop, daemon=True)
@@ -362,6 +374,7 @@ class MinimalTeleopCollector:
         self.oculus_thread.start()
         self.robot_state_thread.start()
         self.recording_thread.start()
+        self.recording_sampler_thread.start()
         if self.display_thread:
             self.display_thread.start()
         self.enter_thread.start()
@@ -567,6 +580,69 @@ class MinimalTeleopCollector:
 
             self.recording_queue.task_done()
 
+    def _recording_sampler(self):
+        """Capture cameras at 30 Hz without delaying arm command delivery."""
+        period = 1.0 / CONTROL_FREQ
+        next_sample = time.monotonic()
+        while not self.stop_event.is_set():
+            with self.recording_capture_lock:
+                if not self.is_recording:
+                    should_sample = False
+                else:
+                    should_sample = True
+                    now = time.time()
+                    with self.controller_state_lock:
+                        cs = self.latest_controller_state
+                    with self.robot_state_lock:
+                        ee_left = self.latest_left_ee_pose
+                        ee_right = self.latest_right_ee_pose
+
+                    def _get_cam(label):
+                        if label in self.cameras:
+                            return self.cameras[label].get_latest()
+                        return None, None, None
+
+                    h_rgb, h_depth, h_ts = _get_cam("head")
+                    l_rgb, l_depth, l_ts = _get_cam("left")
+                    r_rgb, r_depth, r_ts = _get_cam("right")
+
+                    if cs is not None and ee_left is not None and ee_right is not None:
+                        sample = RecordingSample(
+                            timestamp=now,
+                            left_ee_pose=ee_left,
+                            right_ee_pose=ee_right,
+                            left_gripper=(
+                                1.0 if cs.left_index_trigger < 0.5 else 0.0
+                            ),
+                            right_gripper=(
+                                1.0 if cs.right_index_trigger < 0.5 else 0.0
+                            ),
+                            head_rgb=h_rgb,
+                            head_depth=h_depth,
+                            head_rgb_ts=h_ts,
+                            left_wrist_rgb=l_rgb,
+                            left_wrist_depth=l_depth,
+                            left_wrist_rgb_ts=l_ts,
+                            right_wrist_rgb=r_rgb,
+                            right_wrist_depth=r_depth,
+                            right_wrist_rgb_ts=r_ts,
+                        )
+                        try:
+                            self.recording_queue.put_nowait(sample)
+                        except queue.Full:
+                            pass
+
+            if not should_sample:
+                next_sample = time.monotonic()
+                self.stop_event.wait(0.01)
+                continue
+            next_sample += period
+            delay = next_sample - time.monotonic()
+            if delay > 0:
+                self.stop_event.wait(delay)
+            else:
+                next_sample = time.monotonic()
+
     def _new_episode_data(self):
         return {
             "timestamps": [],
@@ -597,8 +673,9 @@ class MinimalTeleopCollector:
             self._current_base_path = base_path
             self._current_step = step
 
-        self.is_recording = True
-        self._recording_start_time = time.time()
+        with self.recording_capture_lock:
+            self.is_recording = True
+            self._recording_start_time = time.time()
         if self.mode == "parity":
             print(f"\n=== RECORDING STARTED (episode {self.episode_count}) ===\n")
         else:
@@ -611,9 +688,10 @@ class MinimalTeleopCollector:
             pass
 
     def _end_episode_and_save(self):
-        if not self.is_recording:
-            return
-        self.is_recording = False
+        with self.recording_capture_lock:
+            if not self.is_recording:
+                return
+            self.is_recording = False
         self._drain_queue()
 
         with self.episode_lock:
@@ -843,10 +921,11 @@ class MinimalTeleopCollector:
                         # layer has no workspace/keep-out clamps.
                         p = self.recovery_safety.check("left", p)
                         if p is not None:
-                            self.robot.set_left_ee_target(
+                            self.robot.set_left_teleop_ee_target(
                                 ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
                                 gripper_target=gr,
                                 preview_time=TELEOP_COMMAND_PREVIEW_S,
+                                max_joint_step_rad=TELEOP_MAX_JOINT_STEP_RAD,
                             )
                         else:
                             # A discontinuous Quest target is rejected for this
@@ -880,10 +959,11 @@ class MinimalTeleopCollector:
                         gr = 1.0 if cs.right_index_trigger < 0.5 else 0.0
                         p = self.recovery_safety.check("right", p)
                         if p is not None:
-                            self.robot.set_right_ee_target(
+                            self.robot.set_right_teleop_ee_target(
                                 ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
                                 gripper_target=gr,
                                 preview_time=TELEOP_COMMAND_PREVIEW_S,
+                                max_joint_step_rad=TELEOP_MAX_JOINT_STEP_RAD,
                             )
                         else:
                             self.start_teleop_right = False
@@ -893,35 +973,6 @@ class MinimalTeleopCollector:
                                 "re-anchoring without motion.",
                                 flush=True,
                             )
-
-            if self.is_recording:
-                now = time.time()
-                with self.robot_state_lock:
-                    ee_left = self.latest_left_ee_pose
-                    ee_right = self.latest_right_ee_pose
-
-                def _get_cam(label):
-                    if label in self.cameras:
-                        return self.cameras[label].get_latest()
-                    return None, None, None
-
-                h_rgb, h_depth, h_ts = _get_cam("head")
-                l_rgb, l_depth, l_ts = _get_cam("left")
-                r_rgb, r_depth, r_ts = _get_cam("right")
-
-                sample = RecordingSample(
-                    timestamp=now,
-                    left_ee_pose=ee_left, right_ee_pose=ee_right,
-                    left_gripper=1.0 if cs.left_index_trigger < 0.5 else 0.0,
-                    right_gripper=1.0 if cs.right_index_trigger < 0.5 else 0.0,
-                    head_rgb=h_rgb, head_depth=h_depth, head_rgb_ts=h_ts,
-                    left_wrist_rgb=l_rgb, left_wrist_depth=l_depth, left_wrist_rgb_ts=l_ts,
-                    right_wrist_rgb=r_rgb, right_wrist_depth=r_depth, right_wrist_rgb_ts=r_ts,
-                )
-                try:
-                    self.recording_queue.put_nowait(sample)
-                except queue.Full:
-                    pass
 
             rate.sleep()
 
@@ -934,7 +985,8 @@ class MinimalTeleopCollector:
         self.stop_event.set()
         if self.head_stream:
             self.head_stream.stop()
-        for t in [self.oculus_thread, self.robot_state_thread, self.recording_thread,
+        for t in [self.oculus_thread, self.robot_state_thread,
+                  self.recording_sampler_thread, self.recording_thread,
                   self.display_thread] + self.camera_threads:
             if t is None:
                 continue

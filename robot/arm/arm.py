@@ -53,6 +53,12 @@ DXL_ID_LEFT = 2
 # still runs much faster than the 30 Hz teleoperation command stream.
 PIPER_CONTROLLER_DT_S = 0.01
 
+# Interactive Cartesian commands arrive at 30 Hz.  Keep their default joint
+# step below Piper's configured 5 rad/s velocity limit while leaving some
+# margin for scheduling jitter.  Callers may provide a different value when
+# their stream rate differs.
+TELEOP_DEFAULT_MAX_JOINT_STEP_RAD = 4.0 / 30.0
+
 LEFT_CAL_FILE = Path(__file__).parent / "left_gripper_cal.json"
 
 
@@ -320,6 +326,60 @@ class ArmNode:
                 flush=True,
             )
             self._last_ik_warning_time = now
+        cmd = JointState(self.robot_config.joint_dof)
+        cmd.pos = qd
+        cmd.timestamp = self.piper.get_timestamp() + preview_time
+        self.piper.set_joint_cmd(cmd)
+        if gripper_target is not None and self.gripper is not None:
+            self.gripper.set_open_ratio(gripper_target)
+        return True
+
+    def set_teleop_ee_target(
+        self,
+        ee_target,
+        gripper_target=None,
+        preview_time=0.1,
+        max_joint_step_rad=TELEOP_DEFAULT_MAX_JOINT_STEP_RAD,
+    ):
+        """Stream a branch-continuous incremental Cartesian teleop command.
+
+        A hand controller can move farther during a delayed frame than a
+        single arm command should.  Solving a distant pose to convergence and
+        then rejecting the remote IK solution causes a permanent stop: every
+        following frame repeats the same rejection.  Teleoperation instead
+        takes one best-effort IK iteration from measured joints and uniformly
+        bounds that joint increment.  Repeated 30 Hz calls converge toward the
+        live controller pose without ever issuing a branch jump.
+
+        The ordinary ``set_ee_target`` path remains fail-closed for autonomous
+        commands; this incremental behavior is deliberately teleop-specific.
+        """
+        current_q = np.asarray(self.get_joint_positions(), dtype=float)
+        self.ik_solver.update_configuration(current_q)
+        qd, _ = self.ik_solver.solve_ik(ee_target, max_iter=1)
+        qd = np.asarray(qd, dtype=float)
+        delta = qd - current_q
+        if not np.all(np.isfinite(delta)):
+            print("[TELEOP IK] non-finite target rejected", flush=True)
+            return False
+
+        max_joint_step_rad = float(max_joint_step_rad)
+        if not np.isfinite(max_joint_step_rad) or max_joint_step_rad <= 0.0:
+            raise ValueError("max_joint_step_rad must be finite and positive")
+        max_delta = float(np.max(np.abs(delta)))
+        if max_delta > max_joint_step_rad:
+            delta *= max_joint_step_rad / max_delta
+            qd = current_q + delta
+            now = time.monotonic()
+            if now - self._last_ik_warning_time >= 1.0:
+                print(
+                    "[TELEOP IK] target is ahead; following with bounded "
+                    f"joint steps ({max_delta:.3f} -> "
+                    f"{max_joint_step_rad:.3f} rad)",
+                    flush=True,
+                )
+                self._last_ik_warning_time = now
+
         cmd = JointState(self.robot_config.joint_dof)
         cmd.pos = qd
         cmd.timestamp = self.piper.get_timestamp() + preview_time
