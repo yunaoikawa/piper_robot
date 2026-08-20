@@ -24,6 +24,13 @@ Output layout (--mode):
   parity           Each episode is saved into DATA_DIR/type_even/ or
                    DATA_DIR/type_odd/ by episode-number parity, named
                    episode_NNNN_<timestamp>. The loop runs until Enter.
+
+  --repeat-step    With --mode steps, keep collecting the selected
+                   --start-step instead of advancing through STEPS.
+
+  --task-sequence  Select a comma-separated subset/order of named tasks.
+  --loop-sequence  Cycle that sequence until Enter instead of stopping after
+                   one pass.
 """
 import argparse
 import atexit
@@ -56,8 +63,8 @@ from rollout.recovery_teleop_safety import (
 )
 from rollout.safety import SafetyLayer
 
-VR_TCP_HOST = "192.168.1.48"
-VR_TCP_PORT = 5555
+DEFAULT_VR_TCP_HOST = "192.168.1.106"
+DEFAULT_VR_TCP_PORT = 5555
 VR_CONTROLLER_TOPIC = b"oculus_controller"
 CONTROL_FREQ = 30
 DATA_DIR = Path("./teleop_demonstrations")
@@ -78,19 +85,52 @@ RecordingSample = namedtuple("RecordingSample", [
 ])
 
 
-def resolve_start_step(value):
+def resolve_task_sequence(value):
+    """Return the requested ordered task names, validating against STEPS."""
+    if value is None:
+        return list(STEPS)
+    tasks = [item.strip() for item in value.split(",") if item.strip()]
+    if not tasks:
+        raise SystemExit("--task-sequence must contain at least one task name")
+    unknown = [task for task in tasks if task not in STEPS]
+    if unknown:
+        raise SystemExit(
+            f"Unknown task(s) in --task-sequence: {unknown}. Choose from {STEPS}"
+        )
+    if len(set(tasks)) != len(tasks):
+        raise SystemExit("--task-sequence must not contain duplicate task names")
+    return tasks
+
+
+def resolve_start_step(value, steps=None):
     """Map a --start-step value (name or 0-based index) to a step index."""
+    steps = STEPS if steps is None else steps
     if value is None:
         return 0
     if value.isdigit():
         i = int(value)
-    elif value in STEPS:
-        i = STEPS.index(value)
+    elif value in steps:
+        i = steps.index(value)
     else:
-        raise SystemExit(f"Unknown start step '{value}'. Choose from {STEPS} or 0..{len(STEPS) - 1}")
-    if not (0 <= i < len(STEPS)):
-        raise SystemExit(f"start-step index out of range 0..{len(STEPS) - 1}")
+        raise SystemExit(
+            f"Unknown start step '{value}'. Choose from {steps} or "
+            f"0..{len(steps) - 1}"
+        )
+    if not (0 <= i < len(steps)):
+        raise SystemExit(f"start-step index out of range 0..{len(steps) - 1}")
     return i
+
+
+def advance_step_index(current, step_count, *, repeat_step, loop_sequence):
+    """Return ``(next_index, finished)`` after a completed step episode."""
+    if repeat_step:
+        return current, False
+    next_index = current + 1
+    if next_index < step_count:
+        return next_index, False
+    if loop_sequence:
+        return 0, False
+    return next_index, True
 
 
 class CameraStream:
@@ -194,8 +234,10 @@ class MinimalTeleopCollector:
             for sub in ("type_even", "type_odd"):
                 (self.save_dir / sub).mkdir(parents=True, exist_ok=True)
 
-        self.steps = STEPS
+        self.steps = args.task_sequence
         self.step_index = args.start_index
+        self.repeat_step = args.repeat_step
+        self.loop_sequence = args.loop_sequence
         self._quit_requested = False
         self._stopped = False
 
@@ -408,7 +450,11 @@ class MinimalTeleopCollector:
             host, port = self.args.relay_host, self.args.relay_port
             topic = self.args.relay_topic.encode("utf-8")
         else:
-            host, port, topic = VR_TCP_HOST, VR_TCP_PORT, VR_CONTROLLER_TOPIC
+            host, port, topic = (
+                self.args.quest_host,
+                self.args.quest_port,
+                VR_CONTROLLER_TOPIC,
+            )
         endpoint = f"tcp://{host}:{port}"
         sock.connect(endpoint)
         sock.setsockopt(zmq.SUBSCRIBE, topic)
@@ -606,14 +652,28 @@ class MinimalTeleopCollector:
                   f"Trigger a controller to record; press Enter to quit.")
             return
 
-        self.step_index += 1
-        if self.step_index >= len(self.steps):
+        if self.repeat_step:
+            step = self.steps[self.step_index]
+            print(
+                f"[LOOP] Repeating step {self.step_index + 1}/{len(self.steps)}: "
+                f"{step}. Trigger a controller to record; press Enter to quit."
+            )
+            return
+
+        self.step_index, finished = advance_step_index(
+            self.step_index,
+            len(self.steps),
+            repeat_step=False,
+            loop_sequence=self.loop_sequence,
+        )
+        if finished:
             print("[LOOP] All steps complete. Finishing.")
             self.stop_event.set()
         else:
             nxt = self.steps[self.step_index]
+            cycle = " (new cycle)" if self.step_index == 0 and self.loop_sequence else ""
             print(f"[LOOP] Next step {self.step_index + 1}/{len(self.steps)}: {nxt}. "
-                  f"Trigger a controller to record; press Enter to quit.")
+                  f"Trigger a controller to record; press Enter to quit.{cycle}")
 
     def _display_loop(self):
         windows = {}
@@ -664,6 +724,10 @@ class MinimalTeleopCollector:
         else:
             print(f"[LOOP] Steps: {self.steps}")
             print(f"[LOOP] Starting at step {self.step_index + 1}/{len(self.steps)}: {self.steps[self.step_index]}")
+            if self.repeat_step:
+                print(f"[LOOP] Repeat enabled: {self.steps[self.step_index]} only")
+            elif self.loop_sequence:
+                print("[LOOP] Sequence loop enabled; collection continues until Enter.")
             print("[LOOP] Trigger a controller (X/Y or A/B) to record each step. Enter to quit early.")
 
         while not self.stop_event.is_set():
@@ -860,6 +924,20 @@ class MinimalTeleopCollector:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--use-relay", action="store_true")
+    ap.add_argument(
+        "--quest-host",
+        default=DEFAULT_VR_TCP_HOST,
+        help=(
+            "Direct Quest controller host when --use-relay is not set "
+            f"(default: {DEFAULT_VR_TCP_HOST})."
+        ),
+    )
+    ap.add_argument(
+        "--quest-port",
+        type=int,
+        default=DEFAULT_VR_TCP_PORT,
+        help=f"Direct Quest controller port (default: {DEFAULT_VR_TCP_PORT}).",
+    )
     ap.add_argument("--relay-host", default="100.125.255.41")
     ap.add_argument("--relay-port", type=int, default=6006)
     ap.add_argument("--relay-topic", default="oculus_controller")
@@ -869,6 +947,24 @@ def main():
                          "recording or automatic homing.")
     ap.add_argument("--start-step", default=None,
                     help=f"Name or 0-based index of the step to start from. Steps: {STEPS}")
+    ap.add_argument(
+        "--task-sequence",
+        default=None,
+        help=(
+            "Comma-separated task names to record in order. Defaults to all "
+            f"tasks: {STEPS}"
+        ),
+    )
+    ap.add_argument(
+        "--loop-sequence",
+        action="store_true",
+        help="Repeat --task-sequence indefinitely instead of stopping after one pass.",
+    )
+    ap.add_argument(
+        "--repeat-step",
+        action="store_true",
+        help="Repeat --start-step indefinitely instead of advancing to the next step.",
+    )
     ap.add_argument("--vr-timeout", type=float, default=0.75,
                     help="Disengage teleop when Quest messages are this old (default: 0.75s).")
     ap.add_argument("--safety-config", default=None,
@@ -916,14 +1012,26 @@ def main():
     args = ap.parse_args()
     if args.use_relay and not args.relay_host:
         raise SystemExit("ERROR: --relay-host is required when --use-relay is set.")
+    if not args.use_relay and not args.quest_host:
+        raise SystemExit("ERROR: --quest-host is required for direct Quest control.")
     if args.vr_timeout <= 0:
         raise SystemExit("ERROR: --vr-timeout must be positive.")
     if args.mode in ("parity", "recovery"):
         if args.start_step is not None:
             raise SystemExit("ERROR: --start-step only applies to --mode steps.")
+        if args.task_sequence is not None:
+            raise SystemExit("ERROR: --task-sequence only applies to --mode steps.")
+        if args.loop_sequence:
+            raise SystemExit("ERROR: --loop-sequence only applies to --mode steps.")
+        if args.repeat_step:
+            raise SystemExit("ERROR: --repeat-step only applies to --mode steps.")
         args.start_index = 0
+        args.task_sequence = list(STEPS)
     else:
-        args.start_index = resolve_start_step(args.start_step)
+        args.task_sequence = resolve_task_sequence(args.task_sequence)
+        if args.repeat_step and args.loop_sequence:
+            raise SystemExit("ERROR: --repeat-step and --loop-sequence are exclusive.")
+        args.start_index = resolve_start_step(args.start_step, args.task_sequence)
 
     collector = MinimalTeleopCollector(args)
     atexit.register(collector.stop)

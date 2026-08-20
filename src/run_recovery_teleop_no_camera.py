@@ -33,7 +33,7 @@ def main(argv=None) -> int:
         action="store_true",
         help="use a remote Tailscale relay instead of the direct lab Quest",
     )
-    parser.add_argument("--quest-host", default="192.168.1.48")
+    parser.add_argument("--quest-host", default="192.168.1.106")
     parser.add_argument("--quest-port", type=int, default=5555)
     parser.add_argument("--relay-host", default="100.125.255.41")
     parser.add_argument("--relay-port", type=int, default=6006)

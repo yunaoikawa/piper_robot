@@ -69,7 +69,8 @@ PYTHONPATH=. python src/run_recovery_teleop_no_camera.py
 This preserves the recovery controls and 30 Hz target loop, but does not
 record, home, return, or claim any camera.  The MacBook controller relay must
 not be online: by default Pasteur subscribes directly to the lab Quest at
-`192.168.1.48:5555`.  Pass `--use-relay` only when intentionally routing
+`192.168.1.106:5555` (override with `--quest-host` if DHCP changes it).
+Pass `--use-relay` only when intentionally routing
 through the MacBook.  Disengage the arm before capturing each stopped pose.
 The residual settings are still audited under `recovery_teleop` in
 `src/configs/pasteur_lid_torque.json`, so they can be evaluated offline without
