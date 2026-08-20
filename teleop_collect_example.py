@@ -114,6 +114,20 @@ def resolve_task_sequence(value):
     return tasks
 
 
+def apply_teleop_position_safety(*, mode, safety, arm, target):
+    """Apply Cartesian target rejection only in explicit recovery mode.
+
+    Ordinary human teleoperation must follow the controller continuously.  A
+    dropped Quest frame can make two otherwise valid consecutive targets more
+    than the recovery layer's 40 mm limit apart; treating that as a stop also
+    ends and saves the recording episode.  Recovery teleoperation retains its
+    configured keep-outs and jump rejection.
+    """
+    if mode == "recovery":
+        return safety.check(arm, target)
+    return target
+
+
 def resolve_start_step(value, steps=None):
     """Map a --start-step value (name or 0-based index) to a step index."""
     steps = STEPS if steps is None else steps
@@ -865,8 +879,8 @@ class MinimalTeleopCollector:
                 self.X_Cinit_left = cs.left_SE3
                 self.X_ee_init_left = eeL
                 self.start_teleop_left = True
-                self.recovery_safety.reset("left")
                 if self.mode == "recovery":
+                    self.recovery_safety.reset("left")
                     self._reset_recovery_torque_guard("left")
             if cs.left_y:
                 self.start_teleop_left = False
@@ -875,8 +889,8 @@ class MinimalTeleopCollector:
                 self.X_Cinit_right = cs.right_SE3
                 self.X_ee_init_right = eeR
                 self.start_teleop_right = True
-                self.recovery_safety.reset("right")
                 if self.mode == "recovery":
+                    self.recovery_safety.reset("right")
                     self._reset_recovery_torque_guard("right")
             if cs.right_b:
                 self.start_teleop_right = False
@@ -919,10 +933,12 @@ class MinimalTeleopCollector:
                         p = self.X_ee_init_left.translation() + Rd.translation()
                         R = Rd.rotation() @ self.X_ee_init_left.rotation()
                         gr = 1.0 if cs.left_index_trigger < 0.5 else 0.0
-                        # Apply only the measured consecutive-target jump gate
-                        # in ordinary recording mode. With no safety config the
-                        # layer has no workspace/keep-out clamps.
-                        p = self.recovery_safety.check("left", p)
+                        p = apply_teleop_position_safety(
+                            mode=self.mode,
+                            safety=self.recovery_safety,
+                            arm="left",
+                            target=p,
+                        )
                         if p is not None:
                             self.robot.set_left_teleop_ee_target(
                                 ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
@@ -931,14 +947,12 @@ class MinimalTeleopCollector:
                                 max_joint_step_rad=TELEOP_MAX_JOINT_STEP_RAD,
                             )
                         else:
-                            # A discontinuous Quest target is rejected for this
-                            # frame.  Drop engagement so the next held X frame
-                            # re-anchors controller and robot poses instead of
+                            # Recovery-only rejection: re-anchor instead of
                             # comparing forever against the stale target.
                             self.start_teleop_left = False
                             self.X_Cinit_left = self.X_ee_init_left = None
                             print(
-                                "[TELEOP] LEFT target rejected; "
+                                "[RECOVERY] LEFT target rejected; "
                                 "re-anchoring without motion.",
                                 flush=True,
                             )
@@ -960,7 +974,12 @@ class MinimalTeleopCollector:
                         p = self.X_ee_init_right.translation() + Rd.translation()
                         R = Rd.rotation() @ self.X_ee_init_right.rotation()
                         gr = 1.0 if cs.right_index_trigger < 0.5 else 0.0
-                        p = self.recovery_safety.check("right", p)
+                        p = apply_teleop_position_safety(
+                            mode=self.mode,
+                            safety=self.recovery_safety,
+                            arm="right",
+                            target=p,
+                        )
                         if p is not None:
                             self.robot.set_right_teleop_ee_target(
                                 ee_target=mink.SE3(np.concatenate([R.wxyz, p])),
@@ -972,7 +991,7 @@ class MinimalTeleopCollector:
                             self.start_teleop_right = False
                             self.X_Cinit_right = self.X_ee_init_right = None
                             print(
-                                "[TELEOP] RIGHT target rejected; "
+                                "[RECOVERY] RIGHT target rejected; "
                                 "re-anchoring without motion.",
                                 flush=True,
                             )
