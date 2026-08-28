@@ -683,12 +683,12 @@ class MinimalTeleopCollector:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         if self.mode == "parity":
             step = None
-            name = f"episode_{self.episode_count:04d}_{ts}"
+            name = ts
             episode_dir = self._episode_subdir(self.episode_count)
             print(f"[SAVE] Episode {self.episode_count} -> {episode_dir}")
         else:
             step = self.steps[self.step_index]
-            name = f"{step}_{ts}"
+            name = ts
             episode_dir = self._step_subdir(self.step_index)
             print(f"[SAVE] Step {self.step_index + 1}/{len(self.steps)} ({step}) -> {episode_dir}")
         base_path = str(episode_dir / name)

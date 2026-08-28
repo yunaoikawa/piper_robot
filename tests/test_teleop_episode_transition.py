@@ -1,6 +1,10 @@
 from contextlib import nullcontext
+from pathlib import Path
+import re
+import threading
 from types import SimpleNamespace
 
+import teleop_collect_example as teleop_module
 from teleop_collect_example import MinimalTeleopCollector
 
 
@@ -67,3 +71,28 @@ def test_zero_after_episode_saves_before_machine_zero():
         "home_left_arm",
         "home_right_arm",
     ]
+
+
+def test_step_episode_filename_is_datetime_only(tmp_path, monkeypatch):
+    class _Writers:
+        def __init__(self, base_path, fps):
+            self.base_path = base_path
+
+        def open(self, _label):
+            return None
+
+    monkeypatch.setattr(teleop_module, "VideoWriterSet", _Writers)
+    collector = object.__new__(MinimalTeleopCollector)
+    collector.mode = "steps"
+    collector.steps = ["petri2bench"]
+    collector.step_index = 0
+    collector.episode_lock = threading.Lock()
+    collector.recording_capture_lock = threading.Lock()
+    collector.is_recording = False
+    collector._step_subdir = lambda _index: Path(tmp_path)
+
+    collector._start_episode()
+
+    stem = Path(collector._current_base_path).name
+    assert re.fullmatch(r"\d{8}_\d{6}", stem)
+    assert "petri2bench" not in stem
