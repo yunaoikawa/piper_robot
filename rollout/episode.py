@@ -141,7 +141,7 @@ class EpisodeManager:
         except Exception as e:
             print(f"⚠️  Error clearing action queue: {e}")
 
-    def end_episode(self, reason="manual"):
+    def end_episode(self, reason="manual", home_after=True):
         """End current episode (disables action execution and saves recording)."""
         if not self.is_episode_active:
             return
@@ -159,7 +159,7 @@ class EpisodeManager:
         print(f"⏹️  Episode ended ({reason}) - Duration: {episode_duration:.1f}s")
 
         # Reset arm positions after episode ends
-        if self.robot_rpc:
+        if self.robot_rpc and home_after:
             print("🏠 Resetting arm positions to home...")
             try:
                 self.robot_rpc.home_left_arm()
@@ -169,6 +169,13 @@ class EpisodeManager:
                 print("✓ Arms reset complete")
             except Exception as e:
                 print(f"⚠️  Warning: Could not reset arms: {e}")
+        elif not home_after:
+            # The robot controller keeps commanding its final target, so this
+            # is a deliberate hold.  Requiring an explicit home before another
+            # episode prevents a second policy rollout from starting in an
+            # out-of-distribution terminal pose.
+            self.arms_at_home = False
+            print("✋ Holding final pose (automatic home disabled)")
 
         self.episode_start_time = None
         self.episode_count += 1

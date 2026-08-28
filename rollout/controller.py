@@ -51,10 +51,22 @@ class PolicyController:
                  enable_recording=False, save_dir=None, autonomous_mode=False,
                  episode_timeout=600.0, manipulability_threshold=0.05,
                  task=DEFAULT_TASK, safety_config=None, bias_port=5560,
-                 home_on_init=True):
+                 display=True, head_stream=True, head_stream_host="0.0.0.0",
+                 head_stream_port=8080, head_stream_token=None,
+                 head_stream_fps=15.0, max_episode_actions=None,
+                 home_on_init=True, reanchor_chunks=False,
+                 agentic_supervisor=None):
         self.stop_event = threading.Event()
         self.policy_active = False
-        self.task = task
+        self.agentic_supervisor = agentic_supervisor
+        self.task = (
+            agentic_supervisor.instruction
+            if agentic_supervisor is not None
+            else task
+        )
+        self.max_episode_actions = max_episode_actions
+        self.reanchor_chunks = reanchor_chunks
+        self._chunk_anchor = {'left': None, 'right': None}
 
         # Per-arm EE offset in robot frame, applied in apply_action(). This
         # replaces the server-side --z-bias so the bias exists in exactly one
@@ -73,6 +85,8 @@ class PolicyController:
         # yet been initialized by another client.
         self.obs_cone_e.init(reset_arms=False)
         self.obs_rpc_lock = threading.Lock()
+        self.latest_observation_lock = threading.Lock()
+        self.latest_observation = None
 
         self.cone_e = RPCClient("localhost", 8081)
         self.cone_e.init(reset_arms=False)
@@ -101,7 +115,15 @@ class PolicyController:
         save_path = Path(save_dir) if save_dir else DATA_DIR
         cam_map = load_camera_map()
 
-        self.camera = CameraFeedManager(self.stop_event)
+        self.camera = CameraFeedManager(
+            self.stop_event,
+            display=display,
+            head_stream=head_stream,
+            head_stream_host=head_stream_host,
+            head_stream_port=head_stream_port,
+            head_stream_token=head_stream_token,
+            head_stream_fps=head_stream_fps,
+        )
         self.camera.autonomous_mode = autonomous_mode
         self.camera.start()
 
@@ -125,6 +147,9 @@ class PolicyController:
             control_socket=self.control_socket, autonomous_mode=autonomous_mode,
             episode_timeout=episode_timeout, manipulability_threshold=manipulability_threshold
         )
+        # Attach-current is an explicit operator choice: allow the next episode
+        # to begin from the pose already held by ConeE without forcing home.
+        self.episode_manager.arms_at_home = True
 
         self.keyboard = KeyboardController(
             self.stop_event, self.episode_manager, enable_recording, autonomous_mode
@@ -237,13 +262,15 @@ class PolicyController:
         rgb_frame = _rotate_and_resize(rgb_frame)
 
         left_wrist_frame = None
+        left_wrist_timestamp = None
         if self.left_wrist_camera is not None:
-            left_wrist_frame, _, _ = self.left_wrist_camera.get_latest_frame()
+            left_wrist_frame, left_wrist_timestamp, _ = self.left_wrist_camera.get_latest_frame()
             left_wrist_frame = _rotate_and_resize(left_wrist_frame)
 
         right_wrist_frame = None
+        right_wrist_timestamp = None
         if self.right_wrist_camera is not None:
-            right_wrist_frame, _, _ = self.right_wrist_camera.get_latest_frame()
+            right_wrist_frame, right_wrist_timestamp, _ = self.right_wrist_camera.get_latest_frame()
             right_wrist_frame = _rotate_and_resize(right_wrist_frame)
 
         blank = np.zeros((TARGET_H, TARGET_W, 3), dtype=np.uint8)
@@ -267,11 +294,27 @@ class PolicyController:
                 "cam_left_wrist": left_wrist_frame if left_wrist_frame is not None else blank.copy(),
                 "cam_right_wrist": right_wrist_frame if right_wrist_frame is not None else blank.copy(),
             },
-            "depth": None,
+            "depth": depth_frame,
             "timestamp": timestamp,
             "rgb_timestamp": rgb_timestamp,
+            "camera_timestamps": {
+                "cam_high": rgb_timestamp,
+                "cam_left_wrist": left_wrist_timestamp,
+                "cam_right_wrist": right_wrist_timestamp,
+            },
             "task": self.task,
         }
+
+        with self.latest_observation_lock:
+            self.latest_observation = observation
+        if self.agentic_supervisor is not None:
+            try:
+                self.agentic_supervisor.observe(observation)
+            except Exception as error:
+                print(f"[agentic] observation rejected: {error}", flush=True)
+                self.agentic_supervisor.request_invalid(
+                    f"observation_error:{type(error).__name__}:{error}"
+                )
 
         if self.recorder and self.recorder.is_recording:
             sample = RecordingSample(
@@ -285,6 +328,8 @@ class PolicyController:
                 right_joint_positions=right_joint_positions,
                 left_wrist_rgb_frame=self.left_wrist_camera.latest_rgb.copy() if (self.left_wrist_camera and self.left_wrist_camera.latest_rgb is not None) else None,
                 right_wrist_rgb_frame=self.right_wrist_camera.latest_rgb.copy() if (self.right_wrist_camera and self.right_wrist_camera.latest_rgb is not None) else None,
+                left_wrist_rgb_timestamp=left_wrist_timestamp,
+                right_wrist_rgb_timestamp=right_wrist_timestamp,
             )
             self.recorder.record_sample(sample)
 
@@ -387,6 +432,15 @@ class PolicyController:
         if gen is not None and gen != self._buffer_gen:
             self.safety.reset()
             self._buffer_gen = gen
+            if self.reanchor_chunks:
+                for arm in ('left', 'right'):
+                    raw = action.get(f'{arm}_ee_pose')
+                    if raw is None:
+                        self._chunk_anchor[arm] = None
+                        continue
+                    model_pose = self.H.inverse() @ mink.SE3(raw) @ self.H
+                    measured_pose = getattr(self.cone_e, f'get_{arm}_ee_pose')()
+                    self._chunk_anchor[arm] = measured_pose @ model_pose.inverse()
 
         if self.starting_pose_left is None or self.starting_pose_right is None:
             # Latch the reference pose. In delta mode this is the ONLY place the
@@ -467,6 +521,8 @@ class PolicyController:
     def _apply_arm_action_absolute(self, arm, abs_pose, gripper, starting_pose, set_target_fn):
         X_target = mink.SE3(abs_pose)
         X_Rtarget = self.H.inverse() @ X_target @ self.H
+        if self._chunk_anchor[arm] is not None:
+            X_Rtarget = self._chunk_anchor[arm] @ X_Rtarget
 
         # Absolute mode: the target is recomputed from scratch each step, so a
         # constant offset stays constant -- safe to add every time. Applied in
@@ -496,21 +552,123 @@ class PolicyController:
 
         iteration = 0
         wait_for_ready_count = 0
+        episode_token = None
+        episode_action_count = 0
 
         while not self.stop_event.is_set():
             loop_start = time.time()
-            self.episode_manager.check_autonomous_conditions(self.manipulability_calc, iteration)
+            if self.agentic_supervisor is None:
+                self.episode_manager.check_autonomous_conditions(
+                    self.manipulability_calc, iteration
+                )
+            elif self.episode_manager.autonomous_mode:
+                if (
+                    not self.episode_manager.is_active()
+                    and self.episode_manager.arms_at_home
+                    and not self.episode_manager.autonomous_paused
+                    and self.episode_manager.controller_start_time is not None
+                    and time.time() - self.episode_manager.controller_start_time
+                    >= self.episode_manager.auto_start_delay
+                ):
+                    self.episode_manager.start_episode()
+                elif (
+                    self.episode_manager.is_active()
+                    and self.episode_manager.get_start_time() is not None
+                    and time.time() - self.episode_manager.get_start_time()
+                    >= self.episode_manager.episode_timeout
+                ):
+                    self._finish_agentic_episode(
+                        reason='timeout', classification='invalid',
+                        home_after=False,
+                    )
 
             if not self.episode_manager.is_active():
                 rate_limiter.sleep()
                 continue
 
+            current_token = self.episode_manager.get_start_time()
+            if current_token != episode_token:
+                episode_token = current_token
+                episode_action_count = 0
+                if self.agentic_supervisor is not None:
+                    with self.latest_observation_lock:
+                        observation = self.latest_observation
+                    if observation is None:
+                        print("[agentic] no observation at episode start; holding", flush=True)
+                        self._finish_agentic_episode(
+                            reason="missing_initial_observation",
+                            classification="invalid",
+                            home_after=False,
+                        )
+                        continue
+                    if self.recorder:
+                        self.recorder.set_episode_context({
+                            'schema': 'piper_robot.agentic_collection/v1',
+                            'task': self.agentic_supervisor.task.name,
+                            'instruction': self.agentic_supervisor.instruction,
+                            'condition': self.agentic_supervisor.condition,
+                            'mode': self.agentic_supervisor.mode.value,
+                        })
+                    try:
+                        self.agentic_supervisor.begin_episode(observation)
+                    except Exception as error:
+                        print(f"[agentic] initial check failed: {error}", flush=True)
+                        self.agentic_supervisor.request_invalid(
+                            f"initial_check_error:{type(error).__name__}:{error}"
+                        )
+                        self._finish_agentic_episode(
+                            reason="initial_check_error",
+                            classification="invalid",
+                            home_after=False,
+                        )
+                        continue
+                    self.task = self.agentic_supervisor.instruction
+
+            if self.agentic_supervisor is not None:
+                terminal = self.agentic_supervisor.terminal_request()
+                if terminal is not None:
+                    classification, reason = terminal
+                    self._finish_agentic_episode(
+                        reason=reason,
+                        classification=classification.value,
+                        home_after=(classification.value == 'clean_success'),
+                    )
+                    continue
+                if self.agentic_supervisor.held_uncertain:
+                    rate_limiter.sleep()
+                    continue
+                if self.agentic_supervisor.consume_resume_replan():
+                    self.episode_manager.clear_action_queue()
+
             action = self.request_action()
             if action is not None:
+                if self.recorder:
+                    self.recorder.record_action(action, source='act')
+                if (
+                    self.agentic_supervisor is not None
+                    and not self.agentic_supervisor.before_action(action)
+                ):
+                    terminal = self.agentic_supervisor.terminal_request()
+                    if terminal is not None:
+                        self._finish_agentic_episode(
+                            reason=terminal[1],
+                            classification=terminal[0].value,
+                            home_after=False,
+                        )
+                    continue
                 self.apply_action(action)
+                if self.agentic_supervisor is not None:
+                    self.agentic_supervisor.after_action(action)
+                episode_action_count += 1
                 if iteration % 30 == 0:
                     self._print_status(action, loop_start)
                 wait_for_ready_count = 0
+                if (self.max_episode_actions is not None and
+                        episode_action_count >= self.max_episode_actions):
+                    print(f"⏹️  Reached one-shot action limit "
+                          f"({self.max_episode_actions}); holding final pose")
+                    self.episode_manager.end_episode(
+                        reason="action_limit", home_after=False)
             else:
                 wait_for_ready_count += 1
                 if wait_for_ready_count % 30 == 1:
@@ -522,6 +680,33 @@ class PolicyController:
         print("\nControl loop stopped")
         self._print_stats()
         self.policy_active = False
+
+    def _finish_agentic_episode(self, *, reason, classification, home_after):
+        """Finalize audit metadata before the recorder closes its files."""
+        if self.agentic_supervisor is None:
+            return
+        from .agentic_collection import EpisodeClass
+
+        summary = self.agentic_supervisor.finish(
+            forced_class=EpisodeClass(classification),
+            reason=reason,
+        )
+        if not summary:
+            summary = {
+                'schema': 'piper_robot.agentic_collection/v1',
+                'task': self.agentic_supervisor.task.name,
+                'classification': classification,
+                'reason': reason,
+                'condition': self.agentic_supervisor.condition,
+                'mode': self.agentic_supervisor.mode.value,
+            }
+        if self.recorder:
+            self.recorder.set_episode_outcome(summary)
+        if self.episode_manager.is_active():
+            self.episode_manager.end_episode(
+                reason=f"agentic:{reason}", home_after=home_after
+            )
+        self.task = self.agentic_supervisor.instruction
 
     def _print_startup_info(self, control_rate):
         print(f"\nStarting policy control loop at {control_rate} Hz")
@@ -589,6 +774,8 @@ class PolicyController:
             self.right_wrist_camera.stop()
         if self.recorder:
             self.recorder.stop()
+        if self.agentic_supervisor is not None:
+            self.agentic_supervisor.close()
         self.keyboard.stop()
         self.obs_socket.close()
         self.action_socket.close()

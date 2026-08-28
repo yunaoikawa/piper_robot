@@ -127,6 +127,23 @@ def find_episode_pairs(data_dir: str, camera_keys: list) -> list:
     return pairs
 
 
+def agentic_classification(hdf5_path: str) -> str | None:
+    """Read the sidecar first and fall back to the HDF5 classification attr."""
+    path = Path(hdf5_path)
+    sidecar = path.with_suffix(".agentic.json")
+    if sidecar.exists():
+        value = json.loads(sidecar.read_text())
+        return (value.get("outcome") or {}).get("classification")
+    try:
+        with h5py.File(path, "r") as recording:
+            value = recording.attrs.get("agentic_classification")
+            if isinstance(value, bytes):
+                value = value.decode()
+            return str(value) if value is not None else None
+    except OSError:
+        return None
+
+
 def state_names() -> list:
     names = []
     for side in ["left", "right"]:
@@ -427,6 +444,8 @@ def write_lerobot_dataset(
     val_output_dir: str = None,
     val_repo_id: str = None,
     seed: int = 42,
+    agentic_classes: list = None,
+    require_agentic_sidecar: bool = False,
 ):
     if camera_keys is None:
         camera_keys = ["cam_high", "cam_left_wrist", "cam_right_wrist"]
@@ -443,6 +462,16 @@ def write_lerobot_dataset(
             continue
         print(f"Task {task_idx} '{task_name}': {len(pairs)} episodes in {data_dir}")
         for h5_path, mp4s in pairs:
+            classification = agentic_classification(h5_path)
+            if require_agentic_sidecar and classification is None:
+                print(f"  SKIP {Path(h5_path).name}: missing agentic classification")
+                continue
+            if agentic_classes is not None and classification not in set(agentic_classes):
+                print(
+                    f"  SKIP {Path(h5_path).name}: agentic class "
+                    f"{classification!r} not in {agentic_classes}"
+                )
+                continue
             all_episodes.append((h5_path, mp4s, task_idx))
 
     if not all_episodes:
@@ -520,6 +549,15 @@ def main():
                         help="Repo ID for val dataset (default: repo_id + '_val')")
     parser.add_argument("--seed",           type=int, default=42,
                         help="Random seed for train/val split")
+    parser.add_argument(
+        "--agentic_classes", nargs="+", default=None,
+        choices=["clean_success", "recovery", "failure", "uncertain", "invalid"],
+        help="Only convert episodes with one of these verified agentic classes",
+    )
+    parser.add_argument(
+        "--require_agentic_sidecar", action="store_true",
+        help="Reject legacy episodes without an agentic classification",
+    )
     args = parser.parse_args()
 
     assert len(args.data_dirs) == len(args.task_names)
@@ -535,6 +573,8 @@ def main():
         val_output_dir=args.val_output_dir,
         val_repo_id=args.val_repo_id,
         seed=args.seed,
+        agentic_classes=args.agentic_classes,
+        require_agentic_sidecar=args.require_agentic_sidecar,
     )
 
 
