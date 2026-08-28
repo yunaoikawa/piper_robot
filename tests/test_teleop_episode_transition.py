@@ -56,7 +56,14 @@ def test_zero_after_episode_saves_before_machine_zero():
     events = []
     collector._end_episode_and_save = lambda: events.append("save")
     collector.robot.machine_zero_arms = lambda: events.append("machine_zero_arms")
+    collector.robot.home_left_arm = lambda: events.append("home_left_arm")
+    collector.robot.home_right_arm = lambda: events.append("home_right_arm")
 
     collector._finish_episode_after_disengage()
 
-    assert events == ["save", "machine_zero_arms"]
+    assert events == [
+        "save",
+        "machine_zero_arms",
+        "home_left_arm",
+        "home_right_arm",
+    ]

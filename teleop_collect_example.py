@@ -548,13 +548,11 @@ class MinimalTeleopCollector:
             # ends at the operator's final task pose rather than containing a
             # long, unrelated retreat to mechanical zero.
             self._end_episode_and_save()
-            print(
-                "[LOOP] Returning both arms to true machine zero (q=0) "
-                "before the next episode.",
-                flush=True,
-            )
             with self.robot_rpc_lock:
-                self.robot.machine_zero_arms()
+                prepare_arms_for_manipulation(
+                    self.robot,
+                    context="teleop round reset",
+                )
             return
         if self.args.home_after_episode:
             print("[LOOP] Legacy home-after-episode enabled.", flush=True)
@@ -1123,7 +1121,8 @@ def main():
         action="store_true",
         help=(
             "After saving each recorded episode, return both arms to true "
-            "mechanical zero (q=0) and wait there for the next episode."
+            "mechanical zero (q=0), then immediately move them to the "
+            "upright manipulation home for the next episode."
         ),
     )
     ap.add_argument("--no-head-stream", action="store_true",
