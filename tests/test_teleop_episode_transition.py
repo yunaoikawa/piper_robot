@@ -14,10 +14,16 @@ class _RecordingRobot:
     def home_right_arm(self):
         self.calls.append("home_right_arm")
 
+    def machine_zero_arms(self):
+        self.calls.append("machine_zero_arms")
 
-def _collector(*, home_after_episode):
+
+def _collector(*, home_after_episode=False, zero_after_episode=False):
     collector = object.__new__(MinimalTeleopCollector)
-    collector.args = SimpleNamespace(home_after_episode=home_after_episode)
+    collector.args = SimpleNamespace(
+        home_after_episode=home_after_episode,
+        zero_after_episode=zero_after_episode,
+    )
     collector.robot_rpc_lock = nullcontext()
     collector.robot = _RecordingRobot()
     collector.saved = 0
@@ -43,3 +49,14 @@ def test_legacy_home_after_episode_requires_explicit_opt_in():
 
     assert collector.robot.calls == ["home_left_arm", "home_right_arm"]
     assert collector.saved == 1
+
+
+def test_zero_after_episode_saves_before_machine_zero():
+    collector = _collector(zero_after_episode=True)
+    events = []
+    collector._end_episode_and_save = lambda: events.append("save")
+    collector.robot.machine_zero_arms = lambda: events.append("machine_zero_arms")
+
+    collector._finish_episode_after_disengage()
+
+    assert events == ["save", "machine_zero_arms"]

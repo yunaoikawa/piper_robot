@@ -543,6 +543,19 @@ class MinimalTeleopCollector:
         of in-motion carrying smoothness, which is handled by command preview
         and latched gripper goals.
         """
+        if getattr(self.args, "zero_after_episode", False):
+            # Close the recording before the reset motion so every saved demo
+            # ends at the operator's final task pose rather than containing a
+            # long, unrelated retreat to mechanical zero.
+            self._end_episode_and_save()
+            print(
+                "[LOOP] Returning both arms to true machine zero (q=0) "
+                "before the next episode.",
+                flush=True,
+            )
+            with self.robot_rpc_lock:
+                self.robot.machine_zero_arms()
+            return
         if self.args.home_after_episode:
             print("[LOOP] Legacy home-after-episode enabled.", flush=True)
             with self.robot_rpc_lock:
@@ -1096,12 +1109,21 @@ def main():
             "and manipulation-home moves."
         ),
     )
-    ap.add_argument(
+    episode_reset = ap.add_mutually_exclusive_group()
+    episode_reset.add_argument(
         "--home-after-episode",
         action="store_true",
         help=(
             "Legacy opt-in: return both arms to manipulation home after each "
             "recorded episode. Default is to hold the final poses."
+        ),
+    )
+    episode_reset.add_argument(
+        "--zero-after-episode",
+        action="store_true",
+        help=(
+            "After saving each recorded episode, return both arms to true "
+            "mechanical zero (q=0) and wait there for the next episode."
         ),
     )
     ap.add_argument("--no-head-stream", action="store_true",
