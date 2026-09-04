@@ -373,6 +373,32 @@ and are not reproduced. This audit allows us to separate exploratory commands
 from the final normal path and to avoid attributing later improvements to an
 earlier success.
 
+### 4.4 Visual evidence and figure provenance
+
+The figures below are assembled from the preserved experimental records rather
+than from illustrative re-enactments. Every photographic panel is a saved head
+or wrist-camera frame from a demonstration, diagnostic stage, or autonomous
+run. Every depth panel is the color rendering stored beside the corresponding
+metric depth capture. Figure preparation was limited to extraction of a video
+frame, cropping, resizing, JPEG compression, panel layout, and text labels. No
+generative fill, object insertion, object removal, or photometric alteration
+was used. Some figures deliberately pair a full frame with a crop of the same
+capture so that both global state and small contact geometry remain visible.
+The twelve composites contain 86 displayed panels in total; this is not 86
+independent trials because full-frame/crop pairs and synchronized RGB/depth
+views intentionally repeat an observation at different scales or modalities.
+
+The green regions in the registered door endpoint panels are not manual
+illustrations. They are contemporaneous evaluator overlays showing the
+registered dynamic depth mask. They are retained because they reveal what the
+endpoint classifier actually measured, including its remaining sensitivity to
+robot occlusion. The colorized depth images are useful qualitative views, but
+all numerical claims are computed from the stored metric arrays and robot
+state, not inferred from colormap hue. Appendix E maps each composite to its
+source captures. The curated composites are stored under version control
+because the full `data/` tree is intentionally excluded from Git; the raw
+captures remain the authoritative evidence.
+
 ## 5. Case Study A: Learning to Open and Close an Incubator Door
 
 ### 5.1 Task and evidence contract
@@ -459,6 +485,14 @@ motion:
 This preserves the demonstrated local opening motion while allowing bounded
 translation and yaw correction before contact.
 
+![Final head-camera frames from the twelve verified door-opening demonstrations](assets/code_as_learning_machine/door_verified_demo_endpoints.jpg)
+
+**Figure 1. Visual verification of the demonstration set.** Each panel is the
+terminal head-camera video frame from one of the twelve demonstrations admitted
+to the compiler. The open interior is visible in every accepted endpoint. This
+manual visual gate followed trajectory-based ranking, preventing large arm
+motion alone from being treated as a successful opening label.
+
 ### 5.4 Chronology of empirical correction
 
 The capability did not emerge from one generated script. The decisive sequence
@@ -515,6 +549,16 @@ could distort the demonstrated contact transform. Direct joint-level
 micro-adjustment increased a measured joint error to 0.178 rad in one probe and
 was abandoned for the normal path.
 
+![Right-wrist sequence showing door contact learning, proofs, and slips](assets/code_as_learning_machine/door_right_learning_sequence.jpg)
+
+**Figure 2. The contact hypothesis changing under physical evidence.** Panels
+A--E show the demonstrated hover and pre-close poses, the first partial
+closure, the first 5 mm proof, and the failed long-pull endpoint. Panels F--J
+show that retries 2, 4, and 5 could pass the non-empty closure/proof test and
+still slip later. Panels K--M show the depth-yaw-aligned contact, proof, and
+eventual slip after the door had moved open. The repeated visual pattern is why
+the final program treats aperture proof as necessary but not sufficient.
+
 #### 14:11–14:48 JST: depth-plane yaw replaced shadow-based alignment
 
 The head camera captured eight RGB-D frames. Candidate low-saturation points in
@@ -538,6 +582,16 @@ retreated and opened its jaws. This trial supplied the causal ingredients later
 captured in the dedicated door commit: relative demonstration replay,
 depth-plane yaw, shadow-independent alignment, fresh contact anchoring, closure
 verification, proof motion, and checkpointed pulling.
+
+![Head-camera outcomes from failed pulls, the yaw-aligned trial, and autonomous endpoints](assets/code_as_learning_machine/door_head_outcomes.jpg)
+
+**Figure 3. World-state evidence across the learning chronology.** A--C are the
+first long-pull result and later slip observations; they explain why wrist
+contact evidence alone could not define success. D shows the yaw-aligned trial
+after the door had opened. E--F are the registered closed and open endpoints of
+the promoted autonomous opening run. G--H are the registered open and closed
+endpoints of the later autonomous closing run. The green overlay visualizes the
+dynamic region used by the contemporaneous endpoint evaluator.
 
 #### 17:29–17:52 JST: learning that closing is not the reverse of opening
 
@@ -601,6 +655,16 @@ depth with independently stored open and closed endpoints. A missing closed
 marker alone is not accepted as an open door. An ambiguous comparison yields
 `unknown` and prevents another blind pull.
 
+![Autonomous right-wrist stages from yaw alignment through local recovery](assets/code_as_learning_machine/door_autonomous_wrist_stages.jpg)
+
+**Figure 4. Contact-scale stages in the autonomous opening path.** A is the
+yaw-aligned pre-close view; B follows the single approximately 3.5 mm visual
+correction; C is aligned contact with open jaws; D is the mechanically verified
+closure; E is the 5 mm proof pull; F is the stationary proof re-check; and G is
+the later slip observation that triggered local recovery. The final open-state
+decision was made from the independent head RGB-D endpoint in Figure 5, not
+from the apparent wrist geometry alone.
+
 ### 5.6 Autonomous opening result
 
 The audited autonomous run is
@@ -630,13 +694,14 @@ pull: a later checkpoint detected a slip and stopped. The task-level opening
 nevertheless succeeded before the slip, as verified independently after
 recovery.
 
-**Figure 1. Registered door endpoint evidence.** The first observation is
-classified as closed; the post-action observation exposes the interior and is
-classified as open.
+![Initial and final RGB-D observations for autonomous door opening](assets/code_as_learning_machine/door_rgbd_closed_open.jpg)
 
-| Initial closed evidence | Final open evidence |
-| --- | --- |
-| ![Initial registered closed door](../data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/02_state_initial/state_evidence.png) | ![Final registered open door](../data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/12_state_open_attempt_1_result/state_evidence.png) |
+**Figure 5. Registered autonomous door endpoint evidence in RGB and depth.**
+A and C are the initial closed RGB frame and its metric-depth rendering. B and
+D are the fresh final observation after action and recovery; the exposed
+interior supports the registered `open` result. Depth hue is only a rendering;
+the reported endpoint errors were computed on metric values in the registered
+dynamic mask.
 
 ### 5.7 Autonomous closing result
 
@@ -648,6 +713,15 @@ closed reference was 0.0179, while the relative error to the open reference was
 1.0804. A moving-panel marker was visible and consistent with the registered
 closed endpoint. Thus opening and closing were separately learned motion
 structures sharing a common endpoint evaluator.
+
+![Comparison of reverse-opening and dedicated closing trajectories](assets/code_as_learning_machine/door_closing_comparison.jpg)
+
+**Figure 6. Why closing became a separate learned structure.** A--B show the
+failed attempt to close by reversing the opening path: the arm moved, but the
+high handle-contact route missed a useful pushing contact. C--D show the lower,
+open-jaw dedicated close demonstration. E--F show the autonomous closing run's
+registered initial-open and final-closed observations. This comparison caused
+the normal close executor to stop calling the reversed opening primitive.
 
 ### 5.8 What the repository learned from the door
 
@@ -734,6 +808,16 @@ white supported component. During final approach, it tracked only a local white
 component near the anchored identity. This prevented a distant white part of
 the robot from replacing the selected cap.
 
+![Target-click and right-wrist relational grounding for the culture-media cap](assets/code_as_learning_machine/cap_target_and_wrist_grounding.jpg)
+
+**Figure 7. From one identity click to contact-relative visual geometry.** A
+records the single user click on the intended cap. B shows the head-view
+relation between the target, the coloured bottle support, and the gripper.
+C--E show the planned and executed wrist-view relation as the target approaches
+the jaw midpoint. F is the aligned confirmation. The colored lines and circles
+are outputs of the contemporaneous target/jaw evaluator, not post hoc object
+annotations.
+
 #### 16:44–17:06 JST: correcting the scene from physical observation
 
 Fresh Record3D captures and coarse probes exposed the recessed bottle geometry.
@@ -747,6 +831,16 @@ This correction is central to the paper's thesis. A fixed action policy could
 in principle learn the same behavior after suitable data. The code agent,
 however, changed the explicit world representation, the ordering of motion
 primitives, and the predicates governing when lateral motion was permissible.
+
+![Head RGB-D observations of the recessed bottle and surrounding platforms](assets/code_as_learning_machine/cap_rgbd_scene_geometry.jpg)
+
+**Figure 8. Scene geometry that invalidated the inherited tabletop model.**
+A--B pair the baseline head RGB observation with its stored metric-depth
+rendering. C--D repeat the pairing during a later geometric check with the open
+gripper displaced in free space. The bottle lies in the gap between the two
+platforms rather than on the top surface assumed by the earlier Petri-object
+controller. This observation changed the primitive ordering to lateral-first,
+then vertical descent.
 
 #### 17:20–17:37 JST: learning a local visual servo under occlusion
 
@@ -781,6 +875,16 @@ After lateral alignment, controlled descent, and one occlusion-driven
 backtrack, the jaws closed with an aperture near 0.201 rather than collapsing to
 an empty full closure.
 
+![Twelve head-camera stages of cap approach and closure](assets/code_as_learning_machine/cap_approach_learning_sequence.jpg)
+
+**Figure 9. Approach learning under progressive occlusion.** The sequence runs
+from the initial lateral check through lateral alignment, 20- and 32-unit
+descent stages, settling, midpoint correction, an occlusion-triggered
+backtrack, three guarded re-approach stages, closure, and the immutable
+pre-lift observation. It makes visible why a single target mask was
+insufficient: the cap becomes hidden by the jaws, while the bottle body remains
+available as a support-motion witness.
+
 #### 18:04–18:06 JST: turning a plausible grasp into verified removal
 
 The program first captured a held, pre-lift state. It then commanded a nominal
@@ -796,6 +900,24 @@ changed by only 0.00029 and the bottle support shift remained below its 0.10
 normalized threshold. These captures became immutable positive evidence for
 the promoted behavior.
 
+![Full-frame and cropped RGB evidence for cap lift and retained transport](assets/code_as_learning_machine/cap_verified_transfer_rgb.jpg)
+
+**Figure 10. Immutable RGB evidence for the promoted cap behavior.** The top
+row preserves the full fixed-head context before lift, after the measured
+9.175 mm lift, and after the 107.415 mm held transfer. The bottom row enlarges
+the corresponding contact region: the cap is between the jaws before lift, the
+bottle mouth is exposed after lift, and the cap remains held after transport.
+The full-frame/crop pairs come from the same three captures.
+
+![Metric-depth renderings before cap lift, after lift, and after held transport](assets/code_as_learning_machine/cap_verified_transfer_depth.jpg)
+
+**Figure 11. Synchronized RGB-D evidence for the same three promoted states.**
+The depth renderings show the changing robot/object geometry before lift, after
+the 9.175 mm rise, and after held transfer. The small native depth maps are
+enlarged without adding geometry. Quantitative displacement and support-motion
+tests use the underlying metric samples and forward kinematics rather than
+visual interpretation of these colors.
+
 #### 18:09–18:14 JST: learning where to stop the claim
 
 The robot descended, opened the gripper, and retracted in an attempted release.
@@ -807,6 +929,15 @@ This is not a failure of the removal result. It is an example of prefix-wise
 learning: the repository learned and preserved the longest behavior supported
 by evidence—identity, side pinch, removal, and held transport—while keeping the
 next behavior disabled until it acquires its own evidence contract.
+
+![Head-camera sequence of the unpromoted cap release attempt](assets/code_as_learning_machine/cap_release_attempt.jpg)
+
+**Figure 12. Release was executed, but placement was not promoted.** A--C show
+descent, clearance adjustment, and the pre-open state. D shows the jaws open;
+E is the retracted validation view. These images verify that the actuator
+sequence occurred, but they do not isolate a cap stably supported at a selected
+destination and do not prove non-following during vertical retreat. The figure
+therefore documents both the experiment and the boundary of the claim.
 
 #### 18:29–18:37 JST: promoting an immutable hardware route
 
@@ -883,11 +1014,9 @@ placement_promoted: false
 placement_reason: release destination was not visually/depth verified
 ```
 
-**Figure 2. Immutable evidence sequence for cap removal and held transport.**
-
-| Held before lift | After 9.175 mm lift | After 107.415 mm held transport |
-| --- | --- | --- |
-| ![Cap held before lift](../data/captures/pasteur/2026-08-06/20260806T090454.207716Z_head_culture_media_cap_hold_before_lift_ce98d39c/derived/head_rgb_landscape.png) | ![Cap after lift](../data/captures/pasteur/2026-08-06/20260806T090516.450533Z_head_culture_media_cap_lift_probe10_792a8b3c/derived/head_rgb_landscape.png) | ![Cap after held transport](../data/captures/pasteur/2026-08-06/20260806T090638.703002Z_head_culture_media_cap_transport_home_hold_c01dae62/derived/head_rgb_landscape.png) |
+Figures 10 and 11 show the RGB and depth records used by this audit. Their
+three columns refer to the same immutable capture triplet and are not selected
+from different repetitions.
 
 ### 6.6 What the repository learned from the cap
 
@@ -1447,6 +1576,38 @@ disabled.
 
 **Cap removal.** Vertical detachment of the cap from the bottle mouth. It does
 not imply unscrewing unless rotational and thread/torque evidence is present.
+
+## Appendix E. Figure Source Provenance
+
+This appendix records the raw source family behind every curated figure. Paths
+are relative to the repository root. The composites themselves are tracked in
+`docs/assets/code_as_learning_machine/`; raw experimental data remains under
+the ignored `data/` tree. Panel letters and stage labels in the figures provide
+the ordering within each source family.
+
+| Figure | Curated file | Preserved source evidence |
+| --- | --- | --- |
+| 1 | `door_verified_demo_endpoints.jpg` | Terminal frames extracted from the twelve `data/reference/pasteur/incubator/incoming/door_open/*_head.mp4` files whose stems occur in `compiled_door_open_v1.json:successes` |
+| 2 | `door_right_learning_sequence.jpg` | Right-camera frames from `incubator_door_20260808T043016Z_demo_hover`, `T043120Z_demo_preclose`, `T043325Z_close_verify_demo_contact`, `T043548Z_proof_pull_demo_contact`, `T043620Z_open_door_demo_contact`, retry-2/4/5 proof and slip runs, and `incubator_door_20260808_retry6_yaw_aligned_{contact,proof,slip_observe}` under `data/runs/pasteur/` |
+| 3 | `door_head_outcomes.jpg` | Head frames from the first long pull, retry-2 and retry-4 slip observations, the yaw-aligned open observation, and `state_evidence.png` from `incubator_auto_open_20260808_demo_retry2` and `incubator_auto_close_20260808_demo` |
+| 4 | `door_autonomous_wrist_stages.jpg` | Right-camera frames stored in stages 03--08 and 10 of `data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/` |
+| 5 | `door_rgbd_closed_open.jpg` | RGB and depth renderings from the initial capture `20260808T100303.328276Z_head_initial_5e2b9e3f` and final capture `20260808T100427.298699Z_head_open_attempt_1_result_95dc7b74` nested in the autonomous run |
+| 6 | `door_closing_comparison.jpg` | Before/after head frames from `incubator_door_close_20260808T083305Z_reverse_open` and `incubator_door_close_20260808T084010Z_peacock_demo`, plus registered endpoint evidence from `incubator_auto_close_20260808_demo` |
+| 7 | `cap_target_and_wrist_grounding.jpg` | `culture_media_cap_tap_retry_20260806/tap_overlay.png`, head overlay from `culture_media_cap_adapter_20260806_scene_refresh_observe_v2`, right-view plan/execute frames from `culture_media_cap_grasp_20260806_stable_{plan,execute}`, and `culture_media_cap_adapter_20260806_aligned_confirm/right_aligned_overlay.png` |
+| 8 | `cap_rgbd_scene_geometry.jpg` | RGB and depth from captures `20260806T074422.957478Z_head_culture_media_cap_home_scene_refresh_a4726ec2` and `20260806T081231.246190Z_head_culture_media_cap_aligned_open_descent_measurement_64aced88` |
+| 9 | `cap_approach_learning_sequence.jpg` | Head RGB from the twelve ordered capture stages beginning `20260806T082127...recess_lateral_check`, continuing through lateral alignment, descent, backtrack, and guarded steps, and ending at `20260806T090454...hold_before_lift` |
+| 10 | `cap_verified_transfer_rgb.jpg` | Full RGB frames and crops from `20260806T090454.207716Z...hold_before_lift`, `20260806T090516.450533Z...lift_probe10`, and `20260806T090638.703002Z...transport_home_hold` |
+| 11 | `cap_verified_transfer_depth.jpg` | Stored depth renderings from the same three immutable captures as Figure 10 |
+| 12 | `cap_release_attempt.jpg` | Head RGB from `20260806T090952.499727Z...place_descent40_check`, `20260806T091148.017296Z...place_clearance6_check`, `20260806T091251.693211Z...place_preopen`, `20260806T091320.073893Z...placed_released`, and `20260806T091401.642185Z...placed_retracted_validation` |
+
+The twelve verified Figure 1 demonstration stems, in the compiler's stored
+order, are `door_open_20260703_164850`, `door_open_20260703_163756`,
+`door_open_20260703_173136`, `door_open_20260703_165810`,
+`door_open_20260703_170229`, `door_open_20260703_175546`,
+`door_open_20260703_180246`, `door_open_20260703_163437`,
+`door_open_20260703_162442`, `door_open_20260708_151315`,
+`door_open_20260703_164136`, and `door_open_20260703_175931`. Their SHA-256
+hashes are retained in `compiled_door_open_v1.json`.
 
 ## References
 
