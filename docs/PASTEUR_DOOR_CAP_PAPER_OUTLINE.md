@@ -1,137 +1,140 @@
-# Pasteur 開扉・キャップ操作を統合する論文アウトライン
+# Code as a Learning Machine: How to Use Codex for Robot Control
 
 作成: 2026-09-04
-根拠となる監査記録:
-[インキュベータ開扉](PASTEUR_INCUBATOR_DOOR_OPENING_RETROSPECTIVE.md) と
-[培養液ボトル・キャップ除去](PASTEUR_CULTURE_MEDIA_CAP_TRANSFER_RETROSPECTIVE.md)
 
-## 論文の核
+実験根拠:
+[インキュベータ開閉の監査](PASTEUR_INCUBATOR_DOOR_OPENING_RETROSPECTIVE.md) と
+[培養液ボトル・キャップ除去の監査](PASTEUR_CULTURE_MEDIA_CAP_TRANSFER_RETROSPECTIVE.md)
 
-この論文の核は「大規模な vision model が lab task を端から端まで解いた」ではない。**contact-rich manipulation では、もっともらしい視覚検出や close command を成功として扱わず、task ごとに必要な観測を evidence gate にして、検証済みの動作 prefix だけを reusable policy に昇格する**、という方法である。
+## 一文でいうと
 
-二つの case study は同じ失敗を別の形で示す。
+ニューラルネットの weight だけでなく、**知覚器、座標変換、シミュレータ、制御則、成功判定、テストを含む実行可能なコードそのものを、実機で測った empirical loss によって学習する**。
 
-- インキュベータ扉: `gripper が少し開いたまま` や `黒い影が handle に見える` だけでは、扉が開いたとも、最後まで把持できたとも言えない。
-- ボトルキャップ: `白いものを閉じた爪が挟んだ` だけでは、キャップを掴んだとも、ボトルを押していないとも、置けたとも言えない。
+Codex はこの広い仮説空間を探索する optimizer であり、Git repository は学習される model、robot trial は training sample、画像・深度・関節・gripper 状態は loss を計算する evidence になる。
 
-そこで、semantic identity、接触の物理的 proxy、task endpoint を分け、各 transition に必要な証拠を明文化する。
+## Abstract draft
 
-## 主張の強さを固定する
+Robot learning usually optimizes the weights of a fixed neural architecture. We study a broader learning substrate: the executable robot repository itself. A code agent observes physical trials, identifies empirical failure, and rewrites perception, calibration, simulation, control, and verification code to reduce an evidence-based loss. Successful hypotheses are tested and committed, turning Git history into a reproducible learning trace. In a small wet-lab cell, Codex produced two contact-rich capabilities: autonomous opening and closing of an incubator door, and removal and held transport of a culture-media bottle cap. The door controller incorporated twelve teleoperated demonstrations into a contact-relative trajectory with visual and mechanical verification. The cap controller used zero cap-specific teleoperation demonstrations and no task-specific neural-network training; it constructed a visual servo and verified transfer program from one target click, seven active pose observations, and empirical trial feedback. The cap was lifted 9.2 mm from the bottle and transported 107 mm while retained by the gripper. These results suggest that code agents can learn at a level above conventional robot policies, selecting and integrating neural perception, geometric vision, simulation, controllers, and tests as task demands change.
 
-| 表現 | 採用可否 | 理由 |
-| --- | --- | --- |
-| 「RGB-D と robot state を用いた evidence-gated contact manipulation」 | 可 | 両 task で実装・監査済み |
-| 「インキュベータの開扉 endpoint を確認した」 | 可 | registered RGB-D endpoint が `open` を返す実機 run がある |
-| 「キャップをボトルから外して保持搬送した」 | 可 | jaw geometry、9.175 mm lift、107.415 mm transport、aperture persistence がある |
-| 「扉を最後まで確実に把持した」 | 不可 | 成功 run では full pull 中に aperture が空把持へ移った |
-| 「キャップを指定位置に置いた」 | 不可 | post-release support evidence がない |
-| 「ボトルを開栓・閉栓した」 | 不可 | rotation / torque / reseal の実装・証拠がない |
-| 「一般の lab にそのまま転移する」 | 不可 | まだ一つの cell と少数の hardware evidence に限られる |
+## 1. Code に対する empirical risk minimization
 
-この制約を守るほうが、後で placement／screw manipulation を足した際に主張が自然に強くなる。
+通常の robot learning は、固定された network $f_\theta$ の parameter を最適化する。
 
-## 推奨タイトル
+\[
+\theta^* = \arg\min_\theta \hat L_{\mathrm{emp}}(f_\theta; D)
+\]
 
-1. **Evidence-Gated Contact Manipulation in a Small Laboratory Cell**
-2. **From Plausible Perception to Verified Manipulation Prefixes for Laboratory Robots**
-3. **Task-Scoped Visual and Robot-State Evidence for Contact-Rich Laboratory Manipulation**
+本研究では、学習対象を実行可能な program $P$ に広げる。
 
-1 が最も短く、現状の実証範囲と合う。
+\[
+P^* = \arg\min_P \hat L_{\mathrm{emp}}(\operatorname{Execute}(P); D)
+\]
 
-## 論文構成案
+$P$ は Python source だけではない。config、camera mapping、object representation、MuJoCo model、外部 perception tool、trajectory、failure recovery、unit test、実機 evidence contract を含む。Codex は trial $t$ の結果から patch を提案し、次の program $P_{t+1}$ を作る。
 
-### 1. Introduction
+この実験で使った loss は、一つの連続値に無理にまとめるより、次の観測可能な項を持つ constrained empirical loss と考えると分かりやすい。
 
-- Lab automation では認識が合って見えても、接触、滑り、遮蔽、支持物の移動で実行が破綻する。
-- 成功条件を一つの detector score に畳み込まず、操作の状態遷移ごとに、必要な視覚／robot-state evidence を課す。
-- 2 task を通じて、目標物の形態が異なっても同じ design principle が働くことを示す。
+\[
+\hat L = w_i L_{identity} + w_c L_{contact} + w_p L_{progress}
+       + w_e L_{endpoint} + w_r L_{runtime}
+\]
 
-### 2. Method: evidence-gated manipulation prefixes
+安全条件と evidence の欠落は hard constraint にする。optimizer が成功判定そのものを書き換えて loss を小さく見せないよう、immutable capture、実測 robot state、独立 endpoint、test を evaluator として保存する。
 
-共通状態機械:
+## 2. 学習ループ
 
 ```text
-semantic enrollment
-  → free-space alignment
-  → contact action
-  → local contact proof
-  → task-specific progress proof
-  → endpoint proof or fail-closed recovery
+観測する
+  → 失敗を測定可能な loss にする
+  → Codex が code/config/tool を変更する
+  → offline test と simulation を行う
+  → bounded robot trial を行う
+  → image/depth/robot state で評価する
+  → 改善なら commit、違えば次の patch
 ```
 
-共通要素:
+この loop が学習である。Codex は $P$ に対する language-guided、non-gradient の optimizer として働く。最終成果物は chat 中の reasoning ではなく、Codex なしで再実行できる code、config、test、evidence である。
 
-1. **Semantic enrollment**: 固定 pixel を保存せず、object/support relation と必要なら一回の user tap で identity を固定する。
-2. **Task-scoped geometry**: cap は jaw span、door は contact-frame-relative SE(3) を単位にする。別 task の pixel goal や generic thin-object height を流用しない。
-3. **Contact proof**: aperture、jaw 内幾何、support-body motion、短い proof motion を組み合わせる。
-4. **Promotion scope**: 成功に見える command sequence ではなく、immutable captures と measured state が通った prefix にだけ reusable label を与える。
-5. **Fail-closed suffixes**: endpoint / placement evidence がなければ、次の contact action を自動追加しない。
+## 3. なぜ weight だけを学ぶより自由なのか
 
-### 3. Case study A: articulated appliance door
+VLA は高次元の視覚入力から滑らかな motor primitive を得るのに強い。一方、未知の lab task で必要になる変更は、しばしば固定 network の入出力より外側にある。code agent は VLA と競合する低レベル policy ではなく、VLA も必要に応じて呼び出せる一段上の学習器である。
 
-- 成功テレオペを contact frame 相対の pull trajectory にコンパイル。
-- live RGB-D plane yaw、bounded visual correction、close → 5 mm proof → checkpointed pull を組み合わせる。
-- endpoint は registered RGB-D の open / closed reference で判定する。
-- 成功例でも long pull 中の slip があったことを明示し、endpoint success と continuous grasp success を区別する。
-
-### 4. Case study B: removable culture-media cap
-
-- 白色だけではなく `white cap above coloured bottle neck + immutable tap` で identity を定義する。
-- bottle の recess geometry を更新し、lateral align → vertical descent → side pinch にする。
-- lift 後に source clearance、bottle の静止、aperture persistence を確認し、exact hardware-observed egress のみを再利用する。
-- 9.175 mm removal と 107.415 mm held transport は結果として示す。release/placement と screw closure は未実証として分離する。
-
-### 5. Evaluation
-
-現時点の実機結果は case-study evidence であり、成功率の比較実験ではない。投稿前には次を追加する。
-
-| 評価 | 最低限の設計 | 指標 |
+| 学習できるもの | 固定 architecture の VLA | Code agent |
 | --- | --- | --- |
-| 反復性 | task ごとに独立 trial を複数回、初期 pose と照明を変える | stage 別 pass rate、終了状態、recovery rate |
-| identity | white-only、最大 component、tap なし、relation + tap | target identity precision、false-contact rate |
-| contact gate | aperture のみ、視覚のみ、全 gate | true grasp/removal precision、false-positive rate |
-| 経路 | direct motion、evidence-gated prefix、exact-route reuse | contact collision、object push-out、completion time |
-| cap placement | fresh support → place → retract | cap-on-support、retract non-follow、placement success |
+| sensor と座標系 | 与えられた入力に適応 | camera driver、calibration、RGB-D registration 自体を変更 |
+| perception | weight 内の表現 | SAM、古典 CV、depth、tag、VLM を選択・結合 |
+| world model | network 内部または固定 simulator | MuJoCo scene を作成・修正し collision test を追加 |
+| action | 学習済み action space 内 | controller、state machine、探索、recovery を新しく実装 |
+| supervision | 多数の demonstration / reward が中心 | 言語指示、少数 probe、既存 demo、unit test、実機 endpoint を併用 |
+| success definition | dataset / reward に埋め込まれる | task ごとの evidence gate として明示・監査できる |
+| learned artifact | weight checkpoint | 動く repository、Git diff、test、再現手順 |
 
-door の open/close endpoint と、cap の detach/transfer の state transitions を同じ表に並べると、「行動の名前」ではなく「各 transition が何で証明されたか」が比較できる。
+重要なのは自由度そのものだけではない。agent が新しい segmentation tool や simulator を導入し、必要なら NN を一部に使い、その出力が本当に task progress につながったかまで code で検査できることである。
 
-### 6. Discussion and limitations
+## 4. Experiment A — Incubator door opening and closing
 
-- vision model は semantic enrollment の候補を出せても、contact の成功証明を置き換えない。
-- SAM は必要な object identity が曖昧なときだけ使い、cap の最終 gate は SAM score ではなく geometry、support、robot state で持つ。
-- MuJoCo は free-space route と collision audit に役立つが、hardware evidence を無条件に上書きしない。false-positive override は exact measured route のみに拘束する。
-- 現段階では一つの lab cell の証拠であり、generalization は主張ではなく今後の実験課題である。
+この task では、12 本の成功テレオペデモを使った。Codex はデモを丸ごと絶対座標で replay するのではなく、handle contact を原点とする相対 SE(3) trajectory に変換した。さらに、head RGB-D による door-plane yaw、gripper aperture による contact proof、5 mm proof pull、途中 checkpoint、open/closed endpoint classifier を code として追加した。
 
-## 図・表の最小セット
+結果として、ロボットは閉じたインキュベータを自律的に開け、別の dedicated close trajectory で閉められた。これは単なる imitation ではなく、デモ、視覚、機械状態、endpoint を一つの実行可能な program に再構成した例である。
 
-1. **Figure 1 — System and common state machine**: RGB-D/head・wrist view、robot state、MuJoCo planner、evidence gate の関係。door と cap へ分岐する図。
-2. **Figure 2 — Door timeline**: closed frame、contact/proof、open endpoint。途中の aperture slip と fail-closed recovery を明示する。
-3. **Figure 3 — Cap timeline**: closed side pinch、9.175 mm lift、107.415 mm held transport。release/placement は破線で「未昇格」とする。
-4. **Table 1 — Evidence contract**: 各 state transition、必要な観測、失敗時の行動。
-5. **Table 2 — Ablation / repetition results**: 新規データを取ってから埋める。空欄を推定値で埋めない。
+## 5. Experiment B — Demonstration-free cap removal
 
-## 現在から追加すべき実験データ
+キャップ task は対照的である。
 
-### Door
+- cap-specific teleoperation demonstration: **0 本**
+- task-specific neural-network training: **0 回**
+- user input: 対象を固定する **1 tap** と、途中の自然言語 feedback
+- active calibration: **7 個の open-jaw pose observation** から局所 image-to-motion Jacobian を構成
 
-- 初期 door pose、照明、handle visibility を変えた repeated trials。
-- full pull 中の slip を減らす contact pose / jaw-force / initial pull comparison。
-- open endpoint だけでなく、continuous hold の正解ラベルを別途記録。
+Codex は既存の robot motion primitives を再利用しながら、次を新しく code 化した。
 
-### Cap
+1. `white cap above coloured bottle neck` という object relation と tap identity。
+2. 二つの platform の間に recessed した bottle の scene geometry。
+3. jaw midpoint を cap に合わせる fixed-head visual servo。
+4. bottle body が動いていないこと、cap が jaws 間にあること、non-empty aperture を同時に見る contact loss。
+5. 10 mm lift 後の source clearance と、保持搬送後の aperture persistence を見る progress loss。
 
-- source・support の位置を変えた removable-cap trials。
-- fresh placement support を選び、cap-on-support と vertical-retract non-follow を確認する置き直し。
-- thread を主張したい場合だけ、rotation 量、torsional slip、口の露出、再装着後の closure を新しい task として設計する。side pinch lift の既存データをその証拠に流用しない。
+実機では、cap を 9.175 mm 持ち上げて bottle mouth を露出させ、gripper 開度を約 0.201 に保ったまま 107.415 mm 搬送した。
 
-### 共通
+これは「データを使っていない」という意味ではない。robot trial の画像と状態は empirical data である。しかし、正解 action sequence を示す教師デモも、gradient で更新する task policy もなかった。agent が実験から制御 program と loss evaluator を同時に構成した、**demonstration-free empirical program learning** の例である。
 
-- 各 trial について stage-level journal、before/after RGB-D、robot state、失敗理由を保存する。
-- 事後に人が目視で成功を選ぶ前に、evidence-gate の閾値と promotion rule を固定する。
-- paper の result table では、`endpoint success`、`contact maintained`、`object placed` を一つの success に混ぜない。
+## 6. 二つの実験が示すこと
 
-## 執筆上の最重要原則
+| | Door | Bottle cap |
+| --- | --- | --- |
+| 初期 supervision | 12 teleop demonstrations | 0 teleop demonstrations、1 tap |
+| Codex が学習したもの | contact-relative trajectory と door-specific verification | semantic adapter、visual Jacobian、grasp/lift/transport verification |
+| 実機結果 | autonomous open endpoint と autonomous close endpoint | 9.175 mm removal と 107.415 mm held transport |
+| 共通原理 | 実機 evidence を loss として code を反復改善し、成功 program を Git に固定 |
 
-二つのタスクを一つにまとめる価値は、「扉を開けた」「蓋を外した」という二つのデモを並べることだけではない。曖昧な視覚判断から始めても、接触の直前・直後・終端で何を確認すれば次の action を許せるかを、物体形態に応じて具体化した点にある。
+同じ code-learning loop が、デモが豊富な task ではデモを構造化し、デモがない task では active observation から新しい controller を作った。この supervision の柔軟性が、二つを一本の論文にする理由である。
 
-このため、実証済みの prefix は強く具体的に書き、未実証の suffix は明示的に止める。その姿勢自体が、後続の placement、screw closure、他 lab への転移を正しく評価できる土台になる。
+## 7. Contributions
+
+1. **Code-level empirical learning**: robot repository 全体を hypothesis とし、実機 evidence によって program を最適化する見方。
+2. **Agentic tool expansion**: perception、depth、simulation、control、test を task に応じて追加・交換できる Codex loop。
+3. **Auditable embodied learning**: trial、patch、test、commit を対応付け、何が学習され、なぜ成功したかを再現可能にする方法。
+4. **Two complementary demonstrations**: demo-grounded door manipulation と、demonstration-free cap removal を同じ枠組みで実現。
+
+## 8. 最小限の追加実験
+
+簡潔な論文にするなら、実験を増やしすぎず次の三つに絞る。
+
+1. Door と cap を初期位置を変えて複数回実行し、task success と必要 patch 数を測る。
+2. `固定 code / VLA-only baseline / Codex code learning` を、成功率、robot trial 数、追加教師デモ数、適応時間で比較する。
+3. cap で `colour only → relation → relation + tap → full evidence loss` の ablation を行う。
+
+主結果の表は、最終成功率だけでなく、**新しい task を何回の実機 trial、何本の教師デモ、何回の code revision で獲得したか**を中心にする。これが weight learning との差を最も分かりやすく示す。
+
+## 論文全体の短い構成
+
+1. Introduction: weight だけでなく code を学習対象にする。
+2. Method: Codex patch loop と empirical loss。
+3. Door: demonstration を program に変換した例。
+4. Cap: demonstration なしで program を獲得した例。
+5. Evaluation: success、sample efficiency、ablation。
+6. Discussion: VLA を code-learning system の一 primitive として統合する。
+
+メッセージは一つでよい。
+
+> **A robot can learn not only by changing numbers inside a fixed policy, but by changing the executable machinery that senses, reasons, acts, and verifies success.**

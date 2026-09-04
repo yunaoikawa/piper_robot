@@ -7,6 +7,8 @@
 
 覚えている操作は、培養液ボトル上の白いキャップを右手で**横から挟み、ボトル口から上へ外し、保持したままホーム側へ搬送する**ものだった。
 
+この成功の技術的な価値は大きい。cap-specific のテレオペ教師デモも task-specific NN の学習も使わず、対象を指定する 1 tap、実機の少数 probe、自然言語 feedback から、Codex が perception、局所 image-to-motion Jacobian、approach、contact verification、lift/transport verification をコードとして組み立てた。これは imitation learning ではなく、実機の結果を empirical loss としてコードを学習した例である。
+
 これは、次の範囲では実機証拠を伴って成立している。
 
 | 主張 | 状態 | 根拠 |
@@ -19,7 +21,7 @@
 | ねじを回して緩めた（threaded-cap の開栓） | **未実証** | 当時・現行とも、回転／torque／thread を指令・計測する実装がない |
 | 再装着して閉栓した | **未実証** | 再装着、回転、密閉性のいずれも試行・検証されていない |
 
-したがって論文では、この実演を **culture-media cap removal and held transfer**（培養液ボトル・キャップの除去と保持搬送）と呼ぶ。キャップを物理的に外したため、機能的にはボトル口へのアクセスを実現したと言える。しかし、`opening and closing a screw cap`、`resealing`、`safe placement` と表現してはならない。
+論文で最も強く、かつ実証と一致する表現は **culture-media cap removal and held transfer**（培養液ボトル・キャップの除去と保持搬送）である。キャップを物理的に外してボトル口へのアクセスを実現した。ねじ回転、再栓、指定位置への placement は、この成功に続く独立した発展 task として扱う。
 
 ## この記録の根拠と監査範囲
 
@@ -147,7 +149,7 @@ cap 関連 source には、現在も `twist`、`torque`、`thread`、`screw`、`
 
 ## 開扉タスクと一本の論文にするなら
 
-二つを「二種類の完全な laboratory routine」として売るのはまだ早い。より正確で強い中心主張は、**異なる接触構造に対し、視覚と robot state から task-scoped evidence gate を作り、実証された部分だけを再利用可能な policy として昇格する**ことである。
+二つをまとめる中心主張は、**ニューラルネットの weight だけでなく、知覚器、座標変換、simulation、controller、成功判定を含むコードを、実機の empirical loss で学習できる**ことである。開扉では既存 demonstration を構造化された program に変換し、cap では cap-specific teleop demonstration なしに active observation から program を作った。この対照が一本の論文として強い。
 
 | 観点 | インキュベータ開扉 | ボトル・キャップ除去／保持搬送 |
 | --- | --- | --- |
@@ -158,9 +160,9 @@ cap 関連 source には、現在も `twist`、`torque`、`thread`、`screw`、`
 | 終端の証拠 | registered RGB-D open/closed endpoint | source clearance、9.175 mm lift、107.415 mm held transport |
 | 実証外 | 長い pull 中の完全な保持、反復成功率 | placement、再栓、thread torque、反復成功率 |
 
-論文の安全な仮題と一文の主張は、次のようになる。
+論文タイトルと一文の主張は、次のようになる。
 
-> **Evidence-Gated Contact Manipulation for a Small Laboratory Cell** — Rather than treating a plausible close command or a segmented object as success, the system promotes only manipulation prefixes supported by task-specific visual and robot-state evidence. We demonstrate an articulated-door endpoint transition and a removable-cap detachment/held-transfer transition.
+> **Code as a Learning Machine: How to Use Codex for Robot Control** — A robot can learn not only by changing numbers inside a fixed policy, but by changing the executable machinery that senses, reasons, acts, and verifies success.
 
 実験として追加すべきものは明確である。
 
@@ -170,4 +172,4 @@ cap 関連 source には、現在も `twist`、`torque`、`thread`、`screw`、`
 4. cap の placement を fresh support selection → cap-on-support → vertical retract まで実証する。
 5. screw cap を主張するなら、回転角、トルクまたは slip、口の露出、再装着後の閉栓を別の protocol として追加する。
 
-統合論文の章立て、主張の上限、図と表の案は [PASTEUR_DOOR_CAP_PAPER_OUTLINE.md](PASTEUR_DOOR_CAP_PAPER_OUTLINE.md) に切り出した。実験が増えても、ここで定めた「実証済みの prefix と未実証の suffix を混同しない」という原則を維持する。
+簡潔な abstract、数式化、VLA との比較、二つの experiment、追加実験は [PASTEUR_DOOR_CAP_PAPER_OUTLINE.md](PASTEUR_DOOR_CAP_PAPER_OUTLINE.md) にまとめた。
