@@ -170,4 +170,4 @@ jq '.status, .final_state.state' \
   data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/journal.json
 ```
 
-実機を動かす手順と fail-closed 条件は [PASTEUR_INCUBATOR_DOOR.md](PASTEUR_INCUBATOR_DOOR.md) を正とする。本書はその設計書を置き換えるものではなく、なぜこの構成になったかと、どこまで実証済みかを残す監査用の記録である。
+実機を動かす手順と fail-closed 条件は [PASTEUR_INCUBATOR_DOOR.md](PASTEUR_INCUBATOR_DOOR.md) を正とする。本書はその設計書を置き換えるものではなく、なぜこの構成になったかと、どこまで実証済みかを残す監査用の記録である。キャップ除去／保持搬送との統合論文で使う主張の上限、図、追加実験は [PASTEUR_DOOR_CAP_PAPER_OUTLINE.md](PASTEUR_DOOR_CAP_PAPER_OUTLINE.md) にまとめた。
