@@ -1,7 +1,7 @@
 # Code as a Learning Machine: How to Use Codex for Robot Control
 
 **Yuna Oikawa**
-**Detailed working manuscript, 4 September 2026**
+**Detailed working manuscript, 5 September 2026**
 
 > This document is an evidence-grounded first full draft. The experimental
 > claims are restricted to immutable robot captures, recorded robot state,
@@ -38,6 +38,18 @@ image-to-motion Jacobian, represented the cap relative to its supporting bottle,
 and added independent contact, removal, and retention tests. The cap was lifted
 9.175 mm and transported 107.415 mm while the normalized gripper aperture
 remained near 0.201.
+
+Neither promoted path depended on a task-specific neural perception model at
+runtime. Instead, the code agent selected and composed a heterogeneous tool
+graph: Record3D RGB-D acquisition, OpenCV video and image operations, AprilTag
+registration, HDF5 demonstration mining, numerical SE(3) and Jacobian
+operations, Mink/MuJoCo kinematics and collision checks, robot RPC/CAN
+interfaces, gripper-aperture feedback, subprocess isolation, immutable hashes,
+tests, and Git. SAM was available and useful in adjacent scene-reconstruction
+work, but empirical comparison kept it out of these two promoted critical
+paths. Thus the relevant advantage of the language model was not merely neural
+visual recognition; it was the ability to select, connect, constrain, replace,
+and sometimes reject external tools as the physical evidence changed.
 
 These experiments do not establish that program search should replace learned
 visuomotor policies. They instead suggest a complementary hierarchy: a code
@@ -119,6 +131,10 @@ The contributions of this paper are:
    reporting only the final scripts, we connect failures, observations, code
    changes, runs, tests, and commits. This chronology is important because the
    learning signal is contained in the corrections.
+6. **Empirical tool-graph learning.** We identify the non-neural sensing,
+   vision, geometry, simulation, hardware, and software-engineering tools used
+   in each promoted capability, and distinguish them from tools that were only
+   explored or deliberately removed from the runtime path.
 
 ## 2. Related Work
 
@@ -162,7 +178,26 @@ and recovery behavior. The accepted artifact is tied to immutable hardware
 evidence and a Git history. Thus the unit of learning is a tested repository
 revision, not only a generated action sequence.
 
-### 2.3 Foundation perception and model-based validation
+### 2.3 Language models and external tools
+
+Toolformer trains a language model to decide which external API to call, when
+to call it, which arguments to supply, and how to incorporate the returned
+result [9]. ReAct interleaves language reasoning with actions that query
+external information sources or environments [10]. Together with Code as
+Policies [4], these results motivate a view of the LLM as an orchestrator of
+specialized capabilities rather than a self-contained predictor.
+
+Our experiments extend this view in two directions. First, the selected tools
+operate on a physical control stack: camera services, depth arrays,
+fiducials, numerical solvers, a simulator, robot RPC/CAN interfaces, and
+mechanical feedback. Second, a tool call is not the final learned artifact.
+Physical loss can cause the agent to write a new adapter, change the connection
+or authority between tools, add an evaluator, and commit the revised graph for
+later deterministic execution. The object of empirical selection is therefore
+a persistent tool-using program, not only an inference-time sequence of API
+calls.
+
+### 2.4 Foundation perception and model-based validation
 
 The Segment Anything Model (SAM) provides promptable, transferable object masks
 [6]. Such a model broadens the set of perception tools a code agent can deploy.
@@ -315,6 +350,43 @@ tensor does not remove the empirical update. Conversely, not every chat message
 is a learning step. Temporary manual coordinates, diagnostic scripts, and
 failed hypotheses become learned behavior only if they are deliberately
 retained in the normal execution path.
+
+### 3.6 Learning the tool graph, not only tool parameters
+
+The executable hypothesis also contains a directed tool graph
+
+\[
+G_P=(V_P,E_P),
+\]
+
+where a node may be a sensor service, file decoder, vision routine, geometric
+estimator, simulator, optimizer, robot interface, evaluator, or persistence
+mechanism, and an edge is an explicitly typed exchange of images, metric
+depth, transforms, trajectories, state, or evidence. Program search can change
+both the computation within a node and the topology of this graph. It can add
+a depth observation before contact, replace a semantic mask with a geometric
+predicate, put a simulator before hardware execution, or add an aperture gate
+between closure and progress.
+
+This is a larger change of hypothesis class than tuning thresholds inside a
+fixed perception-action pipeline. It is also one of the practical advantages
+of an LLM code agent: the model can inspect an unfamiliar API, write an
+adapter, invoke a command-line process, combine its output with existing robot
+state, test the connection, and preserve the resulting composition as normal
+source code. The acquired controller need not call the LLM after this
+composition is compiled.
+
+We use *external tool* in a functional sense: a capability outside the
+task-specific neural policy, including third-party libraries, sensor
+applications, physics and numerical packages, hardware services, and
+versioning or test infrastructure. Repository-local wrappers around those
+capabilities are part of the learned program. We do not claim that every
+library was downloaded during the successful session; the historical evidence
+supports the narrower and more important claim that Codex selected, composed,
+and revised these tools. Nor do we claim that neural systems are intrinsically
+unable to call tools. A tool-augmented neural agent can do so. The comparison
+is with a conventional fixed VLA training run, whose sensor/action contract
+and surrounding tool graph normally remain fixed while its weights change.
 
 ## 4. Experimental System and Audit Method
 
@@ -741,6 +813,56 @@ These corrections reside in source, configuration, compiled demonstrations,
 and tests. They are therefore available to later executions without Codex being
 present in the control loop.
 
+### 5.9 External tool graph assembled for the door
+
+The door capability was not produced by one neural network mapping pixels to
+actions. Codex assembled the following graph from independently useful tools.
+The table distinguishes the role of each tool from the program-level decision
+that made it useful.
+
+| Stage | External tool or interface | Concrete role | Program-level decision learned from evidence |
+| --- | --- | --- | --- |
+| Demonstration acquisition | Meta Quest teleoperation and synchronized HDF5/MP4 recording | supplied actions, robot state, and three camera streams | use human motion as raw experience, not as an unquestioned absolute replay |
+| Demonstration compilation | `h5py`, OpenCV `VideoCapture`, NumPy, and Mink SE(3) | decoded 57 candidate episodes, paired video with state, found contact/proof/release frames, measured variability, and expressed poses relative to contact | rank by physical pull, admit only visually verified open endpoints, and retain the contact medoid plus relative motion |
+| Metric observation | Record3D head-camera RGB-D capture | supplied synchronized RGB, metric depth, confidence, intrinsics, and robot state before and after action | re-observe the world at state transitions rather than infer it from commands |
+| Scene registration | OpenCV ArUco AprilTag dictionaries, subpixel corner refinement, and `solvePnP` | registered the fixed camera view to the robot/cell frame | use tags as coordinate anchors, not as the manipulated door or its success label |
+| Door orientation | NumPy RANSAC and SVD over Record3D points | fitted the incubator's vertical front plane and estimated its yaw | replace the shadow-based contact hypothesis with a bounded metric yaw residual |
+| Local wrist correction | OpenCV HSV thresholding, morphology, connected components, and a fitted ridge map | tracked the red EYELA rigid-parent feature for a small lateral correction | allow at most a few bounded corrections; never substitute the label for handle identity |
+| Motion synthesis | Mink SE(3), MuJoCo robot geometry, and the repository's Mink/`quadprog` IK solver | retargeted demonstrated poses and converted them into feasible joint motion | preserve the demonstrated contact-relative path while changing its world anchor |
+| Physical execution | robot RPC, Piper CAN control, and trajectory streaming | sent staged right-arm and gripper commands | expose action as short, auditable stages rather than one opaque long replay |
+| Contact measurement | Dynamixel gripper aperture feedback | distinguished empty closure, stable contact, proof retention, and later slip | require non-empty settled closure, a 5 mm proof, and checkpointed retention |
+| Endpoint measurement | OpenCV AprilTag registration, RANSAC homography, warped metric depth, and an open/closed dynamic mask | compared a fresh capture with independently stored endpoint references | declare success from world-state evidence and return `unknown` when registration or separation is insufficient |
+| Process reliability | short-lived subprocesses and a JSON run journal | isolated fragile Record3D native state and persisted every stage, stdout, stderr, and command flag | make observation/action stages restartable and parse the outer process JSON rather than assuming clean stdout |
+| Promotion and audit | SHA-256 hashes, pytest, and Git commits | bound demonstrations and accepted source to reviewable evidence | retain only the tested hypothesis and make later code drift auditable |
+
+The resulting promoted graph can be summarized as:
+
+```text
+Quest demonstrations -> HDF5/MP4 -> h5py/OpenCV compiler -> relative SE(3)
+                                                           |
+Record3D RGB-D -> AprilTag/PnP -> RANSAC door plane --------+
+                                                           v
+wrist RGB -> bounded OpenCV feature ----------------> Mink/MuJoCo IK
+                                                           |
+                                                           v
+                                                RPC -> CAN -> robot
+                                                           |
+                      aperture checkpoints + fresh registered RGB-D
+                                                           |
+                                                           v
+                                                  endpoint evaluator
+```
+
+SAM was considered in the broader perception and scene-reconstruction work,
+but it was not a runtime dependency of the promoted fixed-cell door program.
+Free-form segmentation of a small, partially occluded recessed handle did not
+provide the most measurable control signal. The empirical winner was a hybrid
+of a demonstrated contact frame, metric plane geometry, one tightly bounded
+classical visual feature, and direct mechanical feedback. This negative tool
+selection is important: an LLM's advantage is not that it always calls the
+largest neural model, but that it can change tools when a more specific one
+closes the physical loss loop better.
+
 ## 6. Case Study B: Learning to Remove and Transport a Bottle Cap
 
 ### 6.1 Task and demonstrated scope
@@ -1038,6 +1160,58 @@ Like the door controller, this artifact can run without Codex after promotion.
 The agent was required to acquire and revise the program, not to remain in the
 high-frequency servo loop.
 
+### 6.7 External tool graph assembled for the cap
+
+The cap case used a different tool graph and is therefore a stronger test of
+structural adaptation. There was no cap-specific action demonstration to
+compile. Codex instead combined sparse human identity input, classical vision,
+metric depth, numerical system identification, a simulator critic, and direct
+hardware evidence.
+
+| Stage | External tool or interface | Concrete role | Program-level decision learned from evidence |
+| --- | --- | --- | --- |
+| Target enrollment | one click in the fixed head image | supplied an immutable instance anchor | ask the human once which cap is intended, then prevent the tracker from silently switching objects |
+| Semantic identity | OpenCV HSV conversion, morphology, connected components, and normalized component geometry | detected a small white component *above a coloured bottle neck* | replace “largest white object” with an object-support relation |
+| Tool geometry | OpenCV segmentation of the cyan jaw material plus jaw midpoint/span calculations | represented where the open gripper would actually close | control the target into the segment between the jaws instead of toward a camera-frame box |
+| Metric target pose | Record3D RGB-D, confidence, intrinsics, fixed AprilTag registration, and robust median back-projection | converted the selected cap mask into a 3-D surface point | separate target identity from metric localization and reject masks with insufficient valid depth |
+| Completed scene model | Python XML `ElementTree`, catalog dimensions, and MJCF | replaced the stale target body with a completed bottle/cap collision object and disabled unobserved dynamic obstacles | combine visible surface evidence with size priors rather than pretending RGB-D observed every surface |
+| Kinematics and collision critic | MuJoCo, Mink/`quadprog` IK, measured FK, and joint-path contact audits | checked candidate approaches against the reviewed cell and robot model | use simulation as a critic, not an infallible oracle |
+| Local system identification | seven open-jaw observations, NumPy least squares/pseudoinverse, and small Cartesian probes | estimated the local mapping from robot displacement to jaw-midpoint image displacement | learn a local visual Jacobian when no demonstration or calibrated global image-to-robot map exists |
+| Physical execution | robot RPC, Piper CAN control, joint-knot sampling, and trajectory streaming | executed free-space lateral alignment, vertical descent, closure, lift, and egress | align laterally before descent and preserve the exact verified route |
+| Mechanical and world evidence | Dynamixel aperture, measured FK, fixed-head RGB-D, local source appearance, and support motion | tested non-empty side pinch, vertical removal, continued retention, transport distance, and stationary bottle support | promote closure, removal, transport, and placement separately; a release command alone is not placement evidence |
+| Simulator disagreement | SHA-256 hash of the waypoint list plus immutable hardware audit | allowed one model-only collision false positive to be overridden for the exact proven route | scope exceptions to identical evidence-backed programs rather than weakening collision checks globally |
+| Promotion and audit | timestamped JSON/images/depth/state, pytest, command-line audit, and Git | reproduced the accepted evidence contract without another robot action | preserve the longest verified prefix and make the claim independent of conversational memory |
+
+The cap graph was:
+
+```text
+one click + head RGB -> OpenCV cap-above-neck identity -> selected mask
+                                                          |
+Record3D depth + fixed-tag registration ------------------+-> 3-D target
+                                                          |
+catalog priors + MJCF XML --------------------------> current MuJoCo scene
+                                                          |
+7 robot probes -> NumPy local Jacobian -> Mink/MuJoCo checks
+                                                          |
+                                                          v
+                                                RPC -> CAN -> robot
+                                                          |
+                   aperture + FK + RGB-D + support witness
+                                                          |
+                                                          v
+                                  removal/transport prefix evaluator
+```
+
+The promoted cap path also did **not** run SAM. At capability commit
+`fc831c0`, `rollout/media_cap_target.py` imported two HSV bounds from a module
+named `realtime_sam_servo`, but code inspection shows that these were only
+constants for cyan gripper material. No SAM model was loaded and no neural mask
+was invoked by the cap adapter. The actual target detector was the OpenCV
+relational component procedure described above. SAM remained valuable for
+adjacent broad scene parsing, but the fixed-cell cap evidence selected a
+lighter and more inspectable runtime tool. This distinction prevents a module
+name from being mistaken for causal model use.
+
 ## 7. Cross-Case Analysis
 
 ### 7.1 One learning loop, two kinds of supervision
@@ -1105,10 +1279,46 @@ single tool dominated every stage.
 - SAM remained available for broad scene parsing but was not forced into a
   control role where simpler, measurable signals performed better.
 
+The cross-case inventory separates *promoted* tools from *exploratory* ones:
+
+| Tool family | Door | Cap | Status in promoted path |
+| --- | --- | --- | --- |
+| Task-specific teleoperation | supplied the open and close motions | absent | door only |
+| HDF5/video mining | selected and compiled door demonstrations | not needed | door only |
+| Classical color/component vision | bounded red rigid-parent correction | cap-above-neck identity and cyan jaw geometry | both, with different roles |
+| Record3D metric RGB-D | plane yaw and endpoint state | selected surface, scene refresh, removal evidence | both |
+| AprilTags and PnP/homography | camera/endpoint registration | fixed scene-to-camera bridge | both; never object identity |
+| Numerical geometric estimation | RANSAC/SVD plane fit | median 3-D surface and pseudoinverse image Jacobian | both |
+| MuJoCo/Mink | IK and robot geometry | IK, completed scene, and collision critic | both |
+| Gripper aperture and measured robot state | closure, proof, and slip | pinch, lift, and retention | both |
+| SAM | considered and used in adjacent scene work | considered and used in adjacent scene work | absent from both promoted runtimes |
+| VLA/ACT task policy | possible lower-level alternative | possible lower-level alternative | absent from both reported capabilities |
+| Hashes, tests, JSON journals, and Git | evidence and promotion | evidence and promotion | both, outside the servo loop |
+
+Exploratory tool use still contributed when it falsified a representation. A
+shadow-like image feature and repeated global visual correction were rejected
+for the door. Global white-object selection and an incorrect tabletop model
+were rejected for the cap. A conservative MuJoCo collision result was retained
+as an explicit disagreement but did not erase stronger evidence from one exact
+hardware-proven route. The learned artifact therefore includes decisions about
+which tool has authority over which variable:
+
+- demonstration data owns the local articulated motion;
+- metric depth owns visible surface geometry;
+- catalog dimensions own completion of unobserved object volume;
+- fixed tags own registration, not target semantics;
+- the simulator owns a conservative geometric critique, not physical truth;
+- gripper and robot state own mechanical contact and displacement evidence;
+- fresh camera observations own task endpoints; and
+- the human owns sparse semantic disambiguation when the sensors cannot.
+
 This flexibility is a central benefit of code as a learning substrate. The
-agent can import a large model when semantic ambiguity demands it and remove it
-from the critical path when a calibrated geometric predicate is faster and
-more reliable.
+agent can import or call a large model when semantic ambiguity demands it,
+combine it with geometric and hardware tools, or remove it from the critical
+path when a calibrated predicate is faster and more reliable. In other words,
+the empirical search is over both program logic and tool authority. Choosing
+*not* to use a neural model can be a learned result rather than a retreat from
+learning.
 
 ### 7.4 Code learning above VLA control
 
@@ -1133,6 +1343,28 @@ contracts. Conversely, if a VLA fails systematically because a camera is
 mirrored or the success label is wrong, code learning can repair the surrounding
 machinery before collecting more trajectories. The layers solve different
 problems.
+
+The difference can be stated in terms of what empirical optimization is
+allowed to change. Standard policy training can optimize millions or billions
+of weights, but normally holds fixed the camera decoder, sensor synchronization,
+coordinate convention, simulator interface, actuator protocol, retry state
+machine, and definition of success. In these experiments, several decisive
+updates occurred precisely in those held-fixed components: an HDF5 compiler was
+added, camera registration was inserted, a shadow feature lost authority, a
+new depth-plane estimator was written, aperture checkpoints split a long
+action, a local Jacobian was identified from probes, a stale MJCF object was
+reconstructed, and the evaluator stopped promotion at held transport.
+
+This is not a claim that source code has uniformly greater useful capacity than
+a neural network, or that a sufficiently general learned agent could not
+perform similar operations. It is a claim about accessible degrees of freedom
+and persistence. The LLM code agent could use existing software and hardware
+as callable modules, synthesize the missing adapters between them, alter the
+graph after one informative physical failure, and save the accepted graph in a
+form that ran without the LLM. An end-to-end VLA remains attractive inside this
+graph for high-bandwidth visuomotor control. The code-learning layer addresses
+the complementary question: *which* observations, tools, controller, and
+evidence should define that motor-learning problem in the first place?
 
 ## 8. Evaluation Protocol for a Full Study
 
@@ -1609,6 +1841,81 @@ order, are `door_open_20260703_164850`, `door_open_20260703_163756`,
 `door_open_20260703_164136`, and `door_open_20260703_175931`. Their SHA-256
 hashes are retained in `compiled_door_open_v1.json`.
 
+## Appendix F. Historical External-Tool Audit
+
+This appendix guards against attributing a later repository state to the
+original capability. The inventory was reconstructed from the files at the
+capability commits using `git show <commit>:<path>`, then cross-checked against
+the immutable run artifacts. It records causal program dependencies, not every
+developer utility that happened to be installed on the computer. For example,
+figure-production commands used while writing this manuscript are not robot
+learning tools.
+
+### F.1 Door tool evidence at the capability commits
+
+| Historical source | Directly evidenced external facility | Role in the capability |
+| --- | --- | --- |
+| `2b6ccab:src/compile_incubator_door_demos.py` | `h5py`, OpenCV `VideoCapture`, NumPy, Mink | read HDF5 robot state and wrist videos; derive and compile contact-relative demonstrations |
+| `2b6ccab:rollout/incubator_door_demo.py` | `h5py`, Mink SE(3), NumPy, SHA-256 | extract episode state, compose transforms, select the medoid, and bind source recordings by content hash |
+| `2b6ccab:rollout/incubator_door_plane.py` | OpenCV ArUco/AprilTag detector, `solvePnP`, NumPy RANSAC/SVD | bridge RGB-D points to robot coordinates and estimate front-plane yaw |
+| `2b6ccab:rollout/incubator_door_visual.py` | OpenCV HSV, morphology, connected components; NumPy ridge regression | produce only the bounded rigid-parent feature correction |
+| `2b6ccab:src/run_incubator_door_demo.py` | Mink, the MuJoCo-backed `SingleArmIK`, RPC, measured aperture | execute retargeted stages and test contact/progress |
+| `f2149bb:rollout/articulated_appliance.py` | OpenCV tag detection, RANSAC homography, perspective transforms, NumPy metric-depth comparison | classify registered open/closed endpoints independently of sent commands |
+| `f2149bb:src/run_incubator_door_autonomy.py` | Record3D capture command, subprocess isolation, OpenCV, JSON journal | connect observation, action, recovery, and endpoint classification into one restartable state machine |
+| commits `2b6ccab`, `bfa9b7e`, `f2149bb`, and `283b913` | Git history and pytest regression | preserve and harden the success path after physical trials |
+
+The robot IK adapter loaded a MuJoCo MJCF model and called Mink's IK routine
+with the `quadprog` solver. Piper motion and gripper commands crossed the
+repository RPC service to the CAN-connected hardware. Record3D ran as the
+external RGB-D acquisition service; the autonomous orchestrator intentionally
+invoked it through a short-lived child command because long-lived native camera
+state had proven fragile.
+
+There is no import or model-load evidence for SAM in these promoted door files.
+Its absence is consistent with the retrospective experiment record: SAM was a
+candidate broad perception tool, while the accepted fixed-cell path used
+registered depth, classical image operations, a demonstrated contact frame,
+and aperture feedback.
+
+### F.2 Cap tool evidence at the capability commits
+
+| Historical source | Directly evidenced external facility | Role in the capability |
+| --- | --- | --- |
+| `fc831c0:rollout/media_cap_target.py` | OpenCV HSV, morphology, connected components; NumPy geometry | identify the cap through the cap-above-coloured-neck relation and locate it relative to the jaws |
+| `fc831c0:rollout/rgbd_target_scene.py` | Record3D arrays, OpenCV, fixed-tag registration, NumPy back-projection, Python XML `ElementTree` | recover a metric visible surface and write a completed target body into a fresh MJCF scene |
+| `fc831c0:src/run_culture_media_cap_grasp.py` | RPC, measured FK, OpenCV, NumPy pseudoinverse, MuJoCo path-contact audit, joint-knot streaming | acquire the local image Jacobian, approach laterally before descent, execute closure/lift/transport, and audit candidate paths |
+| `1f07761:rollout/cylindrical_cap_transfer.py` | OpenCV/NumPy evidence, SHA-256 route binding | verify closure, removal, and held transport; scope a simulator-only override to the exact hardware-proven route |
+| `fc831c0` and `1f07761` tests/configuration | pytest, JSON artifacts, Git history | preserve the target contract and promote only the evidence-backed behavior prefix |
+
+The apparent SAM dependency deserves explicit source-level clarification. At
+`fc831c0`, `media_cap_target.py` imported only
+`GRIPPER_CYAN_HSV_LOWER` and `GRIPPER_CYAN_HSV_UPPER` from
+`realtime_sam_servo`. Those are numerical HSV constants. The file did not load
+a SAM checkpoint, create a SAM predictor, or request a SAM mask. The cap mask
+was produced by OpenCV component logic. Therefore the promoted cap result is
+accurately described as demonstration-free and task-specific-NN-free, but not
+tool-free: it relied on a substantial graph of external sensing, numerical,
+simulation, and hardware tools.
+
+### F.3 Acquisition tools versus deployed tools
+
+Three tool scopes should not be conflated:
+
+1. **Acquisition-time tools** helped Codex create the program: repository
+   search, shell commands, Git history, tests, stored image/depth inspection,
+   and in the door case teleoperation data.
+2. **Deployed runtime tools** executed after Codex left the loop: camera
+   capture, OpenCV/NumPy geometry, Mink/MuJoCo computation, RPC/CAN control,
+   and robot-state evidence.
+3. **Exploratory tools** informed a rejection but were not retained on the
+   promoted path: free-form visual interpretation, global-object heuristics,
+   and SAM for these two fixed-cell target controllers.
+
+This separation makes the central claim testable. The LLM did not succeed
+because all external tools were treated as equally trustworthy. It succeeded
+by changing their composition and authority in response to empirical loss, and
+by compiling the accepted composition into deterministic code.
+
 ## References
 
 [1] A. Brohan et al., “RT-2: Vision-Language-Action Models Transfer Web
@@ -1635,3 +1942,9 @@ Manipulation with Language Models,” 2023. <https://arxiv.org/abs/2307.05973>
 [8] E. Todorov, T. Erez, and Y. Tassa, “MuJoCo: A Physics Engine for
 Model-Based Control,” IEEE/RSJ International Conference on Intelligent Robots
 and Systems, 2012. <https://mujoco.org/>
+
+[9] T. Schick et al., “Toolformer: Language Models Can Teach Themselves to Use
+Tools,” 2023. <https://arxiv.org/abs/2302.04761>
+
+[10] S. Yao et al., “ReAct: Synergizing Reasoning and Acting in Language
+Models,” 2022. <https://arxiv.org/abs/2210.03629>
