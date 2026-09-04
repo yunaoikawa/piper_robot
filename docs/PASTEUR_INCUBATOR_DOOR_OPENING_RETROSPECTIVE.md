@@ -21,6 +21,9 @@
 | 実機の事実 | `data/runs/pasteur/incubator_*20260808*/` の `journal.json`、アパーチャ記録、RGB-D 証拠画像 |
 | デモの事実 | `data/reference/pasteur/incubator/compiled_door_open_v1.json` と参照 HDF5 |
 | 実装の事実 | Git 履歴の `2b6ccab` → `676981b` と現行の door 関連モジュール |
+| 当時の試行過程 | 2026-08-08 のアクセス制御された Codex event log、そこから起動された stage ごとの run directory、各 patch の Git 帰着先 |
+
+最後の行は、後から書いた説明を当時の意図として扱わないために追加した監査である。会話ログのうち 2026-08-08 12:43–19:08 JST を調べ、成功した patch 適用 58 回（17 ファイル）と、ライブで送った stage コマンドを保存済み run に時刻・名前で照合した。認証情報に該当する行は照合・表示・本書から除外した。この照合で、当時の手探りの試行と、最終的に残した通常ワークフローを区別した。
 
 2026-09-04 時点で、`676981b` から `HEAD` までの door 関連コード・設定・テストには差分がないことを確認した。従って本書の「現在の再現可能な実装」は、この固定された door ワークフローを指す。一方で、成功した自動試行は `283b913` のコミットより約 5 分前なので、その瞬間の未コミット作業ツリーまで完全に復元できるわけではない。実機ログを優先し、Git は設計の復元に用いた。
 
@@ -44,7 +47,7 @@
 
 ### 1. 成功デモを接触基準の軌道へコンパイル
 
-`src/compile_incubator_door_demos.py` は、**人が視覚的に成功と選別した** 12 本の右腕テレオペ HDF5 を入力にする。コンパイラ自身が成功ラベルを推論するわけではない。各デモから以下を抽出する。
+`src/compile_incubator_door_demos.py` は、確認済みの 12 本の右腕テレオペ HDF5 を入力にする。選別の実際の順序は、まず到達時の閉じた gripper 区間の正味 pull で 57 本を順位付けし、次に上位 12 本の**最終 head 画像で扉が開いていることを目視確認**し、その名前をコンパイラ入力として固定した、というものだった。したがってコンパイラ自身が成功ラベルを推論するわけではないが、選別も単なる「大きく引いた軌道」の自動採用ではない。各デモから以下を抽出する。
 
 - jaws が閉じ始めるフレーム
 - その 10 フレーム前の preclose
@@ -76,6 +79,28 @@
 ### 4. 終端は扉そのものから判定
 
 把持の成否だけでは扉が開いたかは分からない。実行後にもう一度頭部 RGB-D を取り、タグ登録後の深度を open / closed の保存済み端点と比較する。閉扉マーカーが見えないことだけを開扉の証拠にはしない。曖昧なら `unknown` として次の接触を送らない。
+
+## 当日の会話・ライブコード監査
+
+これは「最終コードがもっともらしい」ことの確認ではなく、当時 Codex が何を実機で試し、何を失敗として捨て、どの変更が commit になったかの照合である。時刻は JST。各 run directory は当時の CLI 実行と同じ UTC 時刻を含む。
+
+| 時刻 | 実際の試行と保存物 | 確認できた結果 | 現在の通常フローへの帰結 |
+| --- | --- | --- | --- |
+| 12:34–13:32 | 開爪の `retreat-orient`、`measured-lateral-step`、`demo_hover`、`demo_preclose`。例: `incubator_door_20260808T034702Z_retreat_orient/`、`...T043016Z_demo_hover/` | 開始時の手先を接触 anchor とみなした仮説は誤りだった。会話中の実測比較では成功 contact より約 93 mm 手前だった。また小さな相対指令を連ねると手首角が累積ドリフトした。 | 初期のライブ姿勢を contact 原点にしない。デモ由来 preclose を基準にし、現在の扉面 yaw と限定された視覚補正だけを載せる。これらの小ステップは診断用 CLI としては残るが、`run_open()` の通常経路では使わない。 |
+| 13:33–13:46 | 初回の `close-verify` → `proof-pull` → 135 点の `open-door`。`...T043325Z_close_verify_demo_contact/`、`...T043548Z_proof_pull_demo_contact/`、`...T043620Z_open_door_demo_contact/` | closed aperture は `0.4123`、5 mm 後は `0.3663` で proof は通った。しかし full pull の終端 aperture は `0.0034` で、端点画像も開扉を支持しなかった。つまり短い proof だけでは長い回転 pull の把持を保証しない。 | 一発で 135 点を流す方式を廃止。2 倍時間スケール、15 frame ごとの aperture checkpoint、空把持時の即停止・15 mm 退避を実装した。 |
+| 13:52–14:06 | 画像整合後の再把持と checkpoint pull。`...T044420Z_retry2_*`、`...T045946Z_retry4_*`、`...T050457Z_retry5_*` | retry 2 / 4 / 5 はそれぞれ close/proof で `0.407/0.365`、`0.323/0.319`、`0.293/0.291` と非空だったが、いずれもおおむね demo frame 171 で滑脱した。各 `*_open_slow_checkpointed/` は `before/` だけを残して終了しており、checkpoint による中断と一致する。 | aperture が残ることを「正しい recessed handle を挟んだ」証拠にしない。赤いラベルの無制限な反復補正、開始姿勢からの増分補正、直接 joint 微調整は通常経路に採用しなかった。後者は会話ログでも関節誤差 `0.178 rad` へ悪化して停止している。 |
+| 14:11–14:48 | 8 枚の head RGB-D から扉面を推定し、yaw 補正後に再把持。`incubator_door_20260808_retry6_yaw_aligned_*` | ユーザーが 13:34 に「黒い爪状部分は影」と明示したため、黒領域を根拠から除外した。平面の実測は約 `-5.33°`（後に基準 `-5.38°` として固定）。最終試行は proof まで把持を保ち、full pull 中に滑ったが、head 画像で開扉を確認して退避・開爪した。 | `2b6ccab` に残った核は、RGB-D 平面 yaw、影非依存の bounded visual alignment、fresh contact 姿勢を基準にした closure / proof / checkpoint である。なおこの時点の「開いた」は画像確認であり、次の自律 run の登録済み RGB-D endpoint 判定ほど強い証拠ではない。 |
+| 17:29–17:52 | 開扉軌道を逆走する閉扉と、Peacock の専用 close demo の比較。`incubator_door_close_20260808T083305Z_reverse_open/`、`...T084010Z_peacock_demo/`、`...T085056Z_peacock_raw/` | 逆走は開扉把持高さが約 15 cm 高く、扉を押せなかった。回転補正なしの raw `door_close_20260703_163736` は、開爪の低い押し軌道として閉扉した。 | `run_close()` は `close-door-demo` を使う。逆走用の診断 primitive は残っていても、通常の自律閉扉は呼ばない。これは `bfa9b7e` で固定された。 |
+| 19:01–19:08 | 新しい `run_incubator_door_autonomy.py open --execute` / `closed --execute` をその場で実行。`incubator_auto_open_20260808_demo*`、`incubator_auto_close_20260808_demo/` | 1 回目は native camera log と JSON の混在でオーケストレーターが結果を読めず停止し、retry は指令なしで停止した。`retry2` は open / close の両 endpoint を確認した。さらに状態 mask に腕が混ざる問題を実機を動かさず修正した。 | process JSON の最外側抽出と、`closed_vertical_plane` と開閉深度差の交差 mask を `f2149bb` / `283b913` に保存した。端点が曖昧なら追加 pull / push を送らない。 |
+
+### 会話から明示的に採用した制約
+
+- 黒い爪状の見え方、影、明度一致を contact / endpoint の根拠にしない。これは会話中のユーザー観察が直接の契機で、RGB-D 平面、機械 aperture、登録済み endpoint に置き換えた。
+- `0.41` 程度の閉じ残りと 5 mm proof は有用だが十分条件ではない。失敗した三つの長い pull がこの点を実証したため、full pull の途中にも aperture checkpoint を置いた。
+- 赤い EYELA ラベルは recessed handle そのものではなく、剛体親の補助特徴である。照明で成分が欠けた実験があったため、normal flow では最大 3 回・各 15 mm 以下の lateral correction に制限し、検出・収束しなければ contact を拒否する。
+- 手書きの増分座標列や直接 joint 微調整を、通常の成功条件にしてはいけない。現在の自律入口は `aligned-yaw-preclose → bounded visual-align → aligned-contact → close → proof → reverify → checkpointed open → recover → endpoint classify` のみを呼ぶ。
+
+したがって、現在も `run_incubator_door_demo.py` に残っている `measured-lateral-step`、`orientation-probe`、逆走 close は「当時の原因切り分けを再現する診断 primitive」であり、通常の `run_incubator_door_autonomy.py` が試行錯誤として繰り返す経路ではない。これはその場のコードを消して成功だけを後付けしたものではなく、失敗を検出するガードと、成功した経路を分離して commit した結果である。
 
 ## 実機の成功試行: 閉扉から開扉まで
 
