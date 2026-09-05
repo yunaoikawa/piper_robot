@@ -212,21 +212,6 @@ z
      <use xlink:href="#m830bba4100" x="934.2" y="259.222026" style="fill: #ffffff; stroke: #2b6cb0; stroke-width: 3"/>
     </g>
    </g>
-   <g id="line2d_20">
-    <defs>
-     <path id="m29cf6dd711" d="M -5 5
-L 5 -5
-M -5 -5
-L 5 5
-" style="stroke: #657786; stroke-width: 2"/>
-    </defs>
-    <g clip-path="url(#pa5036bf93c)">
-     <use xlink:href="#m29cf6dd711" x="253.8" y="231.000674" style="fill: #657786; stroke: #657786; stroke-width: 2"/>
-     <use xlink:href="#m29cf6dd711" x="480.6" y="229.506809" style="fill: #657786; stroke: #657786; stroke-width: 2"/>
-     <use xlink:href="#m29cf6dd711" x="707.4" y="243.300741" style="fill: #657786; stroke: #657786; stroke-width: 2"/>
-     <use xlink:href="#m29cf6dd711" x="934.2" y="243.300741" style="fill: #657786; stroke: #657786; stroke-width: 2"/>
-    </g>
-   </g>
    <g id="patch_3">
     <path d="M 140.4 401.930435
 L 140.4 118.8
@@ -244,28 +229,10 @@ L 1047.6 401.930435
     <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="480.6" y="176.204187" transform="rotate(-0 480.6 176.204187)">18.4</text>
    </g>
    <g id="text_14">
-    <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="663.4" y="266.222026" transform="rotate(-0 663.4 266.222026)">12.5</text>
+    <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="707.4" y="243.222026" transform="rotate(-0 707.4 243.222026)">12.5</text>
    </g>
    <g id="text_15">
-    <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="890.2" y="266.222026" transform="rotate(-0 890.2 266.222026)">12.5</text>
-   </g>
-   <g id="legend_1">
-    <g id="line2d_21">
-     <g>
-      <use xlink:href="#m830bba4100" x="821.190781" y="133.208281" style="fill: #ffffff; stroke: #2b6cb0; stroke-width: 3"/>
-     </g>
-    </g>
-    <g id="text_16">
-     <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start" x="840.990781" y="137.058281" transform="rotate(-0 840.990781 137.058281)">Earlier successful contact reference</text>
-    </g>
-    <g id="line2d_22">
-     <g>
-      <use xlink:href="#m29cf6dd711" x="821.190781" y="149.354219" style="fill: #657786; stroke: #657786; stroke-width: 2"/>
-     </g>
-    </g>
-    <g id="text_17">
-     <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start" x="840.990781" y="153.204219" transform="rotate(-0 840.990781 153.204219)">Alternate contact (sensitivity only)</text>
-    </g>
+    <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="934.2" y="243.222026" transform="rotate(-0 934.2 243.222026)">12.5</text>
    </g>
   </g>
   <g id="axes_2">
@@ -289,7 +256,7 @@ L 242.836697 633.114686
 z
 " clip-path="url(#p2c5558ad7f)" style="fill: #657786; stroke: #657786; stroke-width: 1.8; stroke-linecap: round"/>
    </g>
-   <g id="text_18">
+   <g id="text_16">
     <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(232.229197 495.063239)">D1</text>
     <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(179.731697 516.626989)">Relative demo</text>
    </g>
@@ -332,13 +299,13 @@ Q 145.601835 683.362087 152.884404 683.362087
 z
 " clip-path="url(#p2c5558ad7f)" style="fill: #ffffff; stroke: #2f855a; stroke-width: 1.35; stroke-linejoin: miter"/>
    </g>
-   <g id="text_19">
+   <g id="text_17">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="244.436697" y="556.709274" transform="rotate(-0 244.436697 556.709274)">Teleoperation data</text>
    </g>
-   <g id="text_20">
+   <g id="text_18">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="244.436697" y="611.070318" transform="rotate(-0 244.436697 611.070318)">Demo compiler</text>
    </g>
-   <g id="text_21">
+   <g id="text_19">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="244.436697" y="665.431361" transform="rotate(-0 244.436697 665.431361)">Contact-relative path</text>
    </g>
   </g>
@@ -363,7 +330,7 @@ L 475.878899 633.114686
 z
 " clip-path="url(#p76606ef247)" style="fill: #657786; stroke: #657786; stroke-width: 1.8; stroke-linecap: round"/>
    </g>
-   <g id="text_22">
+   <g id="text_20">
     <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(465.271399 495.063239)">D2</text>
     <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(396.096399 516.626989)">Checkpointed pull</text>
    </g>
@@ -406,13 +373,13 @@ Q 378.644037 683.362087 385.926606 683.362087
 z
 " clip-path="url(#p76606ef247)" style="fill: #ffffff; stroke: #2f855a; stroke-width: 1.35; stroke-linejoin: miter"/>
    </g>
-   <g id="text_23">
+   <g id="text_21">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="477.478899" y="556.709274" transform="rotate(-0 477.478899 556.709274)">Close + aperture gate</text>
    </g>
-   <g id="text_24">
+   <g id="text_22">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="477.478899" y="611.070318" transform="rotate(-0 477.478899 611.070318)">5 mm proof pull</text>
    </g>
-   <g id="text_25">
+   <g id="text_23">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="477.478899" y="665.431361" transform="rotate(-0 477.478899 665.431361)">Checkpoints + slip stop</text>
    </g>
   </g>
@@ -437,7 +404,7 @@ L 708.921101 633.114686
 z
 " clip-path="url(#p6c85af64ff)" style="fill: #657786; stroke: #657786; stroke-width: 1.8; stroke-linecap: round"/>
    </g>
-   <g id="text_26">
+   <g id="text_24">
     <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(698.313601 495.063239)">D3</text>
     <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(614.921101 516.626989)">Autonomy: before fix</text>
    </g>
@@ -480,13 +447,13 @@ Q 611.686239 683.362087 618.968807 683.362087
 z
 " clip-path="url(#p6c85af64ff)" style="fill: #ffffff; stroke: #2f855a; stroke-width: 1.35; stroke-linejoin: miter"/>
    </g>
-   <g id="text_27">
+   <g id="text_25">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="710.521101" y="556.709274" transform="rotate(-0 710.521101 556.709274)">RGB-D + aligned approach</text>
    </g>
-   <g id="text_28">
+   <g id="text_26">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="710.521101" y="611.070318" transform="rotate(-0 710.521101 611.070318)">Mixed camera / JSON logs</text>
    </g>
-   <g id="text_29">
+   <g id="text_27">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="710.521101" y="665.431361" transform="rotate(-0 710.521101 665.431361)">Parser stops workflow</text>
    </g>
   </g>
@@ -511,7 +478,7 @@ L 941.963303 633.114686
 z
 " clip-path="url(#pc2bcabe666)" style="fill: #657786; stroke: #657786; stroke-width: 1.8; stroke-linecap: round"/>
    </g>
-   <g id="text_30">
+   <g id="text_28">
     <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(931.355803 495.063239)">D4</text>
     <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(837.108303 516.626989)">Autonomy: parser fixed</text>
    </g>
@@ -554,27 +521,27 @@ Q 844.72844 683.362087 852.011009 683.362087
 z
 " clip-path="url(#pc2bcabe666)" style="fill: #ffffff; stroke: #2f855a; stroke-width: 1.35; stroke-linejoin: miter"/>
    </g>
-   <g id="text_31">
+   <g id="text_29">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="943.563303" y="556.709274" transform="rotate(-0 943.563303 556.709274)">Same approach pipeline</text>
    </g>
-   <g id="text_32">
+   <g id="text_30">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="943.563303" y="611.070318" transform="rotate(-0 943.563303 611.070318)">Robust JSON extraction</text>
    </g>
-   <g id="text_33">
+   <g id="text_31">
     <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="943.563303" y="665.431361" transform="rotate(-0 943.563303 665.431361)">Open + close completed</text>
    </g>
   </g>
-  <g id="text_34">
+  <g id="text_32">
    <text style="font-weight: 700; font-size: 25px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #17324d" x="140.4" y="42.756094" transform="rotate(-0 140.4 42.756094)">Door: estimated approach distance</text>
   </g>
-  <g id="text_35">
+  <g id="text_33">
    <text style="font-size: 15px; font-family: 'DejaVu Sans'; fill: #657786" transform="translate(140.4 62.143055)">EE-frame distance to recorded successful contact</text>
    <text style="font-size: 15px; font-family: 'DejaVu Sans'; fill: #657786" transform="translate(140.4 82.35907)">Fixed-door assumption; NOT fully RGB-D registered.</text>
   </g>
-  <g id="text_36">
-   <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #657786" x="140.4" y="741.312" transform="rotate(-0 140.4 741.312)">D4 resumes at D3's recorded pose: not independent trials. Gray crosses: reference sensitivity.</text>
+  <g id="text_34">
+   <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #657786" x="140.4" y="741.312" transform="rotate(-0 140.4 741.312)">D4 resumes at D3's recorded pose: not independent trials. Reference sensitivity is reported separately.</text>
   </g>
-  <g id="text_37">
+  <g id="text_35">
    <text style="font-size: 8.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #657786" x="81" y="777.744" transform="rotate(-0 81 777.744)">Display D1 / D2 / D3 / D4 = historical D1 / D2 / pre-parser-fix autonomy / D4. Unmeasured configurations omitted.</text>
   </g>
  </g>

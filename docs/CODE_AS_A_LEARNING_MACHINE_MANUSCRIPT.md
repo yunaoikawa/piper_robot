@@ -1461,6 +1461,19 @@ independent reset trials. Both approach reports were `motion_eligible: true`
 but `accepted: false` under the stricter Cartesian settling criterion; the
 measurements describe the achieved pose, not perfect target tracking.
 
+An additional audit of records between display D2 and D3 found intermediate
+measurements, but did not establish another comparable agent-configuration
+boundary. Retry-3 and retry-4 demonstrated preclose observations have conditional
+EE distances of 18.40 and 18.68 mm. The first preserved absolute-yaw approach
+(`retry6_absolute_yaw_minus9p91`) has a distance of 24.21 mm after prior orientation
+probes; it is not an uncorrected first approach of a new configuration. The three
+later `retry6_yaw_aligned_visual1/2/3` results are 19.92, 14.84, and 11.79 mm.
+These last observations can support a separate within-run correction sequence,
+not three new configuration points. They are not inserted into Figure 14c to
+make the configuration curve appear smoother. Reproduce the full candidate
+audit, including non-improving probes and image-detection failures, with
+`python docs/audit_door_intermediate_approaches.py`.
+
 ![Door initial approach image-position mismatch by configuration](assets/code_as_learning_machine/door_first_approach.png)
 
 **Figure 14a. Initial-approach image-feature mismatch.** One selected run per
@@ -1538,11 +1551,11 @@ stationarity of the door, accurate handle geometry, or submillimetre accuracy.
 No translation correction derived from this homography was applied to the
 robot coordinates.
 
-![Conditional EE-distance comparison with contact-reference sensitivity](assets/code_as_learning_machine/door_first_approach_distance.png)
+![Conditional EE-distance comparison using the earlier contact reference](assets/code_as_learning_machine/door_first_approach_distance.png)
 
 **Figure 14c. Estimated distance to a recorded successful contact.** Blue
-circles use the earlier contact reference; gray crosses show sensitivity to
-the later contact reference. The estimate assumes a fixed closed door and
+circles use the earlier contact reference; sensitivity to the later contact
+reference is retained in the table and evidence report, not plotted. The estimate assumes a fixed closed door and
 robot base, is not a fully RGB-D-registered handle distance, and does not
 replace the image-only diagnostic. The D1--D2 difference is not evidence of
 meaningful improvement. The orientation difference is already small at D3,

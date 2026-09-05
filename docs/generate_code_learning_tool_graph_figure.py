@@ -517,14 +517,10 @@ def make_door_approach_figure(*, distance=False):
     ax.plot(range(len(rows)), values, linestyle="none", marker="o", color=BLUE,
             markersize=12, markerfacecolor="white", markeredgewidth=3,
             label="Earlier successful contact reference")
-    if distance:
-        ax.plot(range(len(rows)), [r["alternate_contact_distance_mm"] for r in distance_rows],
-                linestyle="none", marker="x", color=GRAY, markersize=10, markeredgewidth=2,
-                label="Alternate contact (sensitivity only)")
-        ax.legend(loc="upper right", fontsize=11, frameon=False)
+    # Keep alternate-reference sensitivity in the evidence report and manuscript
+    # table; the main figure shows only the primary reference.
     for index, value in enumerate(values):
-        offset = (-44, -7) if distance and distance_rows[index]["alternate_contact_distance_mm"] > value else (0, 16)
-        ax.annotate(f"{value:.1f}" if distance else f"{value:.3f}", (index, value), xytext=offset,
+        ax.annotate(f"{value:.1f}" if distance else f"{value:.3f}", (index, value), xytext=(0, 16),
                     textcoords="offset points", ha="center", color=NAVY, fontsize=19, weight="bold")
     graphs = {
         "D1": ("Relative demo", ("Teleoperation data", "Demo compiler", "Contact-relative path")),
@@ -545,7 +541,7 @@ def make_door_approach_figure(*, distance=False):
                  edge=(BLUE, TEAL, GREEN)[i])
             if i < 2:
                 arrow(panel, (0.5, y-0.015), (0.5, y-0.065), width=1.8)
-    fig.text(0.13, 0.064, "D4 resumes at D3's recorded pose: not independent trials. Gray crosses: reference sensitivity." if distance else
+    fig.text(0.13, 0.064, "D4 resumes at D3's recorded pose: not independent trials. Reference sensitivity is reported separately." if distance else
              "D4 resumes at D3's pose; the parser fix enables completion, not better aiming.",
              color=GRAY, fontsize=12)
     return finish_figure(fig, stem="door_first_approach_distance" if distance else "door_first_approach", footnote=
