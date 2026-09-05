@@ -1345,36 +1345,42 @@ catalog-completed MJCF geometry, and a seven-probe local Jacobian supported the
 eventual side pinch and transfer. The release branch remains unverified and is
 therefore not turned into a placement-performance sample.
 
-For Door, let \(d_{open}\) and \(d_{closed}\) be the registered median metric-depth
-errors to endpoint references. For the opening configuration comparison, the
-score is
+For Door, let \(Z(p)\) be the observed metric depth after registration and
+\(Z_{open}(p)\) the open-reference depth. The opening configuration comparison
+uses the median absolute depth error over the valid shared dynamic mask \(M\):
 
 \[
-S_{open}=\frac{d_{closed}}{d_{open}+d_{closed}}.
+E_{open}=1000\,\operatorname{median}_{p\in M}|Z(p)-Z_{open}(p)|\quad\text{mm}.
 \]
 
-It lies in \([0,1]\), and higher means closer to the open endpoint. We applied
+Lower error means a closer depth match to the open reference. This is a
+camera-depth residual over visible surfaces, not the distance travelled by the
+door, the handle displacement, or an opening angle. We applied
 the current registered-depth implementation and hardened vertical-plane mask
 with the same settings and reference pair to all four measurements. The current
 deployment profile uses the D4 opening result as its own open reference; that
-reference was replaced for this analysis to avoid an automatic score of 1.
+reference was replaced for this analysis to avoid an automatic error of zero.
 The analysis instead uses the open-door observation recorded before closing
 experiments at 17:29 JST and the final closed calibration capture. Neither
 reference frame is one of the four scored images. These are distinct captures
 from the same development session, not independent experimental trials.
 
-The preserved D1 result scored 0.011, D2 scored 0.008, D3 scored 0.986, and D4
-scored 0.979. The small D1--D2 difference does not establish degradation; both
-outcomes remain classified as closed. The large transition coincides with the
+The preserved D1 result has a depth error of 257.8 mm, D2 256.8 mm, D3 3.9 mm,
+and D4 5.9 mm. These are computed residuals, without a calibrated uncertainty
+interval; their decimal precision does not establish millimetre-level physical
+accuracy. The small differences within D1--D2 or D3--D4 do not establish a
+performance ranking. D1 and D2 remain classified as closed. The large decrease
+in error coincides with the
 D3 configuration, which includes metric yaw alignment. D0 has no identified
 post-action RGB-D result. D5 changed the evaluator after the last physical
 opening without another independent execution. Both remain N/A.
 
-![Door-specific quantitative endpoint observations above its changing tool graph](assets/code_as_learning_machine/door_tool_graph_evolution.png)
+![Door depth error in millimetres by executable agent configuration](assets/code_as_learning_machine/door_tool_graph_evolution.png)
 
-**Figure 14. Door endpoint performance by executable agent configuration.**
-The same evaluator, mask, and reference pair score one selected post-action
-RGB-D observation per measured configuration. D1 is the first uninterrupted
+**Figure 14. Door depth error by executable agent configuration.**
+The vertical axis is median absolute depth error to the open reference in mm
+(lower is better). The same evaluator, mask, and reference pair assess one
+selected post-action RGB-D observation per measured configuration. D1 is the first uninterrupted
 contact-relative pull (which already included a short proof); D2 is the retry-2
 checkpointed-pull slip observation; D3 is the yaw-aligned result; D4 is the
 autonomous-opening endpoint. The lower panels emphasize the changes rather

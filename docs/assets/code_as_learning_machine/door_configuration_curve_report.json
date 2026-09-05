@@ -2,6 +2,9 @@
   "schema": "piper_robot.door_configuration_curve/v1",
   "goal": "open",
   "score_formula": "d_closed / (d_open + d_closed)",
+  "plotted_metric": "open_reference_median_absolute_depth_error_mm",
+  "depth_error_formula": "1000 * median(abs(registered_depth_m - open_reference_depth_m)) over valid dynamic mask",
+  "depth_error_interpretation": "Camera-depth mismatch to the open reference, not door travel distance or a measured opening angle; lower is closer to the reference.",
   "evaluation_policy": "one frozen hardened endpoint evaluator and an independent reference pair; no interpolation or zero imputation",
   "evaluator": {
     "profile": "src/configs/pasteur_incubator_door_demo.json",
@@ -54,6 +57,7 @@
       "classified_state": "closed",
       "relative_open_error": 0.9906191369606003,
       "relative_closed_error": 0.01125703564727955,
+      "open_reference_median_absolute_depth_error_mm": 257.8125,
       "goal_conditioned_endpoint_score": 0.011235955056179775,
       "registration_error_tag_lengths": 0.006747611755381514,
       "dynamic_point_count": 450
@@ -72,6 +76,7 @@
       "classified_state": "closed",
       "relative_open_error": 0.9868667917448405,
       "relative_closed_error": 0.0075046904315197,
+      "open_reference_median_absolute_depth_error_mm": 256.8359375,
       "goal_conditioned_endpoint_score": 0.007547169811320755,
       "registration_error_tag_lengths": 0.007800066205542001,
       "dynamic_point_count": 450
@@ -90,6 +95,7 @@
       "classified_state": "open",
       "relative_open_error": 0.0150093808630394,
       "relative_closed_error": 1.0431519699812384,
+      "open_reference_median_absolute_depth_error_mm": 3.90625,
       "goal_conditioned_endpoint_score": 0.9858156028368794,
       "registration_error_tag_lengths": 0.00559319911931076,
       "dynamic_point_count": 450
@@ -111,6 +117,7 @@
       "classified_state": "open",
       "relative_open_error": 0.0225140712945591,
       "relative_closed_error": 1.0675422138836772,
+      "open_reference_median_absolute_depth_error_mm": 5.859375,
       "goal_conditioned_endpoint_score": 0.9793459552495697,
       "registration_error_tag_lengths": 0.005036347346012168,
       "dynamic_point_count": 450

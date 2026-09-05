@@ -158,6 +158,7 @@ def main() -> None:
                 "classified_state": assessment["state"],
                 "relative_open_error": d_open,
                 "relative_closed_error": d_closed,
+                "open_reference_median_absolute_depth_error_mm": d_open * model.endpoint_separation_m * 1000.0,
                 "goal_conditioned_endpoint_score": d_closed / (d_open + d_closed),
                 "registration_error_tag_lengths": assessment["registration"][
                     "registration_error_tag_lengths"
@@ -171,6 +172,9 @@ def main() -> None:
         "schema": "piper_robot.door_configuration_curve/v1",
         "goal": "open",
         "score_formula": "d_closed / (d_open + d_closed)",
+        "plotted_metric": "open_reference_median_absolute_depth_error_mm",
+        "depth_error_formula": "1000 * median(abs(registered_depth_m - open_reference_depth_m)) over valid dynamic mask",
+        "depth_error_interpretation": "Camera-depth mismatch to the open reference, not door travel distance or a measured opening angle; lower is closer to the reference.",
         "evaluation_policy": (
             "one frozen hardened endpoint evaluator and an independent reference "
             "pair; no interpolation or zero imputation"

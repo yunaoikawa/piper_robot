@@ -349,50 +349,51 @@ def make_door_figure():
     configurations = report["configurations"]
     labels = [f"{item['stage']}\n{item['label']}" for item in configurations]
     measured_x = []
-    scores = []
+    errors_mm = []
     for index, item in enumerate(configurations):
         if item["status"] != "measured":
             continue
-        score = goal_conditioned_endpoint_score(item, "open")
-        if not np.isclose(score, item["goal_conditioned_endpoint_score"], atol=1e-12):
-            raise ValueError(f"stored Door score does not match errors for {item['stage']}")
+        error_mm = item["relative_open_error"] * report["evaluator"]["endpoint_separation_m"] * 1000.0
+        if not np.isfinite(error_mm) or error_mm < 0:
+            raise ValueError(f"invalid Door depth error for {item['stage']}")
+        if not np.isclose(error_mm, item["open_reference_median_absolute_depth_error_mm"], atol=1e-9):
+            raise ValueError(f"stored Door depth error does not match inputs for {item['stage']}")
         measured_x.append(index)
-        scores.append(score)
+        errors_mm.append(error_mm)
     fig, grid = figure_shell(
-        "Door task: endpoint performance by executable agent configuration",
-        "One RGB-D evaluator for D1-D4; reference frames differ from scored frames. Selected outcomes, same development session.",
+        "Door task: depth error by executable agent configuration",
+        "Distance from the open reference in registered depth (mm); lower is better. Selected outcomes, same development session.",
     )
     ax = fig.add_subplot(grid[0, :])
     x = np.arange(len(configurations), dtype=float)
     ax.set_xlim(-0.5, len(configurations) - 0.5)
-    ax.set_ylim(0, 1.05)
+    ax.set_ylim(0, max(errors_mm) * 1.25)
     ax.spines[["top", "right"]].set_visible(False)
     ax.spines[["left", "bottom"]].set_color(NAVY)
-    ax.set_ylabel("Open-endpoint score", fontsize=11, color=NAVY)
+    ax.set_ylabel("Median absolute depth error to open reference (mm)", fontsize=11, color=NAVY)
     ax.set_xlabel("Executable agent configuration", fontsize=10.5, color=NAVY)
     ax.set_xticks(x, labels, fontsize=9.5)
-    ax.set_yticks(np.linspace(0, 1, 6))
     ax.grid(color=GRID, linewidth=0.8, linestyle=":")
-    ax.plot(measured_x, scores, color=BLUE, linewidth=3, marker="o",
+    ax.plot(measured_x, errors_mm, color=BLUE, linewidth=3, marker="o",
             markersize=8, markerfacecolor="white", markeredgewidth=2.2)
-    for index, score in zip(measured_x, scores):
-        offset = 13 if score > 0.5 else 15 + (index % 2) * 13
-        ax.annotate(f"{score:.3f}", (index, score), xytext=(0, offset),
+    for index, error_mm in zip(measured_x, errors_mm):
+        ax.annotate(f"{error_mm:.1f} mm", (index, error_mm), xytext=(0, 13),
                     textcoords="offset points", ha="center", fontsize=9,
                     color=NAVY, weight="bold")
     for index, item in enumerate(configurations):
         if item["status"] == "measured":
             continue
-        ax.annotate("N/A", (index, 0.50), ha="center", va="center", fontsize=9.5,
+        missing_y = max(errors_mm) * 0.60
+        ax.annotate("N/A", (index, missing_y), ha="center", va="center", fontsize=9.5,
                     color=GRAY, weight="bold")
         note = "baseline outcome\nnot identified" if index == 0 else "no new execution\nafter hardening"
-        ax.annotate(note, (index, 0.50),
+        ax.annotate(note, (index, missing_y),
                     xytext=(0, -17), textcoords="offset points", ha="center",
                     va="top", fontsize=7.8, color=GRAY)
     ax.text(
         0.02, 0.93,
-        r"$S_{open}=d_{closed}/(d_{open}+d_{closed})$; "
-        r"independent open/closed references, fixed registration and plane mask",
+        r"$E_{open}=1000\,\mathrm{median}_{p\in M}|Z(p)-Z_{open}(p)|$; "
+        "fixed registration and plane mask",
         transform=ax.transAxes, fontsize=9.5, color=GRAY, va="top",
     )
     for column, draw in enumerate((door_d0, door_d1, door_d2, door_d3, door_d4, door_d5)):
