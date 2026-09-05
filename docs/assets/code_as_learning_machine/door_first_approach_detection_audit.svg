@@ -78,7 +78,7 @@ L 235.771465 199.430066
    </g>
    <g id="text_1">
     <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(197.396435 46.482406)">D1</text>
-    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(106.832919 58.8)">position=0.142; log-area=0.006</text>
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(126.649247 58.8)">position mismatch=0.142</text>
    </g>
   </g>
   <g id="axes_2">
@@ -112,7 +112,7 @@ L 688.193283 199.430066
    </g>
    <g id="text_2">
     <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(649.818253 46.482406)">D2</text>
-    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(559.254737 58.8)">position=0.138; log-area=0.213</text>
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(579.071065 58.8)">position mismatch=0.138</text>
    </g>
   </g>
   <g id="axes_3">
@@ -146,7 +146,7 @@ L 235.771465 529.320975
    </g>
    <g id="text_3">
     <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(197.396435 376.373315)">D4</text>
-    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(106.832919 388.690909)">position=0.062; log-area=0.572</text>
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(126.649247 388.690909)">position mismatch=0.062</text>
    </g>
   </g>
   <g id="axes_4">
@@ -180,7 +180,7 @@ L 688.193283 529.320975
    </g>
    <g id="text_4">
     <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(548.833956 376.373315)">D4 after one correction (not initial)</text>
-    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(559.254737 388.690909)">position=0.042; log-area=0.041</text>
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(579.071065 388.690909)">position mismatch=0.042</text>
    </g>
   </g>
   <g id="text_5">

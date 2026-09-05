@@ -1417,23 +1417,26 @@ change in grasp quality. End-effector command-tracking error is deliberately
 not used: tracking an incorrectly aimed command well does not imply a good
 approach.
 
-| Configuration | Selected initial-preclose image | Position mismatch \(E_{uv}\) | Absolute log-area mismatch |
-| --- | --- | ---: | ---: |
-| D0 | not identified | N/A | N/A |
-| D1 | `20260808T043120Z_demo_preclose/after/right.png` | 0.141824 | 0.006007 |
-| D2 | `20260808T044056Z_retry_preclose_registration/after/right.png` | 0.138008 | 0.213396 |
-| D3 | uncorrected first approach not established | N/A | N/A |
-| D4 | `03_aligned-yaw-preclose/motion/after/right.png` | 0.061900 | 0.571810 |
-| D5 | no new physical execution | N/A | N/A |
+| Configuration | Selected initial-preclose image | Position mismatch \(E_{uv}\) |
+| --- | --- | ---: |
+| D0 | not identified | N/A |
+| D1 | `20260808T043120Z_demo_preclose/after/right.png` | 0.141824 |
+| D2 | `20260808T044056Z_retry_preclose_registration/after/right.png` | 0.138008 |
+| D3 | uncorrected first approach not established | N/A |
+| D4 | `03_aligned-yaw-preclose/motion/after/right.png` | 0.061900 |
+| D5 | no new physical execution | N/A |
 
-The log-area diagnostic is
-\(E_A=|\log(A/(WH))-\overline{\log A_{norm,goal}}|\), using the same detected
-label and compiled reference. It is reported separately rather than combined
-with position into an arbitrary weighted score. D4 has a smaller centroid
-residual but a larger scale residual. This directly limits an interpretation
-that the whole grasp pose improved monotonically. Neither the tiny D1--D2
-difference nor the printed decimal precision establishes a reliable ranking
-without repeated trials and uncertainty estimates.
+We removed the log-area performance panel after a source-image audit found
+segmentation instability. D4's initial red mask split into components of 280
+and 109 pixels, of which the detector retained only the largest. About 1.51
+seconds later, before the correction move and at the identical logged
+end-effector pose, it detected 452 pixels instead. Thus the apparent scale
+change cannot be attributed to the correction motion. Raw area diagnostics
+remain in the evidence snapshot for audit, not as a performance axis. The
+centroid metric can also be affected by partial detection; removing the area
+panel does not establish that the remaining position metric is noise-free.
+Neither the tiny D1--D2 difference nor the printed decimal precision establishes
+a reliable ranking without repeated trials and uncertainty estimates.
 
 D3 is missing because orientation probes, restored poses, and manual yaw
 selection precede its final visual-alignment sequence. The `before` image of
@@ -1442,11 +1445,12 @@ journal explicitly identifies attempt 1, visual-check step 0. Its approach
 already reuses the successful D3 anchor and incorporates live door-plane yaw;
 the result therefore describes initialization in the same scene, not
 generalization to an unseen object placement. The following correction
-reduces D4's position mismatch from 0.061900 to 0.042177 and log-area mismatch
-from 0.571810 to 0.041444. That is a **within-run** observation, not another
-configuration or another initial-approach sample.
+is followed by a position mismatch of 0.042177, versus 0.061900 in the initial
+image. That is a **within-run** observation, not another configuration or
+another initial-approach sample; image-to-image detector variation means the
+whole difference should not be attributed to the commanded correction.
 
-![Door initial approach by configuration, with a separate scale diagnostic](assets/code_as_learning_machine/door_first_approach.png)
+![Door initial approach image-position mismatch by configuration](assets/code_as_learning_machine/door_first_approach.png)
 
 **Figure 14a. Initial-approach image-feature mismatch.** One selected run per
 measured configuration, evaluated with the same detector and successful-demo

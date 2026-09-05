@@ -482,29 +482,26 @@ def make_door_approach_figure():
         "One selected preclose per configuration; rigid-door label proxy, NOT handle pose or grasp success. No smoothed curve.",
     )
     labels = [r["stage"] for r in rows]
-    for ax, key, title, ylabel, color in (
-        (fig.add_subplot(grid[0, :4]), "uv_error", "A  Label-position mismatch", "Normalized image-position error (lower is closer)", BLUE),
-        (fig.add_subplot(grid[0, 4:]), "absolute_log_area_error", "B  Scale diagnostic", "Absolute log-area error", ORANGE),
-    ):
-        ax.set_title(title, loc="left", color=NAVY, fontsize=11, pad=12)
-        ax.spines[["top", "right"]].set_visible(False)
-        ax.set_xlim(-0.5, 5.5)
-        ax.set_xticks(range(6), labels)
-        ax.set_xlabel("Executable agent configuration", color=NAVY)
-        ax.set_ylabel(ylabel, color=NAVY, fontsize=10)
-        ax.grid(color=GRID, linestyle=":")
-        values = [r[key] if r["status"] == "measured" else np.nan for r in rows]
-        ax.set_ylim(0, np.nanmax(values) * 1.35)
-        # Markers only: missing configurations and single observations must not
-        # become an interpolated or apparently smooth learning curve.
-        ax.plot(range(6), values, linestyle="none", marker="o", color=color,
-                markersize=8, markerfacecolor="white", markeredgewidth=2)
-        for index, value in enumerate(values):
-            if np.isfinite(value):
-                ax.annotate(f"{value:.3f}", (index, value), xytext=(0, 12),
-                            textcoords="offset points", ha="center", color=NAVY, fontsize=9)
-            else:
-                ax.text(index, np.nanmax(values) * 0.6, "N/A", ha="center", color=GRAY, fontsize=9)
+    ax = fig.add_subplot(grid[0, :])
+    ax.set_title("Label-position mismatch to successful-demo mean", loc="left", color=NAVY, fontsize=11, pad=12)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlim(-0.5, 5.5)
+    ax.set_xticks(range(6), labels)
+    ax.set_xlabel("Executable agent configuration", color=NAVY)
+    ax.set_ylabel("Normalized image-position error (lower is closer)", color=NAVY, fontsize=10)
+    ax.grid(color=GRID, linestyle=":")
+    values = [r["uv_error"] if r["status"] == "measured" else np.nan for r in rows]
+    ax.set_ylim(0, np.nanmax(values) * 1.35)
+    # Markers only: missing configurations and single observations must not
+    # become an interpolated or apparently smooth learning curve.
+    ax.plot(range(6), values, linestyle="none", marker="o", color=BLUE,
+            markersize=8, markerfacecolor="white", markeredgewidth=2)
+    for index, value in enumerate(values):
+        if np.isfinite(value):
+            ax.annotate(f"{value:.3f}", (index, value), xytext=(0, 12),
+                        textcoords="offset points", ha="center", color=NAVY, fontsize=9)
+        else:
+            ax.text(index, np.nanmax(values) * 0.6, "N/A", ha="center", color=GRAY, fontsize=9)
     for column, draw in enumerate((door_d0, door_d1, door_d2, door_d3, door_d4, door_d5)):
         draw(fig.add_subplot(grid[1, column]))
     fig.text(0.077, 0.44,
@@ -534,7 +531,7 @@ def make_door_approach_audit():
         ax.plot(goal[0]*width, goal[1]*height, "+", color="#ffdd33", markersize=15, markeredgewidth=2)
         ax.plot([feature[0]*width, goal[0]*width], [feature[1]*height, goal[1]*height],
                 color="#ffdd33", linewidth=1.5, linestyle="--")
-        ax.set_title(f"{row['stage']}\nposition={row['uv_error']:.3f}; log-area={row['absolute_log_area_error']:.3f}",
+        ax.set_title(f"{row['stage']}\nposition mismatch={row['uv_error']:.3f}",
                      fontsize=11, color=NAVY)
         ax.axis("off")
     fig.suptitle("Detection audit: green = red-label detection; yellow + = successful-demo feature mean",
