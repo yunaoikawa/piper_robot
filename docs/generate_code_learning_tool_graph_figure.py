@@ -10,11 +10,12 @@ points on the quantitative axes.
 from __future__ import annotations
 
 from pathlib import Path
+import argparse
 import hashlib
 import json
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
 import numpy as np
 
 
@@ -323,10 +324,10 @@ def figure_shell(title, subtitle, count=6):
     return fig, grid
 
 
-def finish_figure(fig, *, stem):
+def finish_figure(fig, *, stem, footnote=None):
     fig.text(
         0.075, 0.018,
-        "Upper panels are computed from preserved observations; lower panels show the changing executable graph and are not additional samples.",
+        footnote or "Upper panels are computed from preserved observations; lower panels show the changing executable graph and are not additional samples.",
         ha="left", fontsize=8.2, color=GRAY,
     )
     OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -472,7 +473,82 @@ def make_cap_figure():
     return finish_figure(fig, stem="cap_tool_graph_evolution")
 
 
+def make_door_approach_figure():
+    report = load_json("docs/assets/code_as_learning_machine/door_first_approach_report.json")
+    validate_available_source_hashes(report)
+    rows = report["configurations"]
+    fig, grid = figure_shell(
+        "Door task: initial aiming before additional visual correction",
+        "One selected preclose per configuration; rigid-door label proxy, NOT handle pose or grasp success. No smoothed curve.",
+    )
+    labels = [r["stage"] for r in rows]
+    for ax, key, title, ylabel, color in (
+        (fig.add_subplot(grid[0, :4]), "uv_error", "A  Label-position mismatch", "Normalized image-position error (lower is closer)", BLUE),
+        (fig.add_subplot(grid[0, 4:]), "absolute_log_area_error", "B  Scale diagnostic", "Absolute log-area error", ORANGE),
+    ):
+        ax.set_title(title, loc="left", color=NAVY, fontsize=11, pad=12)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_xlim(-0.5, 5.5)
+        ax.set_xticks(range(6), labels)
+        ax.set_xlabel("Executable agent configuration", color=NAVY)
+        ax.set_ylabel(ylabel, color=NAVY, fontsize=10)
+        ax.grid(color=GRID, linestyle=":")
+        values = [r[key] if r["status"] == "measured" else np.nan for r in rows]
+        ax.set_ylim(0, np.nanmax(values) * 1.35)
+        # Markers only: missing configurations and single observations must not
+        # become an interpolated or apparently smooth learning curve.
+        ax.plot(range(6), values, linestyle="none", marker="o", color=color,
+                markersize=8, markerfacecolor="white", markeredgewidth=2)
+        for index, value in enumerate(values):
+            if np.isfinite(value):
+                ax.annotate(f"{value:.3f}", (index, value), xytext=(0, 12),
+                            textcoords="offset points", ha="center", color=NAVY, fontsize=9)
+            else:
+                ax.text(index, np.nanmax(values) * 0.6, "N/A", ha="center", color=GRAY, fontsize=9)
+    for column, draw in enumerate((door_d0, door_d1, door_d2, door_d3, door_d4, door_d5)):
+        draw(fig.add_subplot(grid[1, column]))
+    fig.text(0.077, 0.44,
+             "D3: first uncorrected approach ambiguous after manual yaw search.  D4: starts from the successful D3 anchor, not an unseen placement.",
+             color=GRAY, fontsize=9)
+    return finish_figure(fig, stem="door_first_approach")
+
+
+def make_door_approach_audit():
+    report = load_json("docs/assets/code_as_learning_machine/door_first_approach_report.json")
+    rows = [r for r in report["configurations"] if r["status"] == "measured"]
+    corrected = report["within_run_correction"]["after_one_correction"]
+    rows.append({**corrected, "stage": "D4 after one correction (not initial)"})
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), facecolor="white")
+    goal = report["evaluator"]["goal_feature_uv_log_area"]
+    for ax, row in zip(axes.flat, rows):
+        image_source = next(s for s in row["sources"] if s["source_path"].endswith("right.png"))
+        path = REPOSITORY / image_source["source_path"]
+        if not path.exists():
+            raise FileNotFoundError(f"Audit montage requires the raw frame: {path}")
+        ax.imshow(plt.imread(path))
+        height, width = row["image_shape_hw"]
+        x, y, w, h = row["detection"]["box_xywh"]
+        feature = row["detection"]["feature_uv_log_area"]
+        ax.add_patch(Rectangle((x, y), w, h, fill=False, edgecolor="#00ffbb", linewidth=2))
+        ax.plot(feature[0]*width, feature[1]*height, "o", color="#00ffbb", markersize=5)
+        ax.plot(goal[0]*width, goal[1]*height, "+", color="#ffdd33", markersize=15, markeredgewidth=2)
+        ax.plot([feature[0]*width, goal[0]*width], [feature[1]*height, goal[1]*height],
+                color="#ffdd33", linewidth=1.5, linestyle="--")
+        ax.set_title(f"{row['stage']}\nposition={row['uv_error']:.3f}; log-area={row['absolute_log_area_error']:.3f}",
+                     fontsize=11, color=NAVY)
+        ax.axis("off")
+    fig.suptitle("Detection audit: green = red-label detection; yellow + = successful-demo feature mean",
+                 fontsize=12, color=NAVY)
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.91, bottom=0.07, hspace=0.2)
+    return finish_figure(fig, stem="door_first_approach_detection_audit", footnote=
+                         "Same detector and reference on all frames. Label alignment is not direct handle-pose measurement; the fourth panel is a within-run diagnostic.")
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--include-source-audit", action="store_true",
+                        help="Also render the detection montage (requires local raw right-camera frames)")
+    args = parser.parse_args()
     evidence = load_json(
         "docs/assets/code_as_learning_machine/quantitative_figure_evidence.json"
     )
@@ -488,6 +564,9 @@ def main():
     outputs = []
     outputs.extend(make_door_figure())
     outputs.extend(make_cap_figure())
+    outputs.extend(make_door_approach_figure())
+    if args.include_source_audit:
+        outputs.extend(make_door_approach_audit())
     for path in outputs:
         print(path)
 

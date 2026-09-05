@@ -1389,6 +1389,85 @@ This retrospective comparison describes observed endpoints, not success
 probabilities or controlled ablation effects. Parameters, contact conditions,
 and human interventions also changed during development.
 
+#### Initial-approach quality as a proximal diagnostic
+
+Endpoint depth changes mainly when the door actually opens. To measure an
+earlier part of the behavior, we also re-evaluated the initial preclose of each
+identifiable selected run, before its subsequent image-based correction. This
+is **not** the first movement in the entire development history. The selected
+runs match the D1, D2, and D4 runs in the endpoint comparison; earlier manual
+experiments and unsuccessful retries are not converted into additional agent
+configurations.
+
+The fixed evaluator detects the red EYELA label on the rigid door parent in
+the right-wrist image. Its target is the existing compiler's mean feature at
+the close frame of twelve verified successful teleoperation demonstrations.
+For image width \(W\), height \(H\), and label centroid \((u,v)\), we report
+
+\[
+E_{uv}=\sqrt{(u/W-\bar u_{goal})^2+(v/H-\bar v_{goal})^2}.
+\]
+
+This dimensionless image-position mismatch is a proximal diagnostic, **not**
+a handle-center error in millimetres, a 3-D pose error, or a grasp-success
+probability. In particular, the target comes from close frames while the
+evaluated images precede contact. Stand-off, orientation, viewpoint,
+segmentation, and occlusion can change the feature without an equivalent
+change in grasp quality. End-effector command-tracking error is deliberately
+not used: tracking an incorrectly aimed command well does not imply a good
+approach.
+
+| Configuration | Selected initial-preclose image | Position mismatch \(E_{uv}\) | Absolute log-area mismatch |
+| --- | --- | ---: | ---: |
+| D0 | not identified | N/A | N/A |
+| D1 | `20260808T043120Z_demo_preclose/after/right.png` | 0.141824 | 0.006007 |
+| D2 | `20260808T044056Z_retry_preclose_registration/after/right.png` | 0.138008 | 0.213396 |
+| D3 | uncorrected first approach not established | N/A | N/A |
+| D4 | `03_aligned-yaw-preclose/motion/after/right.png` | 0.061900 | 0.571810 |
+| D5 | no new physical execution | N/A | N/A |
+
+The log-area diagnostic is
+\(E_A=|\log(A/(WH))-\overline{\log A_{norm,goal}}|\), using the same detected
+label and compiled reference. It is reported separately rather than combined
+with position into an arbitrary weighted score. D4 has a smaller centroid
+residual but a larger scale residual. This directly limits an interpretation
+that the whole grasp pose improved monotonically. Neither the tiny D1--D2
+difference nor the printed decimal precision establishes a reliable ranking
+without repeated trials and uncertainty estimates.
+
+D3 is missing because orientation probes, restored poses, and manual yaw
+selection precede its final visual-alignment sequence. The `before` image of
+that sequence must not be relabeled as an uncorrected first approach. D4's
+journal explicitly identifies attempt 1, visual-check step 0. Its approach
+already reuses the successful D3 anchor and incorporates live door-plane yaw;
+the result therefore describes initialization in the same scene, not
+generalization to an unseen object placement. The following correction
+reduces D4's position mismatch from 0.061900 to 0.042177 and log-area mismatch
+from 0.571810 to 0.041444. That is a **within-run** observation, not another
+configuration or another initial-approach sample.
+
+![Door initial approach by configuration, with a separate scale diagnostic](assets/code_as_learning_machine/door_first_approach.png)
+
+**Figure 14a. Initial-approach image-feature mismatch.** One selected run per
+measured configuration, evaluated with the same detector and successful-demo
+feature mean. Markers are not interpolated across missing configurations.
+This diagnostic complements the endpoint result in Figure 14; it does not
+replace task success or establish a smooth learning curve.
+
+![Audit of the label detections and successful-demo feature location](assets/code_as_learning_machine/door_first_approach_detection_audit.png)
+
+**Figure 14b. Source-image audit.** Green boxes/points show the detected red
+label; yellow crosses show the successful-demo feature mean. D1, D2, and D4
+initial images select the intended label rather than the dark shadow or blue
+jaws. The fourth image shows D4 after one correction and is explicitly excluded
+from the initial-approach comparison. The full source paths, SHA-256 hashes,
+stage-selection reasons, formulas, and separate residuals are preserved in
+`docs/assets/code_as_learning_machine/door_first_approach_report.json` and can
+be recomputed with `python docs/evaluate_door_first_approach.py` without
+connecting to the robot. Generate the plots and source-image audit with
+`python docs/generate_code_learning_tool_graph_figure.py --include-source-audit`;
+omit the flag when only the tracked evidence snapshot is available.
+
 Time to verified opening is a useful additional metric, but the preserved
 timing scopes differ. The D1 before/after observations bracket 8.66 seconds of
 the long-pull stage and end with the door closed. The complete D4 autonomous

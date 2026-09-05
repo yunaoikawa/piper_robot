@@ -1,0 +1,285 @@
+{
+  "schema": "door_first_approach_retrospective/v1",
+  "definition": "Feature residual at the initial preclose of each selected run, before subsequent image-based correction; not the first move of the entire development history.",
+  "evaluator": {
+    "position_formula": "sqrt((u/W-goal_u)^2 + (v/H-goal_v)^2)",
+    "scale_formula": "abs(log(A/(W*H)) - goal_log_area)",
+    "units": "dimensionless; smaller is closer to the demonstration feature",
+    "settings": {
+      "type": "largest_configured_red_component_on_rigid_door_parent",
+      "hsv_ranges": [
+        [
+          [
+            0,
+            35,
+            35
+          ],
+          [
+            16,
+            255,
+            255
+          ]
+        ],
+        [
+          [
+            165,
+            35,
+            35
+          ],
+          [
+            179,
+            255,
+            255
+          ]
+        ]
+      ],
+      "normalized_x_range": [
+        0.35,
+        0.85
+      ],
+      "normalized_y_range": [
+        0.1,
+        0.8
+      ],
+      "minimum_area_px": 25,
+      "minimum_width_px": 8,
+      "minimum_height_px": 4,
+      "training_window_frames": 10,
+      "ridge": 1e-05,
+      "lateral_gain": 0.5,
+      "maximum_lateral_step_m": 0.015,
+      "lateral_duration_s": 0.7
+    },
+    "goal_feature_uv_log_area": [
+      0.5810159003097191,
+      0.4886841037492051,
+      -6.4286551107058685
+    ],
+    "goal_feature_std": [
+      0.03136801982783897,
+      0.026956317527431856,
+      0.16032377794620645
+    ],
+    "reference_definition": "Mean red-label feature at the close frame of 12 verified successful teleoperation demonstrations, NOT the handle center or a preclose-specific pose.",
+    "sources": [
+      {
+        "source_path": "data/reference/pasteur/incubator/compiled_door_open_v1.json",
+        "source_sha256": "e71233cc2381fd0850de651a025d68e93b22b443b76310a6a87897365d2f783a"
+      },
+      {
+        "source_path": "src/compile_incubator_door_demos.py",
+        "source_sha256": "2667069ac8d5d2646af575fd2782577202051f3f31d459ae01928650f2ff22dd"
+      },
+      {
+        "source_path": "rollout/incubator_door_visual.py",
+        "source_sha256": "9fdd6c0c1fdd2e96c323f4ac3dd265a8612360396da7fe1c92453d2244daf0d8"
+      }
+    ]
+  },
+  "limitations": [
+    "One selected run per measured configuration; no controlled ablation, common start pose, or uncertainty estimate.",
+    "D4 reuses the successful D3 anchor. This measures initialization on the same scene, not generalization to unseen placements.",
+    "Label centroid is an indirect parent-feature proxy; translation, rotation, viewpoint, occlusion, and segmentation can all change it.",
+    "The goal is a close-frame mean whereas observations precede contact; do not interpret the residual as true grasp-pose error.",
+    "Log-area is reported separately, not combined into a weighted performance score or converted to depth.",
+    "Initial image detections were visually checked on D1, D2, D4: each box selects the red EYELA label, not the shadow or jaws.",
+    "Unknown configurations remain missing; no interpolation or smoothing across them."
+  ],
+  "configurations": [
+    {
+      "stage": "D0",
+      "label": "Generic replay",
+      "missing_reason": "No identified initial preclose for the generic baseline.",
+      "status": "not_identified"
+    },
+    {
+      "stage": "D1",
+      "label": "Relative demo",
+      "motion": "data/runs/pasteur/incubator_door_20260808T043120Z_demo_preclose/demo_preclose.json",
+      "boundary_evidence": "Selected D1 run: absolute demo-preclose after hover, before demo-contact at 04:33:01 UTC. Earlier development probes are not part of this selected-run measure.",
+      "status": "measured",
+      "uv_error": 0.14182436641655755,
+      "absolute_log_area_error": 0.006006926201733265,
+      "motion_stage": "demo-preclose",
+      "timestamp_s": 1786163486.4738302,
+      "image_shape_hw": [
+        480,
+        640
+      ],
+      "detection": {
+        "box_xywh": [
+          431,
+          255,
+          37,
+          21
+        ],
+        "area_px": 499,
+        "feature_uv_log_area": [
+          0.7048597194388778,
+          0.5577989311957248,
+          -6.422648184504135
+        ]
+      },
+      "sources": [
+        {
+          "source_path": "data/runs/pasteur/incubator_door_20260808T043120Z_demo_preclose/demo_preclose.json",
+          "source_sha256": "ca484d5b9caafbfdbb4b14f49178ea4d7e81ca9a2a34f226a7b6e7892ffd5dea"
+        },
+        {
+          "source_path": "data/runs/pasteur/incubator_door_20260808T043120Z_demo_preclose/after/right.png",
+          "source_sha256": "f71bfed1e56f9f17f0ab7f92e109b598bbfaad6c52837a1ca8be1fa66d532806"
+        },
+        {
+          "source_path": "data/runs/pasteur/incubator_door_20260808T043120Z_demo_preclose/after/observation.json",
+          "source_sha256": "effda1492f9c93e1fe0086601ac6cbee05846e070cc469ea7b4bcbf372ee9cbf"
+        }
+      ]
+    },
+    {
+      "stage": "D2",
+      "label": "Checkpointed pull",
+      "motion": "data/runs/pasteur/incubator_door_20260808T044056Z_retry_preclose_registration/demo_preclose.json",
+      "boundary_evidence": "Selected retry-2 run: demo-preclose after retry-hover, before retry2-demo-contact at 04:44:02 UTC. Not an independent reset trial.",
+      "status": "measured",
+      "uv_error": 0.13800826842542058,
+      "absolute_log_area_error": 0.2133957585973567,
+      "motion_stage": "demo-preclose",
+      "timestamp_s": 1786164062.549636,
+      "image_shape_hw": [
+        480,
+        640
+      ],
+      "detection": {
+        "box_xywh": [
+          433,
+          247,
+          40,
+          25
+        ],
+        "area_px": 614,
+        "feature_uv_log_area": [
+          0.7093622760586319,
+          0.539413680781759,
+          -6.215259352108512
+        ]
+      },
+      "sources": [
+        {
+          "source_path": "data/runs/pasteur/incubator_door_20260808T044056Z_retry_preclose_registration/demo_preclose.json",
+          "source_sha256": "ca1ea087cd3e7c0ff7d313f50ed935343c9ce3558581a2eaf07a72604b4d8b6b"
+        },
+        {
+          "source_path": "data/runs/pasteur/incubator_door_20260808T044056Z_retry_preclose_registration/after/right.png",
+          "source_sha256": "2bc4fffc5daddca47c3b922eff344eed270a3d0680fe7e2c02597feedc154de7"
+        },
+        {
+          "source_path": "data/runs/pasteur/incubator_door_20260808T044056Z_retry_preclose_registration/after/observation.json",
+          "source_sha256": "2258b680e81f9287c4a0d3b5f65520e9344e3f40db0020aa42df29b54294ebda"
+        }
+      ]
+    },
+    {
+      "stage": "D3",
+      "label": "Metric alignment",
+      "missing_reason": "Yaw probes, restored preclose poses, and manual orientation selection precede the final visual-alignment sequence; a comparable uncorrected first approach is not established.",
+      "rejected_surrogate": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_visual1/before/right.png",
+      "status": "not_identified"
+    },
+    {
+      "stage": "D4",
+      "label": "Autonomous endpoints",
+      "motion": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/03_aligned-yaw-preclose/motion/aligned_yaw_preclose.json",
+      "boundary_evidence": "Journal attempt=1, visual-check step=0, after aligned-yaw-preclose and before any visual-align-step. Uses the successful D3 preclose anchor plus live plane-yaw correction.",
+      "status": "measured",
+      "uv_error": 0.06189977776402072,
+      "absolute_log_area_error": 0.5718095663805363,
+      "motion_stage": "aligned-yaw-preclose",
+      "timestamp_s": 1786183411.051781,
+      "image_shape_hw": [
+        480,
+        640
+      ],
+      "detection": {
+        "box_xywh": [
+          325,
+          211,
+          27,
+          14
+        ],
+        "area_px": 280,
+        "feature_uv_log_area": [
+          0.5293415178571428,
+          0.4546056547619048,
+          -7.000464677086405
+        ]
+      },
+      "sources": [
+        {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/03_aligned-yaw-preclose/motion/aligned_yaw_preclose.json",
+          "source_sha256": "239e9a905fb85c055a3c3238e9d6625122c68f7588d84174ceee133f38b5f6fb"
+        },
+        {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/03_aligned-yaw-preclose/motion/after/right.png",
+          "source_sha256": "f94292e9b621da5108fd82355b43ca1f449c18d25febeea338ba4e376b88bbb3"
+        },
+        {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/03_aligned-yaw-preclose/motion/after/observation.json",
+          "source_sha256": "268d9a8e7046b2817838e975081b44647094117a25ff6ea59a64ec54b447db8c"
+        }
+      ]
+    },
+    {
+      "stage": "D5",
+      "label": "Evidence hardening",
+      "missing_reason": "No new physical opening after evaluator hardening.",
+      "status": "not_identified"
+    }
+  ],
+  "within_run_correction": {
+    "stage": "D4",
+    "role": "Diagnostic only; NOT another configuration or an initial approach",
+    "journal": {
+      "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/journal.json",
+      "source_sha256": "b5cb04a30bfc1a0adcfc761b4db5cd6d1e416fc3d0ab6316e6d5f00e558af730"
+    },
+    "after_one_correction": {
+      "status": "measured",
+      "uv_error": 0.04217656943534874,
+      "absolute_log_area_error": 0.04144370495864358,
+      "motion_stage": "visual-align-step",
+      "timestamp_s": 1786183417.3966784,
+      "image_shape_hw": [
+        480,
+        640
+      ],
+      "detection": {
+        "box_xywh": [
+          335,
+          209,
+          37,
+          21
+        ],
+        "area_px": 517,
+        "feature_uv_log_area": [
+          0.5515262330754351,
+          0.45853078658929725,
+          -6.387211405747225
+        ]
+      },
+      "sources": [
+        {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/04_visual-align-step/motion/visual_alignment.json",
+          "source_sha256": "36d7f7dac3a0fb39b2460d66376394168e24ec61b523fceb1c4394047c028965"
+        },
+        {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/04_visual-align-step/motion/after/right.png",
+          "source_sha256": "56e93d87f75a00c6601c30626a1cc982a75c8d2d0ba53bdc2397eb58839777fe"
+        },
+        {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/04_visual-align-step/motion/after/observation.json",
+          "source_sha256": "bb07c95e4d0f137fb79230a0cb6b1ef38dbd4c5df232864e2a7ef03b841acee0"
+        }
+      ]
+    }
+  }
+}
