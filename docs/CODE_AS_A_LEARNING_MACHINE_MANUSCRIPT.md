@@ -1395,11 +1395,12 @@ Endpoint depth changes mainly when the door actually opens. To measure an
 earlier part of the behavior, we also re-evaluated the initial preclose of each
 identifiable selected run, before its subsequent image-based correction. This
 is **not** the first movement in the entire development history. The selected
-runs match the historical D1, D2, and D4 runs in the endpoint comparison; earlier manual
-experiments and unsuccessful retries are not converted into additional agent
-configurations. For the compact approach figure only, these measured runs are
-renumbered D1, D2, and D3. Historical IDs remain unchanged in the raw evidence
-and endpoint figure; unmeasured configurations are omitted from this display.
+runs include historical D1 and D2 plus the autonomous runs before and after
+the result-parser fix. For the compact approach figure these are D1--D4:
+display D3 is the 19:01 parser-failed run, and display D4 is the 19:03 retry
+that reached an open endpoint. The historical endpoint figure remains
+unchanged; unmeasured configurations are omitted from the approach display.
+The added configuration change concerns orchestration, not approach geometry.
 
 The fixed evaluator detects the red EYELA label on the rigid door parent in
 the right-wrist image. Its target is the existing compiler's mean feature at
@@ -1423,10 +1424,11 @@ approach.
 | --- | --- | ---: |
 | D1 | `20260808T043120Z_demo_preclose/after/right.png` | 0.141824 |
 | D2 | `20260808T044056Z_retry_preclose_registration/after/right.png` | 0.138008 |
-| D3 (historical D4) | `03_aligned-yaw-preclose/motion/after/right.png` | 0.061900 |
+| D3 (autonomy before parser fix) | `incubator_auto_open_20260808_demo/03_aligned-yaw-preclose/motion/after/right.png` | 0.050673 |
+| D4 (historical D4) | `incubator_auto_open_20260808_demo_retry2/03_aligned-yaw-preclose/motion/after/right.png` | 0.061900 |
 
 We removed the log-area performance panel after a source-image audit found
-segmentation instability. Display D3's initial red mask split into components of 280
+segmentation instability. Display D4's initial red mask split into components of 280
 and 109 pixels, of which the detector retained only the largest. About 1.51
 seconds later, before the correction move and at the identical logged
 end-effector pose, it detected 452 pixels instead. Thus the apparent scale
@@ -1439,7 +1441,7 @@ a reliable ranking without repeated trials and uncertainty estimates.
 
 Historical D3 is omitted because orientation probes, restored poses, and manual yaw
 selection precede its final visual-alignment sequence. The `before` image of
-that sequence must not be relabeled as an uncorrected first approach. Display D3's
+that sequence must not be relabeled as an uncorrected first approach. Display D4's
 journal explicitly identifies attempt 1, visual-check step 0. Its approach
 already reuses the successful historical D3 anchor and incorporates live door-plane yaw;
 the result therefore describes initialization in the same scene, not
@@ -1449,21 +1451,32 @@ image. That is a **within-run** observation, not another configuration or
 another initial-approach sample; image-to-image detector variation means the
 whole difference should not be attributed to the commanded correction.
 
+The added display D3 retained its post-approach image despite failing to parse
+the subprocess output. Its saved EE pose and joint vector exactly match D4's
+initial-preclose result; D4 also starts from this same stopped pose. Their
+different image errors (0.050673 versus 0.061900) therefore do not establish a
+geometric deterioration. They expose viewpoint/detection variation at an
+identical logged robot pose. These runs are a continuation pair, not
+independent reset trials. Both approach reports were `motion_eligible: true`
+but `accepted: false` under the stricter Cartesian settling criterion; the
+measurements describe the achieved pose, not perfect target tracking.
+
 ![Door initial approach image-position mismatch by configuration](assets/code_as_learning_machine/door_first_approach.png)
 
 **Figure 14a. Initial-approach image-feature mismatch.** One selected run per
 measured configuration, evaluated with the same detector and successful-demo
-feature mean. Only measured configurations are shown, relabeled D1--D3
-(historical D1, D2, D4). The values are unchanged and no curve is fitted.
+feature mean. Only measured configurations are shown, labeled D1--D4
+(historical D1, D2, pre-parser-fix autonomy, historical D4). Existing values
+are unchanged and no curve is fitted.
 This diagnostic complements the endpoint result in Figure 14; it does not
 replace task success or establish a smooth learning curve.
 
 ![Audit of the label detections and successful-demo feature location](assets/code_as_learning_machine/door_first_approach_detection_audit.png)
 
 **Figure 14b. Source-image audit.** Green boxes/points show the detected red
-label; yellow crosses show the successful-demo feature mean. Display D1, D2, and D3
+label; yellow crosses show the successful-demo feature mean. Display D1--D4
 initial images select the intended label rather than the dark shadow or blue
-jaws. The fourth image shows display D3 after one correction and is explicitly excluded
+jaws. The fifth image shows display D4 after one correction and is explicitly excluded
 from the initial-approach comparison. The full source paths, SHA-256 hashes,
 stage-selection reasons, formulas, and separate residuals are preserved in
 `docs/assets/code_as_learning_machine/door_first_approach_report.json` and can
@@ -1505,6 +1518,7 @@ the physical arm identity.
 | D1 | 18.23 | 10.06 | 15.00 |
 | D2 | 18.41 | 10.21 | 15.14 |
 | D3 | 12.53 | 0.70 | 13.92 |
+| D4 | 12.53 | 0.70 | 13.92 |
 
 The alternate reference is the later autonomous contact and is used only to
 expose reference sensitivity. It is not an independent validation trial or a
@@ -1516,9 +1530,9 @@ zero distance is not a necessary condition for a good initial approach.
 
 As a separate check, we registered each saved head RGB image to the earlier
 contact image using fixed tags 3 and 12, while withholding appliance tag 13.
-The held-out tag's median corner discrepancies were 6.67, 0.96, and 7.95 image
-pixels for D1--D3. Over 25 valid interior depth pixels at that tag, the median
-absolute registered depth differences were 2.93, 0.98, and 0.98 mm. These are
+The held-out tag's median corner discrepancies were 6.67, 0.96, 5.00, and 7.95 image
+pixels for D1--D4. Over 25 valid interior depth pixels at that tag, the median
+absolute registered depth differences were 2.93, 0.98, 0.98, and 0.98 mm. These are
 small local image/depth discrepancies, but they do not establish full 3-D
 stationarity of the door, accurate handle geometry, or submillimetre accuracy.
 No translation correction derived from this homography was applied to the
@@ -1531,8 +1545,10 @@ circles use the earlier contact reference; gray crosses show sensitivity to
 the later contact reference. The estimate assumes a fixed closed door and
 robot base, is not a fully RGB-D-registered handle distance, and does not
 replace the image-only diagnostic. The D1--D2 difference is not evidence of
-meaningful improvement; the orientation comparison shows a larger change in
-the final configuration. Recompute the complete coordinate, FK, and held-out
+meaningful improvement. The orientation difference is already small at D3,
+and the unchanged D3--D4 position reflects the recorded continuation from the
+same stopped pose. Parser repair improved workflow completion, not this
+distance metric. Recompute the complete coordinate, FK, and held-out
 head checks with `python docs/evaluate_door_approach_distance.py`. Inputs and
 hashes are stored in
 `docs/assets/code_as_learning_machine/door_approach_distance_report.json`.

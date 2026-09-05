@@ -103,6 +103,7 @@ def evaluate():
             continue
         directory = str(Path(spec["motion"]).parent / "after")
         actual, audit = checked_observation(directory, fk)
+        motion = read_json(spec["motion"])
         try:
             head = head_consistency(directory, reference, read_json(PROFILE)["state_detection"])
         except (ValueError, RuntimeError) as exc:
@@ -110,10 +111,15 @@ def evaluate():
         rows.append({"stage": f"D{len(rows)+1}", "historical_stage": spec["stage"],
                      "status": "conditional_fixed_door_estimate",
                      "actual_ee_pose_wxyz_xyz": actual["right_ee_wxyz_xyz"],
+                     "stage_before_ee_pose_wxyz_xyz": motion["before"]["right_ee_wxyz_xyz"],
+                     "settle_status": ({key: motion["settle"].get(key) for key in ("accepted", "motion_eligible")}
+                                       if "settle" in motion else None),
                      **pose_difference(actual["right_ee_wxyz_xyz"], goal["right_ee_wxyz_xyz"]),
                      "alternate_contact_distance_mm": pose_difference(actual["right_ee_wxyz_xyz"], alternate["right_ee_wxyz_xyz"])["distance_mm"],
                      "image_position_error": spec["uv_error"], "robot_state_audit": audit,
                      "head_consistency": head})
+    before_fix = next(row for row in rows if row["historical_stage"] == "D4_pre_parser_fix")
+    after_fix = next(row for row in rows if row["historical_stage"] == "D4")
     return {
         "schema": "door_approach_distance_audit/v1",
         "metric": "1000 * norm(recorded_actual_EE_xyz - recorded_success_contact_EE_xyz)",
@@ -137,6 +143,11 @@ def evaluate():
             "Do not use these retrospectively estimated distances as robot commands or replace the image-only figure silently.",
         ],
         "configurations": rows,
+        "continuation_audit": {
+            "pre_parser_fix_stage": "D3", "post_parser_fix_stage": "D4",
+            "identical_recorded_after_pose": bool(np.array_equal(before_fix["actual_ee_pose_wxyz_xyz"], after_fix["actual_ee_pose_wxyz_xyz"])),
+            "retry_starts_at_previous_after_pose": bool(np.array_equal(before_fix["actual_ee_pose_wxyz_xyz"], after_fix["stage_before_ee_pose_wxyz_xyz"])),
+            "interpretation": "D4 continues from D3's stopped pose; do not count them as independent reset approach trials. Both stages were motion-eligible but not accepted by the stricter settling tolerance."},
         "sources": [source(IMAGE_REPORT), source(MODEL), source(CALIBRATION), source(PROFILE),
                     source("rollout/teleop_trajectory_stream.py"), source("rollout/articulated_appliance.py")]}
 

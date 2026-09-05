@@ -91,6 +91,16 @@
         0.09414993514025952,
         0.9732603940974525
       ],
+      "stage_before_ee_pose_wxyz_xyz": [
+        0.6653316349163354,
+        0.7236406697288114,
+        -0.0914766534441739,
+        0.15909122718945956,
+        0.2902409250170642,
+        0.09496452497832214,
+        0.9584102297229204
+      ],
+      "settle_status": null,
       "delta_xyz_mm": [
         2.3801997684971266,
         -16.053487741051907,
@@ -158,6 +168,16 @@
         0.09439380048557362,
         0.9733711680913432
       ],
+      "stage_before_ee_pose_wxyz_xyz": [
+        0.6628122608323262,
+        0.7243585119383905,
+        -0.08821709135794488,
+        0.16793569562509852,
+        0.2895094450838385,
+        0.09529637729401612,
+        0.9606101248315299
+      ],
+      "settle_status": null,
       "delta_xyz_mm": [
         2.463496751919314,
         -16.297353086366012,
@@ -214,6 +234,86 @@
     },
     {
       "stage": "D3",
+      "historical_stage": "D4_pre_parser_fix",
+      "status": "conditional_fixed_door_estimate",
+      "actual_ee_pose_wxyz_xyz": [
+        0.6775922526639988,
+        0.7023738863063391,
+        -0.16766864266207,
+        0.139380376066783,
+        0.3197135865677372,
+        0.07340838602772153,
+        0.9760279331132112
+      ],
+      "stage_before_ee_pose_wxyz_xyz": [
+        0.588667452231638,
+        0.7768319657564973,
+        -0.001550999178983348,
+        0.22360751790482533,
+        0.21180059670468848,
+        0.0449028040394059,
+        0.9170015955302925
+      ],
+      "settle_status": {
+        "accepted": false,
+        "motion_eligible": true
+      },
+      "delta_xyz_mm": [
+        10.208620228373322,
+        4.688061371486086,
+        5.543160689798321
+      ],
+      "distance_mm": 12.526790363971864,
+      "orientation_difference_deg": 0.6964334270921569,
+      "alternate_contact_distance_mm": 13.924343627425015,
+      "image_position_error": 0.0506733163897398,
+      "robot_state_audit": {
+        "observation": {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo/03_aligned-yaw-preclose/motion/after/observation.json",
+          "source_sha256": "407d9c00e0c487cd144e81efbd327e2184e10fe8715f97ffbe8f498d69655634"
+        },
+        "fk_reconstruction_error": {
+          "delta_xyz_mm": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "distance_mm": 0.0,
+          "orientation_difference_deg": 0.0
+        }
+      },
+      "head_consistency": {
+        "status": "diagnostic_not_metric_registration",
+        "common_fixed_tag_ids": [
+          3,
+          12
+        ],
+        "live_tag_ids": [
+          3,
+          12,
+          13
+        ],
+        "registration_error_tag_lengths": 0.0028727962277759235,
+        "inlier_corner_fraction": 1.0,
+        "held_out_tag_id": 13,
+        "held_out_corner_median_error_px": 5.000956656875484,
+        "held_out_depth_patch_pixel_count": 25,
+        "held_out_depth_median_absolute_difference_mm": 0.9765625,
+        "translation_correction_applied": false,
+        "sources": [
+          {
+            "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo/03_aligned-yaw-preclose/motion/after/head.png",
+            "source_sha256": "485cdec64466bc7f7f16f1c63106045fd93764566fc072e265d321ecb35b305f"
+          },
+          {
+            "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo/03_aligned-yaw-preclose/motion/after/head_depth.npy",
+            "source_sha256": "0a6293a6c2d9df4a99ba7fe1ff51145c244516d7e9e994fd836efbba45f3f17c"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "D4",
       "historical_stage": "D4",
       "status": "conditional_fixed_door_estimate",
       "actual_ee_pose_wxyz_xyz": [
@@ -225,6 +325,19 @@
         0.07340838602772153,
         0.9760279331132112
       ],
+      "stage_before_ee_pose_wxyz_xyz": [
+        0.6775922526639988,
+        0.7023738863063391,
+        -0.16766864266207,
+        0.139380376066783,
+        0.3197135865677372,
+        0.07340838602772153,
+        0.9760279331132112
+      ],
+      "settle_status": {
+        "accepted": false,
+        "motion_eligible": true
+      },
       "delta_xyz_mm": [
         10.208620228373322,
         4.688061371486086,
@@ -280,10 +393,17 @@
       }
     }
   ],
+  "continuation_audit": {
+    "pre_parser_fix_stage": "D3",
+    "post_parser_fix_stage": "D4",
+    "identical_recorded_after_pose": true,
+    "retry_starts_at_previous_after_pose": true,
+    "interpretation": "D4 continues from D3's stopped pose; do not count them as independent reset approach trials. Both stages were motion-eligible but not accepted by the stricter settling tolerance."
+  },
   "sources": [
     {
       "source_path": "docs/assets/code_as_learning_machine/door_first_approach_report.json",
-      "source_sha256": "4e79243089569e65258d01bac4aac8f606cff744ad7c91d38b639956b55be4c2"
+      "source_sha256": "a236ab73052fa1ec913182b9369fea6460621d039bd3bcfdb1100744859c06ed"
     },
     {
       "source_path": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",

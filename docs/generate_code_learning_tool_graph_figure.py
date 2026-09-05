@@ -491,7 +491,7 @@ def make_door_approach_figure(*, distance=False):
         distance_rows = distance_report["configurations"]
         if [r["historical_stage"] for r in distance_rows] != [r["source_stage"] for r in rows]:
             raise ValueError("Distance and image configurations do not match")
-    fig = plt.figure(figsize=(12, 11), facecolor="white")
+    fig = plt.figure(figsize=(15 if len(rows) > 3 else 12, 11), facecolor="white")
     grid = fig.add_gridspec(2, len(rows), height_ratios=[1.25, 1],
                            left=0.13, right=0.97, top=0.85, bottom=0.11,
                            hspace=0.30, wspace=0.12)
@@ -529,7 +529,8 @@ def make_door_approach_figure(*, distance=False):
     graphs = {
         "D1": ("Relative demo", ("Teleoperation data", "Demo compiler", "Contact-relative path")),
         "D2": ("Checkpointed pull", ("Close + aperture gate", "5 mm proof pull", "Checkpoints + slip stop")),
-        "D4": ("Autonomous pipeline", ("RGB-D state + plane yaw", "Bounded wrist alignment", "Pull + endpoint check")),
+        "D4_pre_parser_fix": ("Autonomy: before fix", ("RGB-D + aligned approach", "Mixed camera / JSON logs", "Parser stops workflow")),
+        "D4": ("Autonomy: parser fixed", ("Same approach pipeline", "Robust JSON extraction", "Open + close completed")),
     }
     for column, row in enumerate(rows):
         panel = fig.add_subplot(grid[1, column])
@@ -544,19 +545,22 @@ def make_door_approach_figure(*, distance=False):
                  edge=(BLUE, TEAL, GREEN)[i])
             if i < 2:
                 arrow(panel, (0.5, y-0.015), (0.5, y-0.065), width=1.8)
-    fig.text(0.13, 0.064, "Two contact references, not confidence intervals. Includes the intended preclose gap." if distance else
-             "One selected run per configuration. D3 reuses a successful same-scene anchor.",
+    fig.text(0.13, 0.064, "D4 resumes at D3's recorded pose: not independent trials. Gray crosses: reference sensitivity." if distance else
+             "D4 resumes at D3's pose; the parser fix enables completion, not better aiming.",
              color=GRAY, fontsize=12)
     return finish_figure(fig, stem="door_first_approach_distance" if distance else "door_first_approach", footnote=
-                         "Display D1 / D2 / D3 = historical D1 / D2 / D4. Unmeasured configurations omitted.")
+                         "Display D1 / D2 / D3 / D4 = historical D1 / D2 / pre-parser-fix autonomy / D4. Unmeasured configurations omitted.")
 
 
 def make_door_approach_audit():
     report = load_json("docs/assets/code_as_learning_machine/door_first_approach_report.json")
     rows = door_approach_rows(report)
     corrected = report["within_run_correction"]["after_one_correction"]
-    rows.append({**corrected, "stage": "D3 after one correction (not initial)"})
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10), facecolor="white")
+    rows.append({**corrected, "stage": "D4 after one correction (not initial)"})
+    nrows = (len(rows) + 1) // 2
+    fig, axes = plt.subplots(nrows, 2, figsize=(12, nrows*5), facecolor="white")
+    for ax in axes.flat:
+        ax.axis("off")
     goal = report["evaluator"]["goal_feature_uv_log_area"]
     for ax, row in zip(axes.flat, rows):
         image_source = next(s for s in row["sources"] if s["source_path"].endswith("right.png"))
@@ -579,7 +583,7 @@ def make_door_approach_audit():
                  fontsize=12, color=NAVY)
     fig.subplots_adjust(left=0.02, right=0.98, top=0.91, bottom=0.07, hspace=0.2)
     return finish_figure(fig, stem="door_first_approach_detection_audit", footnote=
-                         "Same detector and reference on all frames. Label alignment is not direct handle-pose measurement; the fourth panel is a within-run diagnostic.")
+                         "Same detector and reference on all frames. Label alignment is not direct handle-pose measurement; the final panel is a within-run diagnostic.")
 
 
 def main():

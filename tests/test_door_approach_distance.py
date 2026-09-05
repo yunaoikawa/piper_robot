@@ -1,5 +1,6 @@
 """Offline unit tests; no RPC connection or hardware commands."""
 import importlib.util
+import json
 from pathlib import Path
 
 import numpy as np
@@ -32,3 +33,16 @@ def test_quaternion_sign_does_not_change_pose():
 def test_invalid_pose_rejected(pose):
     with pytest.raises(ValueError):
         module.pose_difference(pose, [1, 0, 0, 0, 0, 0, 0])
+
+
+def test_tracked_four_stage_snapshot_preserves_continuation():
+    report_path = path.parent / "assets/code_as_learning_machine/door_approach_distance_report.json"
+    report = json.loads(report_path.read_text())
+    rows = report["configurations"]
+    assert [r["stage"] for r in rows] == ["D1", "D2", "D3", "D4"]
+    assert rows[2]["historical_stage"] == "D4_pre_parser_fix"
+    assert rows[3]["historical_stage"] == "D4"
+    assert rows[2]["distance_mm"] == rows[3]["distance_mm"]
+    assert rows[2]["actual_ee_pose_wxyz_xyz"] == rows[3]["stage_before_ee_pose_wxyz_xyz"]
+    assert report["continuation_audit"]["identical_recorded_after_pose"]
+    assert report["fully_registered_3d_distance_available"] is False

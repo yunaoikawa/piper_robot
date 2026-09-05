@@ -26,10 +26,10 @@ def test_invalid_features_rejected(bad):
 
 def test_missing_and_selected_run_boundaries_are_explicit():
     rows = {row["stage"]: row for row in module.CONFIGURATIONS}
-    assert set(rows) == {f"D{i}" for i in range(6)}
+    assert set(rows) == {f"D{i}" for i in range(6)} | {"D4_pre_parser_fix"}
     for stage in ("D0", "D3", "D5"):
         assert "motion" not in rows[stage]
         assert rows[stage]["missing_reason"]
-    for stage in ("D1", "D2", "D4"):
+    for stage in ("D1", "D2", "D4_pre_parser_fix", "D4"):
         assert rows[stage]["boundary_evidence"]
         assert "visual_alignment" not in rows[stage]["motion"]

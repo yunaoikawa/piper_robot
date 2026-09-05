@@ -33,6 +33,9 @@ CONFIGURATIONS = (
     {"stage": "D3", "label": "Metric alignment",
      "missing_reason": "Yaw probes, restored preclose poses, and manual orientation selection precede the final visual-alignment sequence; a comparable uncorrected first approach is not established.",
      "rejected_surrogate": RUNS + "incubator_door_20260808_retry6_yaw_aligned_visual1/before/right.png"},
+    {"stage": "D4_pre_parser_fix", "label": "Autonomy before parser fix",
+     "motion": RUNS + "incubator_auto_open_20260808_demo/03_aligned-yaw-preclose/motion/aligned_yaw_preclose.json",
+     "boundary_evidence": "First autonomous run at 10:01 UTC: completed initial aligned-yaw-preclose and saved its after image; orchestration stopped on mixed camera-log/JSON parsing before any visual correction. Approach policy is shared with historical D4; the change is in result parsing, not aiming geometry."},
     {"stage": "D4", "label": "Autonomous endpoints",
      "motion": AUTO + "03_aligned-yaw-preclose/motion/aligned_yaw_preclose.json",
      "boundary_evidence": "Journal attempt=1, visual-check step=0, after aligned-yaw-preclose and before any visual-align-step. Uses the successful D3 preclose anchor plus live plane-yaw correction."},
@@ -92,12 +95,18 @@ def evaluate():
     checks = [e for e in journal["events"] if e["event"] == "visual-check" and e["attempt"] == 1]
     if [e["step"] for e in checks] != [0, 1]:
         raise ValueError("Unexpected first-attempt visual check sequence")
+    autonomous = next(row for row in rows if row["stage"] == "D4")
     for key, journal_key in (("uv_error", "uv_error"), ("absolute_log_area_error", "log_area_error")):
-        if not np.isclose(rows[4][key], checks[0]["report"][journal_key], rtol=0, atol=1e-12):
+        if not np.isclose(autonomous[key], checks[0]["report"][journal_key], rtol=0, atol=1e-12):
             raise ValueError("Re-evaluation disagrees with initial journal check")
     corrected = measure_motion(AUTO + "04_visual-align-step/motion/visual_alignment.json", settings, goal)
     if not np.isclose(corrected["uv_error"], checks[1]["report"]["uv_error"], rtol=0, atol=1e-12):
         raise ValueError("Re-evaluation disagrees with corrected journal check")
+    first_journal_path = RUNS + "incubator_auto_open_20260808_demo/journal.json"
+    first_journal = read_json(first_journal_path)
+    first_stages = [e["stage"] for e in first_journal["events"] if e["event"] == "motion-start"]
+    if first_journal["status"] != "failed" or first_stages != ["aligned-yaw-preclose"]:
+        raise ValueError("Unexpected boundary for the parser-failed autonomous run")
     return {
         "schema": "door_first_approach_retrospective/v1",
         "definition": "Feature residual at the initial preclose of each selected run, before subsequent image-based correction; not the first move of the entire development history.",
@@ -120,6 +129,9 @@ def evaluate():
             "Unknown configurations remain missing; no interpolation or smoothing across them.",
         ],
         "configurations": rows,
+        "pre_parser_fix_run": {"journal": source(first_journal_path), "status": first_journal["status"],
+                               "motion_stages_started": first_stages,
+                               "interpretation": "Usable first-approach observation despite orchestration failure; not a successful open endpoint."},
         "within_run_correction": {"stage": "D4", "role": "Diagnostic only; NOT another configuration or an initial approach", "journal": source(AUTO + "journal.json"), "after_one_correction": corrected},
     }
 

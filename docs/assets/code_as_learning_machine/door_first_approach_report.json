@@ -186,6 +186,49 @@
       "status": "not_identified"
     },
     {
+      "stage": "D4_pre_parser_fix",
+      "label": "Autonomy before parser fix",
+      "motion": "data/runs/pasteur/incubator_auto_open_20260808_demo/03_aligned-yaw-preclose/motion/aligned_yaw_preclose.json",
+      "boundary_evidence": "First autonomous run at 10:01 UTC: completed initial aligned-yaw-preclose and saved its after image; orchestration stopped on mixed camera-log/JSON parsing before any visual correction. Approach policy is shared with historical D4; the change is in result parsing, not aiming geometry.",
+      "status": "measured",
+      "uv_error": 0.0506733163897398,
+      "absolute_log_area_error": 0.4797514219625887,
+      "motion_stage": "aligned-yaw-preclose",
+      "timestamp_s": 1786183291.415763,
+      "image_shape_hw": [
+        480,
+        640
+      ],
+      "detection": {
+        "box_xywh": [
+          335,
+          209,
+          29,
+          16
+        ],
+        "area_px": 307,
+        "feature_uv_log_area": [
+          0.545200529315961,
+          0.45283659066232357,
+          -6.908406532668457
+        ]
+      },
+      "sources": [
+        {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo/03_aligned-yaw-preclose/motion/aligned_yaw_preclose.json",
+          "source_sha256": "e871c350168f782222821e604068e59df9e79fe534c5f2d3c8c79b36e902dc14"
+        },
+        {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo/03_aligned-yaw-preclose/motion/after/right.png",
+          "source_sha256": "a3109446300d7fb5d8e9674d2ebe5b6f2beef914601a7628723487a9a87f18d6"
+        },
+        {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo/03_aligned-yaw-preclose/motion/after/observation.json",
+          "source_sha256": "407d9c00e0c487cd144e81efbd327e2184e10fe8715f97ffbe8f498d69655634"
+        }
+      ]
+    },
+    {
       "stage": "D4",
       "label": "Autonomous endpoints",
       "motion": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/03_aligned-yaw-preclose/motion/aligned_yaw_preclose.json",
@@ -235,6 +278,17 @@
       "status": "not_identified"
     }
   ],
+  "pre_parser_fix_run": {
+    "journal": {
+      "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo/journal.json",
+      "source_sha256": "6a484853c6f05c34da724d24b40615d9ee97f5653d3177f4a390b60b6c152ff5"
+    },
+    "status": "failed",
+    "motion_stages_started": [
+      "aligned-yaw-preclose"
+    ],
+    "interpretation": "Usable first-approach observation despite orchestration failure; not a successful open endpoint."
+  },
   "within_run_correction": {
     "stage": "D4",
     "role": "Diagnostic only; NOT another configuration or an initial approach",
