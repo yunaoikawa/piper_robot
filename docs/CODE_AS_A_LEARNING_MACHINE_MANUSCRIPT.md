@@ -1345,31 +1345,52 @@ catalog-completed MJCF geometry, and a seven-probe local Jacobian supported the
 eventual side pinch and transfer. The release branch remains unverified and is
 therefore not turned into a placement-performance sample.
 
-For Door, let (d_{open}) and (d_{closed}) be the registered median metric-depth
-errors to independently captured endpoint references. The goal-conditioned
+For Door, let \(d_{open}\) and \(d_{closed}\) be the registered median metric-depth
+errors to endpoint references. For the opening configuration comparison, the
 score is
 
 \[
-S_{open}=\frac{d_{closed}}{d_{open}+d_{closed}}, \qquad
-S_{close}=\frac{d_{open}}{d_{open}+d_{closed}}.
+S_{open}=\frac{d_{closed}}{d_{open}+d_{closed}}.
 \]
 
-It lies in \([0,1]\), and higher always means closer to the requested endpoint.
-In the preserved autonomous runs, opening changed the score from 0.163 to
-0.824, while closing changed it from 0.196 to 0.984.
+It lies in \([0,1]\), and higher means closer to the open endpoint. We applied
+the current registered-depth implementation and hardened vertical-plane mask
+with the same settings and reference pair to all four measurements. The current
+deployment profile uses the D4 opening result as its own open reference; that
+reference was replaced for this analysis to avoid an automatic score of 1.
+The analysis instead uses the open-door observation recorded before closing
+experiments at 17:29 JST and the final closed calibration capture. Neither
+reference frame is one of the four scored images. These are distinct captures
+from the same development session, not independent experimental trials.
+
+The preserved D1 result scored 0.011, D2 scored 0.008, D3 scored 0.986, and D4
+scored 0.979. The small D1--D2 difference does not establish degradation; both
+outcomes remain classified as closed. The large transition coincides with the
+D3 configuration, which includes metric yaw alignment. D0 has no identified
+post-action RGB-D result. D5 changed the evaluator after the last physical
+opening without another independent execution. Both remain N/A.
 
 ![Door-specific quantitative endpoint observations above its changing tool graph](assets/code_as_learning_machine/door_tool_graph_evolution.png)
 
-**Figure 14. Door-specific quantitative endpoint evidence and tool-graph
-evolution.** The upper panel contains four registered RGB-D observations from
-the final autonomous open and close runs; it is not a fabricated success-rate
-curve over earlier revisions. The lower panels record how generic replay was
-replaced by contact-relative demonstration compilation, non-empty aperture, a
-5 mm proof, checkpointed pulling, metric plane alignment, distinct open/close
-branches, and a hardened endpoint mask. Earlier revisions are not silently
-assigned zero endpoint scores because no comparable frozen endpoint assessment
-was recorded for them. Complexity was also not strictly monotonic: failed
-visual and direct-joint heuristics were removed or given less authority.
+**Figure 14. Door endpoint performance by executable agent configuration.**
+The same evaluator, mask, and reference pair score one selected post-action
+RGB-D observation per measured configuration. D1 is the first uninterrupted
+contact-relative pull (which already included a short proof); D2 is the retry-2
+checkpointed-pull slip observation; D3 is the yaw-aligned result; D4 is the
+autonomous-opening endpoint. The lower panels emphasize the changes rather
+than exhaustively enumerating each configuration. D0 and D5 remain missing.
+This retrospective comparison describes observed endpoints, not success
+probabilities or controlled ablation effects. Parameters, contact conditions,
+and human interventions also changed during development.
+
+Time to verified opening is a useful additional metric, but the preserved
+timing scopes differ. The D1 before/after observations bracket 8.66 seconds of
+the long-pull stage and end with the door closed. The complete D4 autonomous
+workflow, including observation, approach, proof, recovery, and verification,
+lasted 86.96 seconds. These durations should not share a performance axis:
+one starts after contact and proof, while the other includes the whole
+workflow. A comparable future timing measure must fix the start condition and
+success predicate and report unsuccessful or interrupted attempts separately.
 
 This flexibility is a central benefit of code as a learning substrate. The
 agent can import or call a large model when semantic ambiguity demands it,
@@ -1891,7 +1912,7 @@ the ordering within each source family.
 | 11 | `cap_verified_transfer_depth.jpg` | Stored depth renderings from the same three immutable captures as Figure 10 |
 | 12 | `cap_release_attempt.jpg` | Head RGB from `20260806T090952.499727Z...place_descent40_check`, `20260806T091148.017296Z...place_clearance6_check`, `20260806T091251.693211Z...place_preopen`, `20260806T091320.073893Z...placed_released`, and `20260806T091401.642185Z...placed_retracted_validation` |
 | 13 | `cap_tool_graph_evolution.png` and `.svg` | Generated by `docs/generate_code_learning_tool_graph_figure.py` from the tracked snapshot `quantitative_figure_evidence.json`, whose entries include raw-source paths and SHA-256 hashes. Alignment values come from six preserved `culture_media_cap_adapter_20260806_*` JSON reports; held motion is recomputed from right-arm FK in captures `...090454...hold_before_lift`, `...090516...lift_probe10`, and `...090638...transport_home_hold`. The lower graph follows the 6 August chronology and commits `fc831c0` and `1f07761` |
-| 14 | `door_tool_graph_evolution.png` and `.svg` | Generated by the same script and tracked evidence snapshot. Goal-conditioned scores are recomputed from `relative_open_error` and `relative_closed_error` in the initial/final state JSON for `incubator_auto_open_20260808_demo_retry2` and `incubator_auto_close_20260808_demo`; the lower graph follows commits `2b6ccab` through `283b913` |
+| 14 | `door_tool_graph_evolution.png` and `.svg` | Generated by the same script from `door_configuration_curve_report.json`, reproduced by `docs/evaluate_door_configuration_curve.py`. One fixed reference pair and the hardened registered-depth evaluator score preserved D1--D4 post-action RGB-D; D0 and D5 are missing. Raw inputs and evaluator files are bound by SHA-256. The reference captures differ from all scored frames but belong to the same development session. |
 
 The twelve verified Figure 1 demonstration stems, in the compiler's stored
 order, are `door_open_20260703_164850`, `door_open_20260703_163756`,

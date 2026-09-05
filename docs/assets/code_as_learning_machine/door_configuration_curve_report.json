@@ -1,0 +1,125 @@
+{
+  "schema": "piper_robot.door_configuration_curve/v1",
+  "goal": "open",
+  "score_formula": "d_closed / (d_open + d_closed)",
+  "evaluation_policy": "one frozen hardened endpoint evaluator and an independent reference pair; no interpolation or zero imputation",
+  "evaluator": {
+    "profile": "src/configs/pasteur_incubator_door_demo.json",
+    "profile_sha256": "c66a0f5513341783cf565f3d9e195459a1b5bb9589e16cb5c24a3e286414c713",
+    "endpoint_code": "rollout/articulated_appliance.py",
+    "endpoint_code_sha256": "b17e4c82a7e53e15f3d74619c1fffc26523cf636cb6e8447a56d7df55fb50bde",
+    "plane_code": "rollout/incubator_door_plane.py",
+    "plane_code_sha256": "41774d330dfc2eba43442daab258abc9cbfdb77f75623acce57eb74f79da4a2b",
+    "tag_config": "src/configs/pasteur_lid_tags.json",
+    "tag_config_sha256": "f475b70b0520dba07fd29bf427bdd8f44fd5d9c75db94d0df736a0913e35333e",
+    "candidate_mask": "closed_vertical_plane",
+    "endpoint_separation_m": 0.26025390625,
+    "dynamic_point_count": 450
+  },
+  "references": {
+    "open": {
+      "image": "data/runs/pasteur/incubator_door_close_20260808T082919Z_observe/head.png",
+      "image_sha256": "8a9b243c7573d888114f17e8a005bf8369a643cd2be58266672f1a35a37717ad",
+      "depth": "data/runs/pasteur/incubator_door_close_20260808T082919Z_observe/head_depth.npy",
+      "depth_sha256": "23e702a05804ca3fb6e6337b7bc9244fc89a56dc3241d375dd0dd9e4f8bad0d1"
+    },
+    "closed": {
+      "bundle": "data/runs/pasteur/incubator_auto_close_20260808_demo/captures/2026-08-08/20260808T100604.838020Z_head_close_result_722eb26e",
+      "selected_frame": "data/runs/pasteur/incubator_auto_close_20260808_demo/captures/2026-08-08/20260808T100604.838020Z_head_close_result_722eb26e/raw/head/000004",
+      "files": {
+        "data/runs/pasteur/incubator_auto_close_20260808_demo/captures/2026-08-08/20260808T100604.838020Z_head_close_result_722eb26e/raw/head/000004/rgb.png": "dff92b52a48176ac154d28fbe1f82b03556e3ac5e6e2a8f9f6835ecc93116830",
+        "data/runs/pasteur/incubator_auto_close_20260808_demo/captures/2026-08-08/20260808T100604.838020Z_head_close_result_722eb26e/raw/head/000004/depth.npy": "8314e69b13a89d3876060a45e2a83cc9678e0f7007a9c7d643f0e39d80634d9b",
+        "data/runs/pasteur/incubator_auto_close_20260808_demo/captures/2026-08-08/20260808T100604.838020Z_head_close_result_722eb26e/raw/head/000004/meta.json": "211f38dd9b29ae21d19d8a8d92a4de29704cb9e7435e9796bfffbcc1591ec302"
+      }
+    }
+  },
+  "configurations": [
+    {
+      "stage": "D0",
+      "label": "generic replay",
+      "status": "not_measured",
+      "reason": "no identified post-action RGB-D result for the generic baseline"
+    },
+    {
+      "stage": "D1",
+      "label": "relative demo",
+      "status": "measured",
+      "description": "first uninterrupted contact-relative long-pull result",
+      "source": {
+        "image": "data/runs/pasteur/incubator_door_20260808T043620Z_open_door_demo_contact/after/head.png",
+        "image_sha256": "fc7599dfec828520bd3af266b6e12da0c7e08a2396521b0154c2247f9eadaad7",
+        "depth": "data/runs/pasteur/incubator_door_20260808T043620Z_open_door_demo_contact/after/head_depth.npy",
+        "depth_sha256": "fd32c2125e5f696866196dcb3ec2e74ae76669ec3c1e2d4fedbdb5875b11c719"
+      },
+      "classified_state": "closed",
+      "relative_open_error": 0.9906191369606003,
+      "relative_closed_error": 0.01125703564727955,
+      "goal_conditioned_endpoint_score": 0.011235955056179775,
+      "registration_error_tag_lengths": 0.006747611755381514,
+      "dynamic_point_count": 450
+    },
+    {
+      "stage": "D2",
+      "label": "checkpointed pull",
+      "status": "measured",
+      "description": "retry-2 checkpointed-pull slip observation",
+      "source": {
+        "image": "data/runs/pasteur/incubator_door_20260808T044541Z_retry2_slip_observe/head.png",
+        "image_sha256": "66b27efb8191d9786b2224d52db46cb1362b78a415cfa6ca1f40163bf8d87d85",
+        "depth": "data/runs/pasteur/incubator_door_20260808T044541Z_retry2_slip_observe/head_depth.npy",
+        "depth_sha256": "40db356a4efd1d7892fd05e8bb78517107b9012da143697cb0ff1388b6587dd6"
+      },
+      "classified_state": "closed",
+      "relative_open_error": 0.9868667917448405,
+      "relative_closed_error": 0.0075046904315197,
+      "goal_conditioned_endpoint_score": 0.007547169811320755,
+      "registration_error_tag_lengths": 0.007800066205542001,
+      "dynamic_point_count": 450
+    },
+    {
+      "stage": "D3",
+      "label": "metric alignment",
+      "status": "measured",
+      "description": "yaw-aligned pull result after slip recovery",
+      "source": {
+        "image": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_slip_observe/head.png",
+        "image_sha256": "efd4b95047564b2cebf4141669fd61d0f00b5e1a0472450f275b379421128e10",
+        "depth": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_slip_observe/head_depth.npy",
+        "depth_sha256": "81ac893a559830eb87f91ac38512a6b62f341c1bbea93814cc0922ae99f87b6e"
+      },
+      "classified_state": "open",
+      "relative_open_error": 0.0150093808630394,
+      "relative_closed_error": 1.0431519699812384,
+      "goal_conditioned_endpoint_score": 0.9858156028368794,
+      "registration_error_tag_lengths": 0.00559319911931076,
+      "dynamic_point_count": 450
+    },
+    {
+      "stage": "D4",
+      "label": "autonomous endpoints",
+      "status": "measured",
+      "description": "autonomous opening final observation",
+      "source": {
+        "bundle": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/captures/2026-08-08/20260808T100427.298699Z_head_open_attempt_1_result_95dc7b74",
+        "selected_frame": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/captures/2026-08-08/20260808T100427.298699Z_head_open_attempt_1_result_95dc7b74/raw/head/000004",
+        "files": {
+          "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/captures/2026-08-08/20260808T100427.298699Z_head_open_attempt_1_result_95dc7b74/raw/head/000004/rgb.png": "e9754f70c5b30c4890bba7a98bb00d18ef3d548f81e8eb6f58f12c026ecc1d6b",
+          "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/captures/2026-08-08/20260808T100427.298699Z_head_open_attempt_1_result_95dc7b74/raw/head/000004/depth.npy": "68df127cfbb0376cae790c908ae0710f0bb42a8db53c58b4ad900756e4fcf934",
+          "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/captures/2026-08-08/20260808T100427.298699Z_head_open_attempt_1_result_95dc7b74/raw/head/000004/meta.json": "7417f6b88064fc4a3ed0afb525d9d27a21259305f209244e3248d631836a2d01"
+        }
+      },
+      "classified_state": "open",
+      "relative_open_error": 0.0225140712945591,
+      "relative_closed_error": 1.0675422138836772,
+      "goal_conditioned_endpoint_score": 0.9793459552495697,
+      "registration_error_tag_lengths": 0.005036347346012168,
+      "dynamic_point_count": 450
+    },
+    {
+      "stage": "D5",
+      "label": "evidence hardening",
+      "status": "not_measured",
+      "reason": "no independent physical opening was executed after the evidence-only change"
+    }
+  ]
+}

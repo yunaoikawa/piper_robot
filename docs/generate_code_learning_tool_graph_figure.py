@@ -128,7 +128,7 @@ def door_d1(ax):
 
 
 def door_d2(ax):
-    stage_panel(ax, "D2  Mechanical proof", "Short proof no longer\nlicenses a blind pull")
+    stage_panel(ax, "D2  Checkpointed pull", "Short proof no longer\nlicenses a blind pull")
     node(ax, (0.08, 0.51), 0.24, 0.14, "close once", edge=ORANGE)
     node(ax, (0.38, 0.51), 0.24, 0.14, "aperture\ngate", edge=GREEN)
     node(ax, (0.68, 0.51), 0.24, 0.14, "5 mm proof", edge=GREEN)
@@ -343,46 +343,57 @@ def finish_figure(fig, *, stem):
 
 
 def make_door_figure():
-    evidence = load_json(
-        "docs/assets/code_as_learning_machine/quantitative_figure_evidence.json"
+    report = load_json(
+        "docs/assets/code_as_learning_machine/door_configuration_curve_report.json"
     )
-    sources = evidence["door_endpoint"]
-    labels = [item["label"].replace(" ", "\n") for item in sources]
-    scores = [
-        goal_conditioned_endpoint_score(item, item["goal"])
-        for item in sources
-    ]
+    configurations = report["configurations"]
+    labels = [f"{item['stage']}\n{item['label']}" for item in configurations]
+    measured_x = []
+    scores = []
+    for index, item in enumerate(configurations):
+        if item["status"] != "measured":
+            continue
+        score = goal_conditioned_endpoint_score(item, "open")
+        if not np.isclose(score, item["goal_conditioned_endpoint_score"], atol=1e-12):
+            raise ValueError(f"stored Door score does not match errors for {item['stage']}")
+        measured_x.append(index)
+        scores.append(score)
     fig, grid = figure_shell(
-        "Door task: quantitative endpoint progress and the tool graph that enabled it",
-        "Registered metric-depth errors; higher is closer to the requested open or closed reference.",
+        "Door task: endpoint performance by executable agent configuration",
+        "One RGB-D evaluator for D1-D4; reference frames differ from scored frames. Selected outcomes, same development session.",
     )
     ax = fig.add_subplot(grid[0, :])
-    x = np.arange(4, dtype=float)
-    ax.set_xlim(-0.35, 3.35)
+    x = np.arange(len(configurations), dtype=float)
+    ax.set_xlim(-0.5, len(configurations) - 0.5)
     ax.set_ylim(0, 1.05)
     ax.spines[["top", "right"]].set_visible(False)
     ax.spines[["left", "bottom"]].set_color(NAVY)
-    ax.set_ylabel("Goal-conditioned endpoint score", fontsize=11, color=NAVY)
+    ax.set_ylabel("Open-endpoint score", fontsize=11, color=NAVY)
+    ax.set_xlabel("Executable agent configuration", fontsize=10.5, color=NAVY)
     ax.set_xticks(x, labels, fontsize=9.5)
     ax.set_yticks(np.linspace(0, 1, 6))
     ax.grid(color=GRID, linewidth=0.8, linestyle=":")
-    ax.axhspan(0.8, 1.0, color="#E6F4EA", alpha=0.8, zorder=0)
-    ax.text(3.31, 0.89, "target-like", ha="right", va="center", fontsize=8.5,
-            color=GREEN, weight="bold")
-    ax.plot(x[:2], scores[:2], color=BLUE, linewidth=3, marker="o",
+    ax.plot(measured_x, scores, color=BLUE, linewidth=3, marker="o",
             markersize=8, markerfacecolor="white", markeredgewidth=2.2)
-    ax.plot(x[2:], scores[2:], color=ORANGE, linewidth=3, marker="o",
-            markersize=8, markerfacecolor="white", markeredgewidth=2.2)
-    ax.axvline(1.5, color=GRID, linewidth=1.2, linestyle="--")
-    for index, score in enumerate(scores):
-        ax.annotate(f"{score:.3f}", (x[index], score), xytext=(0, 12),
+    for index, score in zip(measured_x, scores):
+        offset = 13 if score > 0.5 else 15 + (index % 2) * 13
+        ax.annotate(f"{score:.3f}", (index, score), xytext=(0, offset),
                     textcoords="offset points", ha="center", fontsize=9,
                     color=NAVY, weight="bold")
+    for index, item in enumerate(configurations):
+        if item["status"] == "measured":
+            continue
+        ax.annotate("N/A", (index, 0.50), ha="center", va="center", fontsize=9.5,
+                    color=GRAY, weight="bold")
+        note = "baseline outcome\nnot identified" if index == 0 else "no new execution\nafter hardening"
+        ax.annotate(note, (index, 0.50),
+                    xytext=(0, -17), textcoords="offset points", ha="center",
+                    va="top", fontsize=7.8, color=GRAY)
     ax.text(
-        0.02, 0.06,
-        r"$S_{open}=d_{closed}/(d_{open}+d_{closed})$    "
-        r"$S_{close}=d_{open}/(d_{open}+d_{closed})$",
-        transform=ax.transAxes, fontsize=9.5, color=GRAY,
+        0.02, 0.93,
+        r"$S_{open}=d_{closed}/(d_{open}+d_{closed})$; "
+        r"independent open/closed references, fixed registration and plane mask",
+        transform=ax.transAxes, fontsize=9.5, color=GRAY, va="top",
     )
     for column, draw in enumerate((door_d0, door_d1, door_d2, door_d3, door_d4, door_d5)):
         draw(fig.add_subplot(grid[1, column]))
