@@ -473,48 +473,72 @@ def make_cap_figure():
     return finish_figure(fig, stem="cap_tool_graph_evolution")
 
 
+def door_approach_rows(report):
+    """Compact display IDs only; preserve historical IDs in raw evidence."""
+    measured = [r for r in report["configurations"] if r["status"] == "measured"]
+    return [{**r, "source_stage": r["stage"], "stage": f"D{i}"}
+            for i, r in enumerate(measured, 1)]
+
+
 def make_door_approach_figure():
     report = load_json("docs/assets/code_as_learning_machine/door_first_approach_report.json")
     validate_available_source_hashes(report)
-    rows = report["configurations"]
-    fig, grid = figure_shell(
-        "Door task: initial aiming before additional visual correction",
-        "One selected preclose per configuration; rigid-door label proxy, NOT handle pose or grasp success. No smoothed curve.",
-    )
+    rows = door_approach_rows(report)
+    fig = plt.figure(figsize=(12, 11), facecolor="white")
+    grid = fig.add_gridspec(2, len(rows), height_ratios=[1.25, 1],
+                           left=0.13, right=0.97, top=0.85, bottom=0.11,
+                           hspace=0.30, wspace=0.12)
+    fig.suptitle("Door: first-approach alignment", x=0.13, y=0.97,
+                 ha="left", fontsize=25, color=NAVY, weight="bold")
+    fig.text(0.13, 0.914, "Red-label position vs. successful-demo mean\nLower is closer; not a direct grasp-pose measurement.",
+             fontsize=15, color=GRAY, linespacing=1.5, va="center")
     labels = [r["stage"] for r in rows]
     ax = fig.add_subplot(grid[0, :])
-    ax.set_title("Label-position mismatch to successful-demo mean", loc="left", color=NAVY, fontsize=11, pad=12)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_xlim(-0.5, 5.5)
-    ax.set_xticks(range(6), labels)
-    ax.set_xlabel("Executable agent configuration", color=NAVY)
-    ax.set_ylabel("Normalized image-position error (lower is closer)", color=NAVY, fontsize=10)
+    ax.set_xlim(-0.5, len(rows)-0.5)
+    ax.set_xticks(range(len(rows)), labels, fontsize=18)
+    ax.tick_params(axis="y", labelsize=15)
+    ax.set_xlabel("Agent configuration", color=NAVY, fontsize=17, labelpad=10)
+    ax.set_ylabel("Normalized image-position error", color=NAVY, fontsize=17, labelpad=12)
     ax.grid(color=GRID, linestyle=":")
-    values = [r["uv_error"] if r["status"] == "measured" else np.nan for r in rows]
+    values = [r["uv_error"] for r in rows]
     ax.set_ylim(0, np.nanmax(values) * 1.35)
     # Markers only: missing configurations and single observations must not
     # become an interpolated or apparently smooth learning curve.
-    ax.plot(range(6), values, linestyle="none", marker="o", color=BLUE,
-            markersize=8, markerfacecolor="white", markeredgewidth=2)
+    ax.plot(range(len(rows)), values, linestyle="none", marker="o", color=BLUE,
+            markersize=12, markerfacecolor="white", markeredgewidth=3)
     for index, value in enumerate(values):
-        if np.isfinite(value):
-            ax.annotate(f"{value:.3f}", (index, value), xytext=(0, 12),
-                        textcoords="offset points", ha="center", color=NAVY, fontsize=9)
-        else:
-            ax.text(index, np.nanmax(values) * 0.6, "N/A", ha="center", color=GRAY, fontsize=9)
-    for column, draw in enumerate((door_d0, door_d1, door_d2, door_d3, door_d4, door_d5)):
-        draw(fig.add_subplot(grid[1, column]))
-    fig.text(0.077, 0.44,
-             "D3: first uncorrected approach ambiguous after manual yaw search.  D4: starts from the successful D3 anchor, not an unseen placement.",
-             color=GRAY, fontsize=9)
-    return finish_figure(fig, stem="door_first_approach")
+        ax.annotate(f"{value:.3f}", (index, value), xytext=(0, 16),
+                    textcoords="offset points", ha="center", color=NAVY, fontsize=19, weight="bold")
+    graphs = {
+        "D1": ("Relative demo", ("Teleoperation data", "Demo compiler", "Contact-relative path")),
+        "D2": ("Checkpointed pull", ("Close + aperture gate", "5 mm proof pull", "Checkpoints + slip stop")),
+        "D4": ("Autonomous pipeline", ("RGB-D state + plane yaw", "Bounded wrist alignment", "Pull + endpoint check")),
+    }
+    for column, row in enumerate(rows):
+        panel = fig.add_subplot(grid[1, column])
+        panel.set(xlim=(0, 1), ylim=(0, 1))
+        panel.axis("off")
+        title, steps = graphs[row["source_stage"]]
+        panel.text(0.5, 0.98, f"{row['stage']}\n{title}", ha="center", va="top",
+                   fontsize=16, weight="bold", color=NAVY, linespacing=1.5)
+        for i, step in enumerate(steps):
+            y = 0.59 - i*0.24
+            node(panel, (0.04, y), 0.92, 0.16, step, fontsize=13,
+                 edge=(BLUE, TEAL, GREEN)[i])
+            if i < 2:
+                arrow(panel, (0.5, y-0.015), (0.5, y-0.065), width=1.8)
+    fig.text(0.13, 0.064, "One selected run per configuration. D3 reuses a successful same-scene anchor.",
+             color=GRAY, fontsize=12)
+    return finish_figure(fig, stem="door_first_approach", footnote=
+                         "Display D1 / D2 / D3 = historical D1 / D2 / D4. Unmeasured configurations omitted.")
 
 
 def make_door_approach_audit():
     report = load_json("docs/assets/code_as_learning_machine/door_first_approach_report.json")
-    rows = [r for r in report["configurations"] if r["status"] == "measured"]
+    rows = door_approach_rows(report)
     corrected = report["within_run_correction"]["after_one_correction"]
-    rows.append({**corrected, "stage": "D4 after one correction (not initial)"})
+    rows.append({**corrected, "stage": "D3 after one correction (not initial)"})
     fig, axes = plt.subplots(2, 2, figsize=(12, 10), facecolor="white")
     goal = report["evaluator"]["goal_feature_uv_log_area"]
     for ax, row in zip(axes.flat, rows):

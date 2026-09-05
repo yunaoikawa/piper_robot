@@ -145,7 +145,7 @@ L 235.771465 529.320975
 " clip-path="url(#p525f6acb19)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #ffdd33; stroke-width: 1.5"/>
    </g>
    <g id="text_3">
-    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(197.396435 376.373315)">D4</text>
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(197.396435 376.373315)">D3</text>
     <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(126.649247 388.690909)">position mismatch=0.062</text>
    </g>
   </g>
@@ -179,7 +179,7 @@ L 688.193283 529.320975
 " clip-path="url(#pae47826763)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #ffdd33; stroke-width: 1.5"/>
    </g>
    <g id="text_4">
-    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(548.833956 376.373315)">D4 after one correction (not initial)</text>
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(548.833956 376.373315)">D3 after one correction (not initial)</text>
     <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(579.071065 388.690909)">position mismatch=0.042</text>
    </g>
   </g>

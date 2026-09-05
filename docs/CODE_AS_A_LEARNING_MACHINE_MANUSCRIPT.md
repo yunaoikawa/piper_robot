@@ -1395,9 +1395,11 @@ Endpoint depth changes mainly when the door actually opens. To measure an
 earlier part of the behavior, we also re-evaluated the initial preclose of each
 identifiable selected run, before its subsequent image-based correction. This
 is **not** the first movement in the entire development history. The selected
-runs match the D1, D2, and D4 runs in the endpoint comparison; earlier manual
+runs match the historical D1, D2, and D4 runs in the endpoint comparison; earlier manual
 experiments and unsuccessful retries are not converted into additional agent
-configurations.
+configurations. For the compact approach figure only, these measured runs are
+renumbered D1, D2, and D3. Historical IDs remain unchanged in the raw evidence
+and endpoint figure; unmeasured configurations are omitted from this display.
 
 The fixed evaluator detects the red EYELA label on the rigid door parent in
 the right-wrist image. Its target is the existing compiler's mean feature at
@@ -1419,15 +1421,12 @@ approach.
 
 | Configuration | Selected initial-preclose image | Position mismatch \(E_{uv}\) |
 | --- | --- | ---: |
-| D0 | not identified | N/A |
 | D1 | `20260808T043120Z_demo_preclose/after/right.png` | 0.141824 |
 | D2 | `20260808T044056Z_retry_preclose_registration/after/right.png` | 0.138008 |
-| D3 | uncorrected first approach not established | N/A |
-| D4 | `03_aligned-yaw-preclose/motion/after/right.png` | 0.061900 |
-| D5 | no new physical execution | N/A |
+| D3 (historical D4) | `03_aligned-yaw-preclose/motion/after/right.png` | 0.061900 |
 
 We removed the log-area performance panel after a source-image audit found
-segmentation instability. D4's initial red mask split into components of 280
+segmentation instability. Display D3's initial red mask split into components of 280
 and 109 pixels, of which the detector retained only the largest. About 1.51
 seconds later, before the correction move and at the identical logged
 end-effector pose, it detected 452 pixels instead. Thus the apparent scale
@@ -1438,11 +1437,11 @@ panel does not establish that the remaining position metric is noise-free.
 Neither the tiny D1--D2 difference nor the printed decimal precision establishes
 a reliable ranking without repeated trials and uncertainty estimates.
 
-D3 is missing because orientation probes, restored poses, and manual yaw
+Historical D3 is omitted because orientation probes, restored poses, and manual yaw
 selection precede its final visual-alignment sequence. The `before` image of
-that sequence must not be relabeled as an uncorrected first approach. D4's
+that sequence must not be relabeled as an uncorrected first approach. Display D3's
 journal explicitly identifies attempt 1, visual-check step 0. Its approach
-already reuses the successful D3 anchor and incorporates live door-plane yaw;
+already reuses the successful historical D3 anchor and incorporates live door-plane yaw;
 the result therefore describes initialization in the same scene, not
 generalization to an unseen object placement. The following correction
 is followed by a position mismatch of 0.042177, versus 0.061900 in the initial
@@ -1454,16 +1453,17 @@ whole difference should not be attributed to the commanded correction.
 
 **Figure 14a. Initial-approach image-feature mismatch.** One selected run per
 measured configuration, evaluated with the same detector and successful-demo
-feature mean. Markers are not interpolated across missing configurations.
+feature mean. Only measured configurations are shown, relabeled D1--D3
+(historical D1, D2, D4). The values are unchanged and no curve is fitted.
 This diagnostic complements the endpoint result in Figure 14; it does not
 replace task success or establish a smooth learning curve.
 
 ![Audit of the label detections and successful-demo feature location](assets/code_as_learning_machine/door_first_approach_detection_audit.png)
 
 **Figure 14b. Source-image audit.** Green boxes/points show the detected red
-label; yellow crosses show the successful-demo feature mean. D1, D2, and D4
+label; yellow crosses show the successful-demo feature mean. Display D1, D2, and D3
 initial images select the intended label rather than the dark shadow or blue
-jaws. The fourth image shows D4 after one correction and is explicitly excluded
+jaws. The fourth image shows display D3 after one correction and is explicitly excluded
 from the initial-approach comparison. The full source paths, SHA-256 hashes,
 stage-selection reasons, formulas, and separate residuals are preserved in
 `docs/assets/code_as_learning_machine/door_first_approach_report.json` and can
