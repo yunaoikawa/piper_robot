@@ -1316,35 +1316,60 @@ The two histories should not be joined into one cross-task learning curve. The
 Cap experiment and its promotion commits occurred on 6 August 2026; the
 reported Door experiment occurred on 8 August. The tasks shared a robot and a
 substantial infrastructure layer, but their task-specific tool graphs were
-independently constructed. Figures 13 and 14 therefore give them separate
-categorical axes. The numbered stages summarize experimental hypotheses and
-evidence transitions; several stages were consolidated into one later Git
-commit and should not be read as one commit per point.
+independently constructed. Figures 13 and 14 therefore retain task-specific
+physical axes rather than collapsing unlike measurements into one subjective
+performance score. The numbered graph stages summarize experimental
+hypotheses and evidence transitions; several stages were consolidated into one
+later Git commit and should not be read as one commit per plotted observation.
 
-![Cap-specific categorical capability curve above its changing tool graph](assets/code_as_learning_machine/cap_tool_graph_evolution.png)
+For Cap alignment, the image-plane target error is normalized by the measured
+jaw span. The plotted observations are the final assessments preserved by the
+scene-observe, coarse-probe, right-view, right-align, joint-probe, and
+aligned-confirm runs. The coarse experiment made the error worse, from 1.188
+to 1.760 jaw spans; changing viewpoint reduced it to 0.441, and the final local
+calibration reduced it to 0.051. The transfer panel uses robot FK and the three
+immutable held-state captures. It accumulates the measured 9.175 mm vertical
+rise and the subsequent 107.415 mm three-dimensional end-effector displacement
+while independent aperture and RGB-D evidence continued to support retention.
 
-**Figure 13. Cap-specific tool-graph evolution.** Global white-component
+![Cap-specific quantitative observations above its changing tool graph](assets/code_as_learning_machine/cap_tool_graph_evolution.png)
+
+**Figure 13. Cap-specific quantitative evidence and tool-graph evolution.**
+Panel A reports the jaw-normalized image error directly stored by the
+relational cap-and-jaw detector; lower is better, and the non-monotonic coarse
+probe is retained. Panel B reports cumulative verified held motion in
+millimetres, not an assigned capability level. Global white-component
 selection and an incorrect tabletop relation did not establish target
-identity. A click-bound cap-above-neck relation, jaw geometry, registered
-RGB-D, catalog-completed MJCF geometry, and a seven-probe local Jacobian then
-supported an aligned side pinch. Aperture, FK, RGB-D source appearance, and a
-stationary-support witness promoted removal and held transport. The later
-release branch added motion and evaluation code but did not increase the
-verified prefix because stable placement evidence was absent. The vertical
-positions are categorical evidence states, not fabricated success-rate values.
+identity. A click-bound cap-above-neck relation, registered RGB-D,
+catalog-completed MJCF geometry, and a seven-probe local Jacobian supported the
+eventual side pinch and transfer. The release branch remains unverified and is
+therefore not turned into a placement-performance sample.
 
-![Door-specific categorical capability curve above its changing tool graph](assets/code_as_learning_machine/door_tool_graph_evolution.png)
+For Door, let (d_{open}) and (d_{closed}) be the registered median metric-depth
+errors to independently captured endpoint references. The goal-conditioned
+score is
 
-**Figure 14. Door-specific tool-graph evolution.** Generic replay was replaced
-by contact-relative demonstration compilation. Non-empty aperture, a 5 mm
-proof, and checkpoints separated brief contact from retained pulling. Metric
-RGB-D plane alignment and bounded wrist correction replaced shadow-based
-reasoning and produced an independently observed open endpoint. A registered
-endpoint classifier, a separate close demonstration, and staged orchestration
-then supported autonomous opening and closing. The final mask hardening
-improved evidence quality without claiming another physical capability, hence
-the plateau. Complexity was not strictly monotonic: failed visual and direct
-joint heuristics were removed or given less authority as this graph evolved.
+\[
+S_{open}=\frac{d_{closed}}{d_{open}+d_{closed}}, \qquad
+S_{close}=\frac{d_{open}}{d_{open}+d_{closed}}.
+\]
+
+It lies in \([0,1]\), and higher always means closer to the requested endpoint.
+In the preserved autonomous runs, opening changed the score from 0.163 to
+0.824, while closing changed it from 0.196 to 0.984.
+
+![Door-specific quantitative endpoint observations above its changing tool graph](assets/code_as_learning_machine/door_tool_graph_evolution.png)
+
+**Figure 14. Door-specific quantitative endpoint evidence and tool-graph
+evolution.** The upper panel contains four registered RGB-D observations from
+the final autonomous open and close runs; it is not a fabricated success-rate
+curve over earlier revisions. The lower panels record how generic replay was
+replaced by contact-relative demonstration compilation, non-empty aperture, a
+5 mm proof, checkpointed pulling, metric plane alignment, distinct open/close
+branches, and a hardened endpoint mask. Earlier revisions are not silently
+assigned zero endpoint scores because no comparable frozen endpoint assessment
+was recorded for them. Complexity was also not strictly monotonic: failed
+visual and direct-joint heuristics were removed or given less authority.
 
 This flexibility is a central benefit of code as a learning substrate. The
 agent can import or call a large model when semantic ambiguity demands it,
@@ -1865,8 +1890,8 @@ the ordering within each source family.
 | 10 | `cap_verified_transfer_rgb.jpg` | Full RGB frames and crops from `20260806T090454.207716Z...hold_before_lift`, `20260806T090516.450533Z...lift_probe10`, and `20260806T090638.703002Z...transport_home_hold` |
 | 11 | `cap_verified_transfer_depth.jpg` | Stored depth renderings from the same three immutable captures as Figure 10 |
 | 12 | `cap_release_attempt.jpg` | Head RGB from `20260806T090952.499727Z...place_descent40_check`, `20260806T091148.017296Z...place_clearance6_check`, `20260806T091251.693211Z...place_preopen`, `20260806T091320.073893Z...placed_released`, and `20260806T091401.642185Z...placed_retracted_validation` |
-| 13 | `cap_tool_graph_evolution.png` and `.svg` | Cap-only categorical synthesis generated by `docs/generate_code_learning_tool_graph_figure.py` from the 6 August chronology, commits `fc831c0` and `1f07761`, and evidence in Sections 6--7; no numerical success-rate samples are implied |
-| 14 | `door_tool_graph_evolution.png` and `.svg` | Door-only categorical synthesis generated by the same script from the 8 August chronology, commits `2b6ccab` through `283b913`, and evidence in Sections 5--7; stages are hypothesis/evidence transitions rather than one commit each |
+| 13 | `cap_tool_graph_evolution.png` and `.svg` | Generated by `docs/generate_code_learning_tool_graph_figure.py` from the tracked snapshot `quantitative_figure_evidence.json`, whose entries include raw-source paths and SHA-256 hashes. Alignment values come from six preserved `culture_media_cap_adapter_20260806_*` JSON reports; held motion is recomputed from right-arm FK in captures `...090454...hold_before_lift`, `...090516...lift_probe10`, and `...090638...transport_home_hold`. The lower graph follows the 6 August chronology and commits `fc831c0` and `1f07761` |
+| 14 | `door_tool_graph_evolution.png` and `.svg` | Generated by the same script and tracked evidence snapshot. Goal-conditioned scores are recomputed from `relative_open_error` and `relative_closed_error` in the initial/final state JSON for `incubator_auto_open_20260808_demo_retry2` and `incubator_auto_close_20260808_demo`; the lower graph follows commits `2b6ccab` through `283b913` |
 
 The twelve verified Figure 1 demonstration stems, in the compiler's stored
 order, are `door_open_20260703_164850`, `door_open_20260703_163756`,

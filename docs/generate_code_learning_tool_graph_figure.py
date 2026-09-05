@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Generate separate, evidence-grounded Door and Cap evolution figures."""
+"""Generate separate, evidence-grounded Door and Cap evolution figures.
+
+The upper panels are recomputed from preserved experimental JSON rather than
+being assigned ordinal capability levels.  The lower panels summarize the
+changing executable tool graph; they are historical context, not extra data
+points on the quantitative axes.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+import json
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
@@ -11,6 +19,7 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parent
+REPOSITORY = ROOT.parent
 OUTPUT = ROOT / "assets" / "code_as_learning_machine"
 
 NAVY = "#17324D"
@@ -266,56 +275,58 @@ def cap_c5(ax):
             color=RED, weight="bold")
 
 
-def make_figure(
-    *, title, subtitle, stem, stage_labels, levels, level_labels,
-    annotations, drawers, plateau_from=None,
-):
-    count = len(drawers)
+def load_json(relative_path):
+    with (REPOSITORY / relative_path).open() as stream:
+        return json.load(stream)
+
+
+def validate_available_source_hashes(value):
+    """Verify local raw inputs while allowing generation from the tracked snapshot."""
+    if isinstance(value, dict):
+        if "source_path" in value and "source_sha256" in value:
+            path = REPOSITORY / value["source_path"]
+            if path.exists():
+                actual = hashlib.sha256(path.read_bytes()).hexdigest()
+                if actual != value["source_sha256"]:
+                    raise ValueError(f"source hash changed: {value['source_path']}")
+        for item in value.values():
+            validate_available_source_hashes(item)
+    elif isinstance(value, list):
+        for item in value:
+            validate_available_source_hashes(item)
+
+
+def goal_conditioned_endpoint_score(state, goal):
+    """Map registered endpoint errors to [0, 1], with 1 at the requested goal."""
+    d_open = float(state["relative_open_error"])
+    d_closed = float(state["relative_closed_error"])
+    denominator = d_open + d_closed
+    if denominator <= 0:
+        raise ValueError("endpoint errors must have a positive sum")
+    if goal == "open":
+        return d_closed / denominator
+    if goal == "closed":
+        return d_open / denominator
+    raise ValueError(f"unsupported endpoint goal: {goal}")
+
+
+def figure_shell(title, subtitle, count=6):
     fig = plt.figure(figsize=(18, 10), facecolor="white")
     grid = fig.add_gridspec(
-        2, count, height_ratios=[1.02, 1.0], left=0.16, right=0.988,
-        top=0.89, bottom=0.055, hspace=0.27, wspace=0.09,
+        2, count, height_ratios=[1.02, 1.0], left=0.075, right=0.988,
+        top=0.875, bottom=0.06, hspace=0.30, wspace=0.14,
     )
-    ax = fig.add_subplot(grid[0, :])
-    x = np.arange(count, dtype=float)
-    y = np.asarray(levels, dtype=float)
-    ax.set_xlim(-0.15, count - 0.55)
-    ax.set_ylim(-0.25, max(y) + 0.45)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.spines[["left", "bottom"]].set_color(NAVY)
-    ax.spines[["left", "bottom"]].set_linewidth(1.35)
-    ax.set_xticks(x)
-    ax.set_xticklabels(stage_labels, fontsize=9)
-    ticks = sorted(set(levels))
-    ax.set_yticks(ticks)
-    ax.set_yticklabels([level_labels[item] for item in ticks], fontsize=8.5)
-    ax.set_ylabel("Highest evidence-supported capability prefix", fontsize=11,
-                  color=NAVY, labelpad=16)
-    ax.grid(axis="both", color=GRID, linewidth=0.8, linestyle=":")
-    ax.plot(x, y, color=BLUE, linewidth=3.1, zorder=3)
-    ax.scatter(x, y, s=82, color="white", edgecolor=BLUE, linewidth=2.3,
-               zorder=4)
-    if plateau_from is not None:
-        ax.plot(x[plateau_from:], y[plateau_from:], color=ORANGE, linewidth=4,
-                zorder=5)
-    for index, label in enumerate(annotations):
-        below = index >= count - 2 and y[index] == y[-1]
-        ax.annotate(
-            label, (x[index], y[index]), xytext=(0, -38 if below else 23),
-            textcoords="offset points", ha="center",
-            va="top" if below else "bottom", fontsize=8.6,
-            color=RED if index == count - 1 and plateau_from is not None else NAVY,
-            weight="bold" if index >= count - 2 else "normal",
-        )
-    for column, draw in enumerate(drawers):
-        draw(fig.add_subplot(grid[1, column]))
-    fig.suptitle(title, x=0.16, y=0.955, ha="left", fontsize=17,
+    fig.suptitle(title, x=0.075, y=0.957, ha="left", fontsize=17,
                  color=NAVY, weight="bold")
-    fig.text(0.162, 0.915, subtitle, ha="left", va="center", fontsize=10.3,
+    fig.text(0.077, 0.912, subtitle, ha="left", va="center", fontsize=10.3,
              color=GRAY)
+    return fig, grid
+
+
+def finish_figure(fig, *, stem):
     fig.text(
-        0.16, 0.018,
-        "Lower panels show the decisive graph slice added or changed at each stage; later stages retain applicable earlier components.",
+        0.075, 0.018,
+        "Upper panels are computed from preserved observations; lower panels show the changing executable graph and are not additional samples.",
         ha="left", fontsize=8.2, color=GRAY,
     )
     OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -331,74 +342,140 @@ def make_figure(
     return png, svg
 
 
+def make_door_figure():
+    evidence = load_json(
+        "docs/assets/code_as_learning_machine/quantitative_figure_evidence.json"
+    )
+    sources = evidence["door_endpoint"]
+    labels = [item["label"].replace(" ", "\n") for item in sources]
+    scores = [
+        goal_conditioned_endpoint_score(item, item["goal"])
+        for item in sources
+    ]
+    fig, grid = figure_shell(
+        "Door task: quantitative endpoint progress and the tool graph that enabled it",
+        "Registered metric-depth errors; higher is closer to the requested open or closed reference.",
+    )
+    ax = fig.add_subplot(grid[0, :])
+    x = np.arange(4, dtype=float)
+    ax.set_xlim(-0.35, 3.35)
+    ax.set_ylim(0, 1.05)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.spines[["left", "bottom"]].set_color(NAVY)
+    ax.set_ylabel("Goal-conditioned endpoint score", fontsize=11, color=NAVY)
+    ax.set_xticks(x, labels, fontsize=9.5)
+    ax.set_yticks(np.linspace(0, 1, 6))
+    ax.grid(color=GRID, linewidth=0.8, linestyle=":")
+    ax.axhspan(0.8, 1.0, color="#E6F4EA", alpha=0.8, zorder=0)
+    ax.text(3.31, 0.89, "target-like", ha="right", va="center", fontsize=8.5,
+            color=GREEN, weight="bold")
+    ax.plot(x[:2], scores[:2], color=BLUE, linewidth=3, marker="o",
+            markersize=8, markerfacecolor="white", markeredgewidth=2.2)
+    ax.plot(x[2:], scores[2:], color=ORANGE, linewidth=3, marker="o",
+            markersize=8, markerfacecolor="white", markeredgewidth=2.2)
+    ax.axvline(1.5, color=GRID, linewidth=1.2, linestyle="--")
+    for index, score in enumerate(scores):
+        ax.annotate(f"{score:.3f}", (x[index], score), xytext=(0, 12),
+                    textcoords="offset points", ha="center", fontsize=9,
+                    color=NAVY, weight="bold")
+    ax.text(
+        0.02, 0.06,
+        r"$S_{open}=d_{closed}/(d_{open}+d_{closed})$    "
+        r"$S_{close}=d_{open}/(d_{open}+d_{closed})$",
+        transform=ax.transAxes, fontsize=9.5, color=GRAY,
+    )
+    for column, draw in enumerate((door_d0, door_d1, door_d2, door_d3, door_d4, door_d5)):
+        draw(fig.add_subplot(grid[1, column]))
+    return finish_figure(fig, stem="door_tool_graph_evolution")
+
+
+def make_cap_figure():
+    evidence = load_json(
+        "docs/assets/code_as_learning_machine/quantitative_figure_evidence.json"
+    )
+    alignment_sources = evidence["cap_alignment"]
+    alignment = [item["error_norm_jaw_spans"] for item in alignment_sources]
+    transfer_sources = evidence["cap_transfer"]
+    before, lifted, transported = (
+        np.asarray(item["right_ee_translation_xyz_m"], dtype=float)
+        for item in transfer_sources
+    )
+    lift_mm = float((lifted[2] - before[2]) * 1000.0)
+    transport_mm = float(np.linalg.norm(transported - lifted) * 1000.0)
+    held_path_mm = (0.0, lift_mm, lift_mm + transport_mm)
+
+    fig, grid = figure_shell(
+        "Cap task: quantitative alignment and held-motion evidence above its tool graph",
+        "The two axes retain their physical meanings; they are not collapsed into an arbitrarily weighted score.",
+    )
+    align_ax = fig.add_subplot(grid[0, :4])
+    x = np.arange(len(alignment), dtype=float)
+    align_ax.spines[["top", "right"]].set_visible(False)
+    align_ax.spines[["left", "bottom"]].set_color(NAVY)
+    align_ax.set_ylabel(r"Jaw-normalized image error  $\Vert e\Vert$", fontsize=10.5,
+                        color=NAVY)
+    align_ax.set_xticks(
+        x, [item["label"].replace(" ", "\n") for item in alignment_sources],
+        fontsize=8.5,
+    )
+    align_ax.set_ylim(0, max(alignment) * 1.15)
+    align_ax.grid(color=GRID, linewidth=0.8, linestyle=":")
+    align_ax.plot(x, alignment, color=BLUE, linewidth=2.8, marker="o",
+                  markersize=7.5, markerfacecolor="white", markeredgewidth=2)
+    align_ax.annotate("exploration worsened error", (1, alignment[1]),
+                      xytext=(20, -28), textcoords="offset points", fontsize=8.4,
+                      color=RED, arrowprops={"arrowstyle": "->", "color": RED})
+    for index in (0, 2, 4, 5):
+        align_ax.annotate(f"{alignment[index]:.3f}", (x[index], alignment[index]),
+                          xytext=(0, 10), textcoords="offset points", ha="center",
+                          fontsize=8.5, color=NAVY, weight="bold")
+    align_ax.text(0.01, 0.96, "A  Approach alignment (lower is better)",
+                  transform=align_ax.transAxes, va="top", fontsize=10,
+                  color=NAVY, weight="bold")
+
+    held_ax = fig.add_subplot(grid[0, 4:])
+    hx = np.arange(3, dtype=float)
+    held_ax.spines[["top", "right"]].set_visible(False)
+    held_ax.spines[["left", "bottom"]].set_color(NAVY)
+    held_ax.set_ylabel("Cumulative verified held motion (mm)", fontsize=10.5,
+                       color=NAVY)
+    held_ax.set_xticks(hx, ("before\nlift", "lift\nprobe", "held after\ntransport"),
+                       fontsize=8.5)
+    held_ax.set_ylim(0, held_path_mm[-1] * 1.22)
+    held_ax.grid(color=GRID, linewidth=0.8, linestyle=":")
+    held_ax.plot(hx, held_path_mm, color=GREEN, linewidth=2.8, marker="o",
+                 markersize=7.5, markerfacecolor="white", markeredgewidth=2)
+    for index, value in enumerate(held_path_mm):
+        held_ax.annotate(f"{value:.3f}", (hx[index], value), xytext=(0, 10),
+                         textcoords="offset points", ha="center", fontsize=8.5,
+                         color=NAVY, weight="bold")
+    held_ax.text(0.02, 0.96, "B  Retained transfer (higher is farther)",
+                 transform=held_ax.transAxes, va="top", fontsize=10,
+                 color=NAVY, weight="bold")
+    held_ax.text(0.98, 0.08, f"+{lift_mm:.3f} mm vertical\n+{transport_mm:.3f} mm 3-D",
+                 transform=held_ax.transAxes, ha="right", fontsize=8.4, color=GRAY)
+
+    for column, draw in enumerate((cap_c0, cap_c1, cap_c2, cap_c3, cap_c4, cap_c5)):
+        draw(fig.add_subplot(grid[1, column]))
+    return finish_figure(fig, stem="cap_tool_graph_evolution")
+
+
 def main():
+    evidence = load_json(
+        "docs/assets/code_as_learning_machine/quantitative_figure_evidence.json"
+    )
+    validate_available_source_hashes(evidence)
     plt.rcParams.update(
         {
             "font.family": "DejaVu Sans",
             "axes.titleweight": "bold",
             "svg.fonttype": "none",
-            "svg.hashsalt": "piper_robot_task_tool_graphs_v2",
+            "svg.hashsalt": "piper_robot_task_tool_graphs_v3",
         }
     )
     outputs = []
-    outputs.extend(
-        make_figure(
-            title="Door task: the executable system changed as different failures became measurable",
-            subtitle=(
-                "Pasteur experiments on 8 August 2026; task states are categorical, "
-                "not fabricated success-rate samples."
-            ),
-            stem="door_tool_graph_evolution",
-            stage_labels=(
-                "D0\ngeneric replay", "D1\nrelative demo", "D2\nmechanical proof",
-                "D3\nmetric alignment", "D4\nautonomous endpoints",
-                "D5\nevidence hardening",
-            ),
-            levels=(0, 1, 2, 3, 4, 4),
-            level_labels={
-                0: "unverified motion", 1: "contact-frame approach",
-                2: "verified 5 mm proof", 3: "verified open endpoint",
-                4: "verified open + close",
-            },
-            annotations=(
-                "No endpoint contract", "Absolute replay rejected",
-                "Short proof passes; slips remain", "Door opens before detected slip",
-                "Fresh RGB-D verifies both endpoints", "Same result; stronger mask",
-            ),
-            drawers=(door_d0, door_d1, door_d2, door_d3, door_d4, door_d5),
-            plateau_from=4,
-        )
-    )
-    outputs.extend(
-        make_figure(
-            title="Cap task: a separate tool graph was learned without a cap action demonstration",
-            subtitle=(
-                "Pasteur experiments on 6 August 2026, two days before the reported Door run; "
-                "task states are categorical."
-            ),
-            stem="cap_tool_graph_evolution",
-            stage_labels=(
-                "C0\nambiguous target", "C1\nbound identity",
-                "C2\ncompleted 3-D scene", "C3\nlocal control",
-                "C4\nheld transfer", "C5\nrelease branch",
-            ),
-            levels=(0, 1, 2, 3, 4, 4),
-            level_labels={
-                0: "wrong/ambiguous target", 1: "identity bound",
-                2: "3-D approach model", 3: "aligned side pinch",
-                4: "verified removal + held transport",
-            },
-            annotations=(
-                "Global whiteness fails", "Click + support relation",
-                "Depth + catalog complete volume",
-                "Seven probes identify local Jacobian",
-                "9.175 mm lift; 107.415 mm transport",
-                "Placement remains unverified",
-            ),
-            drawers=(cap_c0, cap_c1, cap_c2, cap_c3, cap_c4, cap_c5),
-            plateau_from=4,
-        )
-    )
+    outputs.extend(make_door_figure())
+    outputs.extend(make_cap_figure())
     for path in outputs:
         print(path)
 

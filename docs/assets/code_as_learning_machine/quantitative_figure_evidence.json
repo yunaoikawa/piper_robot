@@ -1,0 +1,95 @@
+{
+  "schema": "piper_robot.code_learning_quantitative_figure_evidence/v1",
+  "cap_alignment": [
+    {
+      "label": "scene observe",
+      "error_norm_jaw_spans": 1.187654568051683,
+      "source_path": "data/runs/pasteur/culture_media_cap_adapter_20260806_scene_refresh_observe_v2/run.json",
+      "source_sha256": "3391bdd51f823128542da36a3834e4bcb38e30848b0e2f918619fd77e53ea12c"
+    },
+    {
+      "label": "coarse probe",
+      "error_norm_jaw_spans": 1.7600482564962128,
+      "source_path": "data/runs/pasteur/culture_media_cap_adapter_20260806_coarse_01/run.json",
+      "source_sha256": "c4bc20bed94e47d41618b8b718aed31164467aef32b22761ac483ade3680db2c"
+    },
+    {
+      "label": "right view",
+      "error_norm_jaw_spans": 0.4411383103308194,
+      "source_path": "data/runs/pasteur/culture_media_cap_adapter_20260806_right_reobserve/run.json",
+      "source_sha256": "6a5eb60ddbae4e73f3185587c2cfcce6f14d5706709d802cd8ca6d3ea826e3a1"
+    },
+    {
+      "label": "right align",
+      "error_norm_jaw_spans": 0.42687505281698723,
+      "source_path": "data/runs/pasteur/culture_media_cap_adapter_20260806_right_align_02/run.json",
+      "source_sha256": "09717c1dadbd16ea4d04f89148bb0dca091f5b4e196c23bda76059d2684fcf46"
+    },
+    {
+      "label": "joint probe",
+      "error_norm_jaw_spans": 0.28146880329864876,
+      "source_path": "data/runs/pasteur/culture_media_cap_adapter_20260806_joint1_probe/run.json",
+      "source_sha256": "b5af53d8ccd09b7774eb6f3d13ec885ccb4d24e229e49f24866a04d8a785a326"
+    },
+    {
+      "label": "aligned confirm",
+      "error_norm_jaw_spans": 0.050630921236299455,
+      "source_path": "data/runs/pasteur/culture_media_cap_adapter_20260806_aligned_confirm/run.json",
+      "source_sha256": "2facca2e57fcf0629b63ca6f91e82b320f70a85b98dff6348d5e494c806ee978"
+    }
+  ],
+  "cap_transfer": [
+    {
+      "label": "before lift",
+      "right_ee_translation_xyz_m": [0.2687969725282548, 0.09134066061193287, 0.7343450455715183],
+      "source_path": "data/captures/pasteur/2026-08-06/20260806T090454.207716Z_head_culture_media_cap_hold_before_lift_ce98d39c/manifest.json",
+      "source_sha256": "be9f70a6a1f926d3fed07153571fd730b3f37752d412063929d86d428baa6007"
+    },
+    {
+      "label": "lift probe",
+      "right_ee_translation_xyz_m": [0.2690369733717008, 0.09366381263537735, 0.7435198238901813],
+      "source_path": "data/captures/pasteur/2026-08-06/20260806T090516.450533Z_head_culture_media_cap_lift_probe10_792a8b3c/manifest.json",
+      "source_sha256": "fbeed4cc3e24df609078adba35c46901e56ec6c3a21d812dd6ce36af0432efb4"
+    },
+    {
+      "label": "held after transport",
+      "right_ee_translation_xyz_m": [0.3066250227120286, 0.04087481743328499, 0.8291851291372934],
+      "source_path": "data/captures/pasteur/2026-08-06/20260806T090638.703002Z_head_culture_media_cap_transport_home_hold_c01dae62/manifest.json",
+      "source_sha256": "80444c67ee378ae025f32367f52b3cabfa30df3735cd9ddb1d04a0fca839ebb1"
+    }
+  ],
+  "door_endpoint": [
+    {
+      "label": "Open before",
+      "goal": "open",
+      "relative_open_error": 1.4166666666666667,
+      "relative_closed_error": 0.2767857142857143,
+      "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/02_state_initial/state.json",
+      "source_sha256": "777d691fb1f38a145f06c114e10287f7dd739c92f8e2477e32f90c574df54ab3"
+    },
+    {
+      "label": "Open after",
+      "goal": "open",
+      "relative_open_error": 0.17857142857142858,
+      "relative_closed_error": 0.8333333333333334,
+      "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/12_state_open_attempt_1_result/state.json",
+      "source_sha256": "fccf43d69b419d7c0ae578bcff9fc214c149a46677460ad2ffdc1b102e6376ea"
+    },
+    {
+      "label": "Close before",
+      "goal": "closed",
+      "relative_open_error": 0.19642857142857142,
+      "relative_closed_error": 0.8035714285714286,
+      "source_path": "data/runs/pasteur/incubator_auto_close_20260808_demo/02_state_initial/state.json",
+      "source_sha256": "4c3bf7c18f614c5df4133febd6d2361e485c585f705ef75c62273a189bb1853e"
+    },
+    {
+      "label": "Close after",
+      "goal": "closed",
+      "relative_open_error": 1.0803571428571428,
+      "relative_closed_error": 0.017857142857142856,
+      "source_path": "data/runs/pasteur/incubator_auto_close_20260808_demo/05_state_close_result/state.json",
+      "source_sha256": "632223b54673a17831831c758396c3e31b8439879be2e226d5520208f34b392d"
+    }
+  ]
+}
