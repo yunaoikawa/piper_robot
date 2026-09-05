@@ -1472,6 +1472,73 @@ connecting to the robot. Generate the plots and source-image audit with
 `python docs/generate_code_learning_tool_graph_figure.py --include-source-audit`;
 omit the flag when only the tracked evidence snapshot is available.
 
+#### Conditional metric-distance reconstruction
+
+We next tested whether the image diagnostic could be replaced by an actual
+length. A fully registered handle-distance estimate is **not available** from
+the audited inputs: `pasteur_head_robot_calibration.json` is unaccepted with a
+null camera-to-robot transform, and these executions do not attach an
+appliance-frame enrollment. The door-plane estimator's tag-derived coordinate
+frame must not silently be treated as the production end-effector frame. The
+historical plane-yaw correction alone does not supply a validated 3-D
+translation bridge.
+
+Instead, we report a conditional, same-robot-frame comparison:
+
+\[
+d_{EE}=1000\,\|p_{EE,initial}-p_{EE,successful\ contact}\|_2\quad\text{mm}.
+\]
+
+The reference is the earlier same-session, yaw-aligned open-jaw contact
+(`incubator_door_20260808_retry6_yaw_aligned_contact/after/observation.json`),
+which was followed by retained proof and an observed open endpoint. It is not
+the later autonomous contact being evaluated. All selected initial poses and
+both contact-reference poses were independently recomputed from their saved
+joint vectors using `ProductionRightFK` and the production MJCF; the FK and
+logged EE positions matched. This verifies coordinate bookkeeping, not
+independent physical accuracy. Physical right uses the historical production
+branch `left_arm_*` and EE frame `left_arm_ee`; the branch name does not change
+the physical arm identity.
+
+| Display configuration | Distance to earlier contact (mm) | Orientation difference (degrees) | Distance using alternate contact (mm) |
+| --- | ---: | ---: | ---: |
+| D1 | 18.23 | 10.06 | 15.00 |
+| D2 | 18.41 | 10.21 | 15.14 |
+| D3 | 12.53 | 0.70 | 13.92 |
+
+The alternate reference is the later autonomous contact and is used only to
+expose reference sensitivity. It is not an independent validation trial or a
+confidence interval. The distance is measured between EE-frame origins, not
+between a jaw pad and the handle surface. Orientation remains a separate
+quantity. A preclose pose deliberately leaves a final approach gap, and a
+workable grasp pose is not necessarily the unique optimum; consequently,
+zero distance is not a necessary condition for a good initial approach.
+
+As a separate check, we registered each saved head RGB image to the earlier
+contact image using fixed tags 3 and 12, while withholding appliance tag 13.
+The held-out tag's median corner discrepancies were 6.67, 0.96, and 7.95 image
+pixels for D1--D3. Over 25 valid interior depth pixels at that tag, the median
+absolute registered depth differences were 2.93, 0.98, and 0.98 mm. These are
+small local image/depth discrepancies, but they do not establish full 3-D
+stationarity of the door, accurate handle geometry, or submillimetre accuracy.
+No translation correction derived from this homography was applied to the
+robot coordinates.
+
+![Conditional EE-distance comparison with contact-reference sensitivity](assets/code_as_learning_machine/door_first_approach_distance.png)
+
+**Figure 14c. Estimated distance to a recorded successful contact.** Blue
+circles use the earlier contact reference; gray crosses show sensitivity to
+the later contact reference. The estimate assumes a fixed closed door and
+robot base, is not a fully RGB-D-registered handle distance, and does not
+replace the image-only diagnostic. The D1--D2 difference is not evidence of
+meaningful improvement; the orientation comparison shows a larger change in
+the final configuration. Recompute the complete coordinate, FK, and held-out
+head checks with `python docs/evaluate_door_approach_distance.py`. Inputs and
+hashes are stored in
+`docs/assets/code_as_learning_machine/door_approach_distance_report.json`.
+The explicit `fully_registered_3d_distance_available: false` flag prevents this
+fallback from being mistaken for validated robot-motion geometry.
+
 Time to verified opening is a useful additional metric, but the preserved
 timing scopes differ. The D1 before/after observations bracket 8.66 seconds of
 the long-pull stage and end with the door closed. The complete D4 autonomous

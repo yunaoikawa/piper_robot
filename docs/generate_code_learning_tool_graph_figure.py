@@ -480,17 +480,26 @@ def door_approach_rows(report):
             for i, r in enumerate(measured, 1)]
 
 
-def make_door_approach_figure():
+def make_door_approach_figure(*, distance=False):
     report = load_json("docs/assets/code_as_learning_machine/door_first_approach_report.json")
     validate_available_source_hashes(report)
     rows = door_approach_rows(report)
+    distance_rows = None
+    if distance:
+        distance_report = load_json("docs/assets/code_as_learning_machine/door_approach_distance_report.json")
+        validate_available_source_hashes(distance_report)
+        distance_rows = distance_report["configurations"]
+        if [r["historical_stage"] for r in distance_rows] != [r["source_stage"] for r in rows]:
+            raise ValueError("Distance and image configurations do not match")
     fig = plt.figure(figsize=(12, 11), facecolor="white")
     grid = fig.add_gridspec(2, len(rows), height_ratios=[1.25, 1],
                            left=0.13, right=0.97, top=0.85, bottom=0.11,
                            hspace=0.30, wspace=0.12)
-    fig.suptitle("Door: first-approach alignment", x=0.13, y=0.97,
+    fig.suptitle("Door: estimated approach distance" if distance else "Door: first-approach alignment", x=0.13, y=0.97,
                  ha="left", fontsize=25, color=NAVY, weight="bold")
-    fig.text(0.13, 0.914, "Red-label position vs. successful-demo mean\nLower is closer; not a direct grasp-pose measurement.",
+    subtitle = ("EE-frame distance to recorded successful contact\nFixed-door assumption; NOT fully RGB-D registered." if distance else
+                "Red-label position vs. successful-demo mean\nLower is closer; not a direct grasp-pose measurement.")
+    fig.text(0.13, 0.914, subtitle,
              fontsize=15, color=GRAY, linespacing=1.5, va="center")
     labels = [r["stage"] for r in rows]
     ax = fig.add_subplot(grid[0, :])
@@ -499,16 +508,23 @@ def make_door_approach_figure():
     ax.set_xticks(range(len(rows)), labels, fontsize=18)
     ax.tick_params(axis="y", labelsize=15)
     ax.set_xlabel("Agent configuration", color=NAVY, fontsize=17, labelpad=10)
-    ax.set_ylabel("Normalized image-position error", color=NAVY, fontsize=17, labelpad=12)
+    ax.set_ylabel("Estimated EE-position distance (mm)" if distance else "Normalized image-position error", color=NAVY, fontsize=17, labelpad=12)
     ax.grid(color=GRID, linestyle=":")
-    values = [r["uv_error"] for r in rows]
+    values = [r["distance_mm"] for r in distance_rows] if distance else [r["uv_error"] for r in rows]
     ax.set_ylim(0, np.nanmax(values) * 1.35)
     # Markers only: missing configurations and single observations must not
     # become an interpolated or apparently smooth learning curve.
     ax.plot(range(len(rows)), values, linestyle="none", marker="o", color=BLUE,
-            markersize=12, markerfacecolor="white", markeredgewidth=3)
+            markersize=12, markerfacecolor="white", markeredgewidth=3,
+            label="Earlier successful contact reference")
+    if distance:
+        ax.plot(range(len(rows)), [r["alternate_contact_distance_mm"] for r in distance_rows],
+                linestyle="none", marker="x", color=GRAY, markersize=10, markeredgewidth=2,
+                label="Alternate contact (sensitivity only)")
+        ax.legend(loc="upper right", fontsize=11, frameon=False)
     for index, value in enumerate(values):
-        ax.annotate(f"{value:.3f}", (index, value), xytext=(0, 16),
+        offset = (-44, -7) if distance and distance_rows[index]["alternate_contact_distance_mm"] > value else (0, 16)
+        ax.annotate(f"{value:.1f}" if distance else f"{value:.3f}", (index, value), xytext=offset,
                     textcoords="offset points", ha="center", color=NAVY, fontsize=19, weight="bold")
     graphs = {
         "D1": ("Relative demo", ("Teleoperation data", "Demo compiler", "Contact-relative path")),
@@ -528,9 +544,10 @@ def make_door_approach_figure():
                  edge=(BLUE, TEAL, GREEN)[i])
             if i < 2:
                 arrow(panel, (0.5, y-0.015), (0.5, y-0.065), width=1.8)
-    fig.text(0.13, 0.064, "One selected run per configuration. D3 reuses a successful same-scene anchor.",
+    fig.text(0.13, 0.064, "Two contact references, not confidence intervals. Includes the intended preclose gap." if distance else
+             "One selected run per configuration. D3 reuses a successful same-scene anchor.",
              color=GRAY, fontsize=12)
-    return finish_figure(fig, stem="door_first_approach", footnote=
+    return finish_figure(fig, stem="door_first_approach_distance" if distance else "door_first_approach", footnote=
                          "Display D1 / D2 / D3 = historical D1 / D2 / D4. Unmeasured configurations omitted.")
 
 
@@ -586,6 +603,7 @@ def main():
     outputs.extend(make_door_figure())
     outputs.extend(make_cap_figure())
     outputs.extend(make_door_approach_figure())
+    outputs.extend(make_door_approach_figure(distance=True))
     if args.include_source_audit:
         outputs.extend(make_door_approach_audit())
     for path in outputs:

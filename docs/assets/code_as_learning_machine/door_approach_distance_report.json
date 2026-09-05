@@ -1,0 +1,309 @@
+{
+  "schema": "door_approach_distance_audit/v1",
+  "metric": "1000 * norm(recorded_actual_EE_xyz - recorded_success_contact_EE_xyz)",
+  "unit": "mm",
+  "fully_registered_3d_distance_available": false,
+  "registration_blocker": "Head-to-robot calibration is unaccepted and its transform is null. No demonstrated appliance-frame enrollment was attached to these runs.",
+  "reference": {
+    "definition": "Earlier same-session yaw-aligned open-jaw contact followed by proof retention and an observed open endpoint (historical D3); not the later autonomous result being scored.",
+    "pose_wxyz_xyz": [
+      0.681222917356842,
+      0.6999640615407724,
+      -0.16631916470470726,
+      0.1353646367080724,
+      0.3299222067961105,
+      0.07809644739920761,
+      0.9815710938030096
+    ],
+    "observation": {
+      "source_path": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_contact/after/observation.json",
+      "source_sha256": "02762d09520292c7ced9c5b6b366e840218159665bd0c105c50dc9f9879dd437"
+    },
+    "fk_reconstruction_error": {
+      "delta_xyz_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "distance_mm": 0.0,
+      "orientation_difference_deg": 0.0
+    },
+    "sources": [
+      {
+        "source_path": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_contact/after/head.png",
+        "source_sha256": "279d2f396272a6bda658cc1d709168f096220d626426d3935951a4f7061aa608"
+      },
+      {
+        "source_path": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_contact/after/head_depth.npy",
+        "source_sha256": "27374348b13e8eb461ca1a13bb24c693a6c5a1a5fbf37a0388550cc2b611974d"
+      },
+      {
+        "source_path": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_proof/proof_state.json",
+        "source_sha256": "1b5c1114cfc0b01c34484a6de5157fdfc82249f2d7456fbd14be535da17aa1f2"
+      }
+    ]
+  },
+  "reference_sensitivity": {
+    "definition": "Later autonomous contact; sensitivity check only, not a confidence interval or a separate approach sample.",
+    "reference_separation": {
+      "delta_xyz_mm": [
+        -1.6194335386386371,
+        4.2046699286076015,
+        0.8625045752487237
+      ],
+      "distance_mm": 4.587562352375136,
+      "orientation_difference_deg": 2.3857506480076123
+    },
+    "observation": {
+      "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/05_aligned-contact/motion/after/observation.json",
+      "source_sha256": "13fffc35828831a1497ce741376c9137d13d930939addabf61178c3e8384483d"
+    },
+    "fk_reconstruction_error": {
+      "delta_xyz_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "distance_mm": 0.0,
+      "orientation_difference_deg": 0.0
+    }
+  },
+  "limitations": [
+    "Assumes the closed door and physical robot base stayed fixed in the same robot coordinate frame.",
+    "Measures the EE-frame origin, not the jaw-contact point; orientation is reported separately, not mixed into millimetres.",
+    "Reference is a demonstrated workable contact, not the unique optimal contact or shortest collision-free travel distance.",
+    "Preclose deliberately leaves a contact-approach gap; a nonzero distance is expected even for a good approach.",
+    "Head registration uses fixed tags 3 and 12 and holds out appliance tag 13. Its 2-D/depth diagnostics do not establish full 3-D stationarity or submillimetre accuracy.",
+    "Joint/FK consistency verifies bookkeeping only, not independent physical metrology.",
+    "Do not use these retrospectively estimated distances as robot commands or replace the image-only figure silently."
+  ],
+  "configurations": [
+    {
+      "stage": "D1",
+      "historical_stage": "D1",
+      "status": "conditional_fixed_door_estimate",
+      "actual_ee_pose_wxyz_xyz": [
+        0.6612185596217417,
+        0.7250917728137247,
+        -0.09190058635694391,
+        0.1690745978461869,
+        0.3275420070276134,
+        0.09414993514025952,
+        0.9732603940974525
+      ],
+      "delta_xyz_mm": [
+        2.3801997684971266,
+        -16.053487741051907,
+        8.31069970555709
+      ],
+      "distance_mm": 18.233144248483427,
+      "orientation_difference_deg": 10.06255890380829,
+      "alternate_contact_distance_mm": 15.004030311432478,
+      "image_position_error": 0.14182436641655755,
+      "robot_state_audit": {
+        "observation": {
+          "source_path": "data/runs/pasteur/incubator_door_20260808T043120Z_demo_preclose/after/observation.json",
+          "source_sha256": "effda1492f9c93e1fe0086601ac6cbee05846e070cc469ea7b4bcbf372ee9cbf"
+        },
+        "fk_reconstruction_error": {
+          "delta_xyz_mm": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "distance_mm": 0.0,
+          "orientation_difference_deg": 0.0
+        }
+      },
+      "head_consistency": {
+        "status": "diagnostic_not_metric_registration",
+        "common_fixed_tag_ids": [
+          3,
+          12
+        ],
+        "live_tag_ids": [
+          3,
+          12,
+          13
+        ],
+        "registration_error_tag_lengths": 0.003839246808598218,
+        "inlier_corner_fraction": 1.0,
+        "held_out_tag_id": 13,
+        "held_out_corner_median_error_px": 6.674086018710794,
+        "held_out_depth_patch_pixel_count": 25,
+        "held_out_depth_median_absolute_difference_mm": 2.9296875,
+        "translation_correction_applied": false,
+        "sources": [
+          {
+            "source_path": "data/runs/pasteur/incubator_door_20260808T043120Z_demo_preclose/after/head.png",
+            "source_sha256": "26ac0e4f2678b53817e375fac01c18440558a0f11978f1c4bb4c5c18b4d444f3"
+          },
+          {
+            "source_path": "data/runs/pasteur/incubator_door_20260808T043120Z_demo_preclose/after/head_depth.npy",
+            "source_sha256": "1cf76fe638c9797caa8f95e07f32d7d94b8b6a5b9e746025b56e470a2cd5119f"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "D2",
+      "historical_stage": "D2",
+      "status": "conditional_fixed_door_estimate",
+      "actual_ee_pose_wxyz_xyz": [
+        0.6614388006165143,
+        0.7243198150959259,
+        -0.09138262624019573,
+        0.17178106449733097,
+        0.3274587100441912,
+        0.09439380048557362,
+        0.9733711680913432
+      ],
+      "delta_xyz_mm": [
+        2.463496751919314,
+        -16.297353086366012,
+        8.199925711666388
+      ],
+      "distance_mm": 18.409544142787684,
+      "orientation_difference_deg": 10.205403566268197,
+      "alternate_contact_distance_mm": 15.135160103782978,
+      "image_position_error": 0.13800826842542058,
+      "robot_state_audit": {
+        "observation": {
+          "source_path": "data/runs/pasteur/incubator_door_20260808T044056Z_retry_preclose_registration/after/observation.json",
+          "source_sha256": "2258b680e81f9287c4a0d3b5f65520e9344e3f40db0020aa42df29b54294ebda"
+        },
+        "fk_reconstruction_error": {
+          "delta_xyz_mm": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "distance_mm": 0.0,
+          "orientation_difference_deg": 0.0
+        }
+      },
+      "head_consistency": {
+        "status": "diagnostic_not_metric_registration",
+        "common_fixed_tag_ids": [
+          3,
+          12
+        ],
+        "live_tag_ids": [
+          3,
+          12,
+          13
+        ],
+        "registration_error_tag_lengths": 0.003377134663121491,
+        "inlier_corner_fraction": 1.0,
+        "held_out_tag_id": 13,
+        "held_out_corner_median_error_px": 0.9625134465339312,
+        "held_out_depth_patch_pixel_count": 25,
+        "held_out_depth_median_absolute_difference_mm": 0.9765625,
+        "translation_correction_applied": false,
+        "sources": [
+          {
+            "source_path": "data/runs/pasteur/incubator_door_20260808T044056Z_retry_preclose_registration/after/head.png",
+            "source_sha256": "8f63358de39ee79378a41f8ed8fdd6cbdb6d9c99f59e3c7b4deb4cc712a5b1c9"
+          },
+          {
+            "source_path": "data/runs/pasteur/incubator_door_20260808T044056Z_retry_preclose_registration/after/head_depth.npy",
+            "source_sha256": "681d8aec2a3b328846ff297963a4f8adf7d0c396ca73f7d7682d7dc5c187d937"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "D3",
+      "historical_stage": "D4",
+      "status": "conditional_fixed_door_estimate",
+      "actual_ee_pose_wxyz_xyz": [
+        0.6775922526639988,
+        0.7023738863063391,
+        -0.16766864266207,
+        0.139380376066783,
+        0.3197135865677372,
+        0.07340838602772153,
+        0.9760279331132112
+      ],
+      "delta_xyz_mm": [
+        10.208620228373322,
+        4.688061371486086,
+        5.543160689798321
+      ],
+      "distance_mm": 12.526790363971864,
+      "orientation_difference_deg": 0.6964334270921569,
+      "alternate_contact_distance_mm": 13.924343627425015,
+      "image_position_error": 0.06189977776402072,
+      "robot_state_audit": {
+        "observation": {
+          "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/03_aligned-yaw-preclose/motion/after/observation.json",
+          "source_sha256": "268d9a8e7046b2817838e975081b44647094117a25ff6ea59a64ec54b447db8c"
+        },
+        "fk_reconstruction_error": {
+          "delta_xyz_mm": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "distance_mm": 0.0,
+          "orientation_difference_deg": 0.0
+        }
+      },
+      "head_consistency": {
+        "status": "diagnostic_not_metric_registration",
+        "common_fixed_tag_ids": [
+          3,
+          12
+        ],
+        "live_tag_ids": [
+          3,
+          12,
+          13
+        ],
+        "registration_error_tag_lengths": 0.0052196169034100254,
+        "inlier_corner_fraction": 1.0,
+        "held_out_tag_id": 13,
+        "held_out_corner_median_error_px": 7.9457537359488075,
+        "held_out_depth_patch_pixel_count": 25,
+        "held_out_depth_median_absolute_difference_mm": 0.9765625,
+        "translation_correction_applied": false,
+        "sources": [
+          {
+            "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/03_aligned-yaw-preclose/motion/after/head.png",
+            "source_sha256": "ddb8931959ab217c04c296e9944e2070ead47ec7997b7aa989f718909bf83a8f"
+          },
+          {
+            "source_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/03_aligned-yaw-preclose/motion/after/head_depth.npy",
+            "source_sha256": "58af63cdb11c12a3d4c5bbe89c3fa0bbf038834f867bc27e26dd21f2d56eb0b3"
+          }
+        ]
+      }
+    }
+  ],
+  "sources": [
+    {
+      "source_path": "docs/assets/code_as_learning_machine/door_first_approach_report.json",
+      "source_sha256": "4e79243089569e65258d01bac4aac8f606cff744ad7c91d38b639956b55be4c2"
+    },
+    {
+      "source_path": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",
+      "source_sha256": "84da4de9489ee92b01e24f44c6cf4cba3596945337b077e019952e1b76810cf3"
+    },
+    {
+      "source_path": "src/configs/pasteur_head_robot_calibration.json",
+      "source_sha256": "3b966b0d27b4bd761e321cb50c0ae03fb258cae66e520e4a6de8bd4ef1f49eb7"
+    },
+    {
+      "source_path": "src/configs/pasteur_incubator_door_demo.json",
+      "source_sha256": "c66a0f5513341783cf565f3d9e195459a1b5bb9589e16cb5c24a3e286414c713"
+    },
+    {
+      "source_path": "rollout/teleop_trajectory_stream.py",
+      "source_sha256": "dc077cd5f08d524fe7082a22e75563c7b9d1f5e82069f42cf7c2cfd177354b74"
+    },
+    {
+      "source_path": "rollout/articulated_appliance.py",
+      "source_sha256": "b17e4c82a7e53e15f3d74619c1fffc26523cf636cb6e8447a56d7df55fb50bde"
+    }
+  ]
+}
