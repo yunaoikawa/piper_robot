@@ -1600,11 +1600,12 @@ stationarity of the door, accurate handle geometry, or submillimetre accuracy.
 No translation correction derived from this homography was applied to the
 robot coordinates.
 
-![Conditional EE-distance comparison using the earlier contact reference](assets/code_as_learning_machine/door_first_approach_distance.png)
+![Conditional EE-distance comparison using the earlier contact reference](assets/code_as_learning_machine/door_code_size_distance_dotplot.png)
 
-**Figure 14c. Estimated distance to a recorded successful contact.** Markers
-use the earlier contact reference (D4 uses a square to distinguish the nearby
-points); sensitivity to the later contact
+**Figure 14c. Estimated distance to a recorded successful contact.** The
+Seaborn dot plot shows code size against distance, with the vertical axis
+restricted to 10--20 mm. All points retain their actual coordinates without
+jitter. Markers use the earlier contact reference; sensitivity to the later contact
 reference is retained in the table and evidence report, not plotted. The estimate assumes a fixed closed door and
 robot base, is not a fully RGB-D-registered handle distance, and does not
 replace the image-only diagnostic. The D1--D2 difference is not evidence of
@@ -1617,6 +1618,8 @@ hashes are stored in
 `docs/assets/code_as_learning_machine/door_approach_distance_report.json`.
 The explicit `fully_registered_3d_distance_available: false` flag prevents this
 fallback from being mistaken for validated robot-motion geometry.
+Regenerate the dot-only figure with `python docs/plot_door_complexity_seaborn.py`
+(Seaborn 0.13.2); the earlier diagram-inclusive figure remains available separately.
 
 Time to verified opening is a useful additional metric, but the preserved
 timing scopes differ. The D1 before/after observations bracket 8.66 seconds of
