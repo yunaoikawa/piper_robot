@@ -49,6 +49,8 @@ def plot():
             path = ASSETS / f'door_code_size_distance_dotplot.{extension}'
             metadata = {'Date': None} if extension == 'svg' else {}
             fig.savefig(path, dpi=220, metadata=metadata)
+            if extension == 'svg':
+                path.write_text('\n'.join(line.rstrip() for line in path.read_text().splitlines()) + '\n')
     return fig, ax
 
 
