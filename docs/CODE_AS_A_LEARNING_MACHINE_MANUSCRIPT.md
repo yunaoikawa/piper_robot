@@ -867,7 +867,7 @@ closes the physical loss loop better.
 
 ### 5.10 From demonstration replay to verified opening: D1--D4
 
-The four snapshots in the code-size plot describe how the task-specific
+The four snapshots in the complexity plots describe how the task-specific
 program changed as physical trials exposed missing capabilities. Here D1--D4
 refer to the four measured approach snapshots, not the six-stage historical
 endpoint diagram. The source snapshots were reconstructed from acknowledged
@@ -1514,7 +1514,7 @@ that reached an open endpoint. The historical endpoint figure remains
 unchanged; unmeasured configurations are omitted from the approach display.
 The added configuration change concerns orchestration, not approach geometry.
 
-The horizontal axis now uses **quantitative task-code size** rather than
+The retained code-size view uses **quantitative task-code size** rather than
 qualitative complexity tiers: Python source lines excluding blank lines,
 comments, and module/class/function docstrings. We reconstruct each snapshot
 from acknowledged patches in the contemporaneous event log, stopping before
@@ -1562,6 +1562,13 @@ The private event log is required for reconstruction and is not redistributed;
 the tracked `door_code_complexity_report.json` contains per-file source hashes,
 counts, patch identifiers/hashes, snapshot boundaries, and Git cross-checks,
 allowing figures to regenerate without access to the private log.
+
+The primary dot-plot view (Figure 14c) instead uses the number of distinct
+external API call targets: 30, 30, 57, and 57. These are cumulative inventories
+at each snapshot, not runtime invocation counts or counts of newly added APIs
+alone. D2 adds no new target; D3 adds 27; D4 adds none. At this resolution,
+D1--D2 share an X coordinate and D3--D4 share both X and Y coordinates. We do
+not jitter the data or infer intermediate observations between 30 and 57.
 
 The fixed evaluator detects the red EYELA label on the rigid door parent in
 the right-wrist image. Its target is the existing compiler's mean feature at
@@ -1712,12 +1719,17 @@ stationarity of the door, accurate handle geometry, or submillimetre accuracy.
 No translation correction derived from this homography was applied to the
 robot coordinates.
 
-![Conditional EE-distance comparison using the earlier contact reference](assets/code_as_learning_machine/door_code_size_distance_dotplot.png)
+![External API count versus conditional EE position and orientation errors](assets/code_as_learning_machine/door_api_pose_errors_dotplot.png)
 
-**Figure 14c. Estimated distance to a recorded successful contact.** The
-Seaborn dot plot shows code size against distance, with the vertical axis
-restricted to 10--20 mm. All points retain their actual coordinates without
-jitter. Markers use the earlier contact reference; sensitivity to the later contact
+**Figure 14c. External API inventory versus initial EE-pose discrepancy.**
+The left Seaborn panel shows estimated position error with the vertical axis
+restricted to 10--20 mm. The right panel shows the full relative SO(3) rotation
+angle (not yaw alone) on a 0--12 degree axis. The angular values for D1--D4 are
+10.063, 10.205, 0.696, and 0.696 degrees. Both panels use distinct external API
+call-target count on the horizontal axis, not runtime invocation frequency.
+All four observations retain their actual coordinates without jitter;
+coincident D3/D4 points are jointly annotated. Markers use the earlier contact
+reference; sensitivity to the later contact
 reference is retained in the table and evidence report, not plotted. The estimate assumes a fixed closed door and
 robot base, is not a fully RGB-D-registered handle distance, and does not
 replace the image-only diagnostic. The D1--D2 difference is not evidence of
@@ -1731,7 +1743,8 @@ hashes are stored in
 The explicit `fully_registered_3d_distance_available: false` flag prevents this
 fallback from being mistaken for validated robot-motion geometry.
 Regenerate the dot-only figure with `python docs/plot_door_complexity_seaborn.py`
-(Seaborn 0.13.2); the earlier diagram-inclusive figure remains available separately.
+(Seaborn 0.13.2); the earlier code-size and diagram-inclusive figures remain
+available separately.
 
 Time to verified opening is a useful additional metric, but the preserved
 timing scopes differ. The D1 before/after observations bracket 8.66 seconds of
