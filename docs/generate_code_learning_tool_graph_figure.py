@@ -549,7 +549,7 @@ def make_door_approach_figure(*, distance=False):
                     arrowprops={"arrowstyle": "-", "color": GRAY, "lw": 0.8, "shrinkA": 3, "shrinkB": 9})
     graphs = {
         "D1": ("Relative demo", ("Teleoperation data", "Demo compiler", "Contact-relative path")),
-        "D2": ("Checkpointed pull", ("Close + aperture gate", "5 mm proof pull", "Checkpoints + slip stop")),
+        "D2": ("Contact / release", ("Open-jaw contact step", "Fixed-pose opening", "Explicit stage commands")),
         "D4_pre_parser_fix": ("Autonomy: before fix", ("RGB-D + aligned approach", "Mixed camera / JSON logs", "Parser stops workflow")),
         "D4": ("Autonomy: parser fixed", ("Same approach pipeline", "Robust JSON extraction", "Open + close completed")),
     }

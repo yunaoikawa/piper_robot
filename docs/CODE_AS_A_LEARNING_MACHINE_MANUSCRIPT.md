@@ -678,10 +678,12 @@ the program hypothesis changing structure rather than tuning a scalar gain.
 #### 19:01–19:08 JST: integrating observation, action, and endpoint state
 
 The components were assembled into `run_incubator_door_autonomy.py`. The first
-invocation failed before motion because native camera log text and JSON were
-mixed in one process output and the orchestrator could not parse the result. A
-parser patch extracted the outermost process JSON. Another retry correctly sent
-no commands when its preconditions were not met. The next retry opened the
+invocation completed the aligned pre-close motion but stopped before the next
+motion stage because native camera log text and JSON were mixed in one process
+output and the orchestrator could not parse the result. A parser patch was
+introduced, followed by a retry that failed without sending motion commands;
+the extraction logic was then corrected to select the outer process result.
+The next retry opened the
 door and classified the open endpoint. A subsequent close run reached the
 closed endpoint.
 
@@ -862,6 +864,116 @@ classical visual feature, and direct mechanical feedback. This negative tool
 selection is important: an LLM's advantage is not that it always calls the
 largest neural model, but that it can change tools when a more specific one
 closes the physical loss loop better.
+
+### 5.10 From demonstration replay to verified opening: D1--D4
+
+The four snapshots in the code-size plot describe how the task-specific
+program changed as physical trials exposed missing capabilities. Here D1--D4
+refer to the four measured approach snapshots, not the six-stage historical
+endpoint diagram. The source snapshots were reconstructed from acknowledged
+edits in the contemporaneous event log and cross-checked against subsequent
+Git commits. They contain 1,238, 1,312, 3,094, and 3,108 non-comment,
+non-docstring Python lines, respectively. These are snapshots of an evolving
+implementation, not four frozen policies evaluated in controlled trials:
+development sometimes continued between approach, contact, and pulling within
+the same selected run.
+
+**D1: encoding a demonstrated motion relative to contact.** The initial
+task-specific program converted twelve visually verified opening
+demonstrations into a reusable motion representation. It selected a
+representative contact pose and stored the subsequent trajectory as relative
+SE(3) transforms, rather than treating the recording as an absolute joint
+sequence. Existing robot kinematics and trajectory-streaming utilities
+provided execution, while gripper-aperture checks and a short proof pull
+provided contact evidence. The approach itself still relied on demonstrated
+world-frame waypoints. This supplied the basic motion for opening, but did not
+ensure that the live gripper engaged the recessed handle in the same way as in
+the demonstration. During the subsequent first contact-and-pull sequence,
+aperture remained non-empty after the 5 mm proof but approached zero during the
+long pull, and the door did not reach a verified open endpoint. Thus a
+plausible initial grasp was insufficient to establish reliable articulated
+motion.
+
+**D2: making contact approach and release explicit operations.** At the next
+measured pre-close snapshot, the exact source delta was 74 code lines and two
+functions: `move_to_demo_contact` and `open_in_place`. The former required fully
+open jaws before moving to the demonstrated contact pose; the latter opened
+the gripper while holding the wrist pose fixed. These additions separated
+approach, contact, and release instead of coupling every gripper action to
+wrist motion. They did not yet correct the underlying live contact geometry.
+Consistently, the retrospective distance to the recorded successful-contact
+reference remained approximately unchanged, from 18.2 to 18.4 mm. Importantly,
+the checkpointed-pull modification was added *after* this D2 approach snapshot;
+it should not be credited to the 1,312-line version. Earlier plots used
+"checkpointed pull" as shorthand for the later behavior in this run; the
+approach-snapshot diagrams now use "Contact / release" to avoid backdating the
+change.
+
+**D2 to D3: correcting geometry and introducing closed-loop execution.**
+The intervening development addressed two distinct failure modes: inaccurate
+handle engagement and loss of engagement during pulling. First, Record3D
+RGB-D and numerical plane fitting provided a metric estimate of the door's
+yaw, replacing the unreliable interpretation of a shadow near the gripper.
+A bounded wrist-image correction used the red label on the rigid door body
+as an auxiliary feature, not as the handle itself. The revised contact
+approach preserved these live corrections by applying the demonstrated
+pre-close-to-contact transform to the *current aligned pre-close pose*:
+
+\[
+T_{\mathrm{contact}}^{\mathrm{live}}
+=T_{\mathrm{preclose}}^{\mathrm{live}}
+\left(T_{\mathrm{preclose}}^{\mathrm{demo}}\right)^{-1}
+T_{\mathrm{contact}}^{\mathrm{demo}}.
+\]
+
+This prevented the final approach from discarding alignment by returning to
+an uncorrected absolute contact waypoint. Closure verification also accepted
+a freshly measured contact reference, so an intentional yaw correction was
+not incorrectly rejected as drift from the original demonstration. Second, the pull executor was
+extended with a slower time scale, aperture checkpoints, a stationary
+post-proof recheck, and local recovery on detected slip. These changes did
+not guarantee retention, but made loss of contact observable during the
+motion rather than only afterward. An intervening yaw-aligned trial already
+opened the door before the first integrated autonomous invocation. Its
+successful contact geometry was retained as an anchor for the later program.
+
+By D3, eight task-specific files and 85 functions integrated this experience
+into an observe--act--verify state machine. A registered RGB-D endpoint
+evaluator judged the door's physical state separately from gripper aperture
+and command completion. At the selected D3 approach, the conditional
+EE-reference distance was 12.5 mm and the orientation difference was about
+0.7 degrees, compared with about 10 degrees in D1--D2. These measurements
+are consistent with improved initialization in the same scene; they are not
+direct handle-clearance measurements or evidence of generalization to a new
+placement. D3 nevertheless stopped after this approach: mixed native camera
+logs and JSON on standard output prevented the orchestrator from interpreting
+the completed stage. The failure was therefore in process integration, not
+evidence that the improved contact strategy could not open the door.
+
+**D4: allowing the learned physical procedure to complete.** The final
+transition added `_parse_process_json` and replaced strict whole-output JSON
+decoding at two subprocess boundaries. The parser selected a complete JSON
+candidate reaching farthest into the output, preferring the outer candidate
+when endpoints tied. This added only 14 code lines and one function, with no
+new external package or external API name. D4 resumed from D3's recorded
+stopped pose, so their identical 12.5 mm approach-distance values must not be
+interpreted as independent trials. After parsing was repaired, the workflow
+continued through a bounded image correction, aligned contact, closure,
+proof, re-verification, and checkpointed pulling. The gripper eventually
+slipped, but the door had moved open; local recovery was followed by an
+RGB-D endpoint observation that confirmed opening. The successful outcome
+was opening the door, not maintaining grasp throughout the entire pull.
+
+Together, these transitions explain the emergence of the capability more
+precisely than an increase in code size alone. Demonstrations supplied the
+motion prior; geometric estimation made that motion applicable at live
+contact; mechanical feedback controlled progression and detected slip;
+endpoint perception established whether the task had actually succeeded;
+and process repair allowed the assembled procedure to run to completion.
+The evidence supports this failure-driven development account, rather than
+isolated causal effect sizes for individual components. The resulting
+experience was retained as executable operations, transforms, tests, and
+branches without task-specific neural-weight training.
 
 ## 6. Case Study B: Learning to Remove and Transport a Bottle Cap
 

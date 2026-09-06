@@ -399,7 +399,7 @@ z
    </g>
    <g id="text_22">
     <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(465.271399 495.063239)">D2</text>
-    <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(396.096399 516.626989)">Checkpointed pull</text>
+    <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; fill: #17324d" transform="translate(401.008899 516.626989)">Contact / release</text>
    </g>
    <g id="patch_16">
     <path d="M 385.926606 574.64
@@ -441,13 +441,13 @@ z
 " clip-path="url(#p76606ef247)" style="fill: #ffffff; stroke: #2f855a; stroke-width: 1.35; stroke-linejoin: miter"/>
    </g>
    <g id="text_23">
-    <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="477.478899" y="556.709274" transform="rotate(-0 477.478899 556.709274)">Close + aperture gate</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="477.478899" y="556.709274" transform="rotate(-0 477.478899 556.709274)">Open-jaw contact step</text>
    </g>
    <g id="text_24">
-    <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="477.478899" y="611.070318" transform="rotate(-0 477.478899 611.070318)">5 mm proof pull</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="477.478899" y="611.070318" transform="rotate(-0 477.478899 611.070318)">Fixed-pose opening</text>
    </g>
    <g id="text_25">
-    <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="477.478899" y="665.431361" transform="rotate(-0 477.478899 665.431361)">Checkpoints + slip stop</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #17324d" x="477.478899" y="665.431361" transform="rotate(-0 477.478899 665.431361)">Explicit stage commands</text>
    </g>
   </g>
   <g id="axes_4">
