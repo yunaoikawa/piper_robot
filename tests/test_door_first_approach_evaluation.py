@@ -33,3 +33,15 @@ def test_missing_and_selected_run_boundaries_are_explicit():
     for stage in ("D1", "D2", "D4_pre_parser_fix", "D4"):
         assert rows[stage]["boundary_evidence"]
         assert "visual_alignment" not in rows[stage]["motion"]
+
+
+def test_complexity_tiers_do_not_promote_parser_repairs_or_unknown_stages():
+    figure_path = path.parent / "generate_code_learning_tool_graph_figure.py"
+    figure_spec = importlib.util.spec_from_file_location("door_paper_figures", figure_path)
+    figures = importlib.util.module_from_spec(figure_spec)
+    figure_spec.loader.exec_module(figures)
+    position = figures.door_complexity_position
+    assert position("D1") < position("D2") < position("D4_pre_parser_fix")
+    assert position("D4_pre_parser_fix") == position("D4")
+    with pytest.raises(KeyError):
+        position("unmeasured_new_configuration")

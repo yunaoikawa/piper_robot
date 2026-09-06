@@ -1402,6 +1402,17 @@ that reached an open endpoint. The historical endpoint figure remains
 unchanged; unmeasured configurations are omitted from the approach display.
 The added configuration change concerns orchestration, not approach geometry.
 
+The horizontal axis of the approach figures groups these configurations into
+three **qualitative system-complexity tiers**: demonstrated replay (D1),
+checkpointed replay (D2), and perception-assisted autonomous orchestration
+(D3 and D4). These tiers summarize functional structure; they are not measured
+module counts, lines of code, cyclomatic complexity, or equal-sized complexity
+increments. The parser repair does not introduce another perception/control
+layer, so D3 and D4 occupy the same horizontal position. Their distance points
+also coincide and are labeled jointly. Repeated corrections do not acquire a
+higher complexity merely because they occur later. This remains a descriptive
+comparison, not evidence that complexity itself causes improved performance.
+
 The fixed evaluator detects the red EYELA label on the rigid door parent in
 the right-wrist image. Its target is the existing compiler's mean feature at
 the close frame of twelve verified successful teleoperation demonstrations.
