@@ -480,13 +480,10 @@ def door_approach_rows(report):
             for i, r in enumerate(measured, 1)]
 
 
-def door_complexity_position(source_stage):
-    """Qualitative functional tiers, not a measured code/module count.
-
-    A parser repair does not introduce another perception/control layer.
-    Positions are categorical layout coordinates, not numerical complexity.
-    """
-    return {"D1": 0, "D2": 1, "D4_pre_parser_fix": 2, "D4": 2}[source_stage]
+def door_complexity_positions(rows, complexity_report):
+    """Use audited pre-approach source size; never substitute stage order."""
+    by_stage = {r['historical_stage']: r for r in complexity_report['configurations']}
+    return [by_stage[r['source_stage']]['code_lines_without_comments_or_docstrings'] for r in rows]
 
 
 def make_door_approach_figure(*, distance=False):
@@ -510,13 +507,15 @@ def make_door_approach_figure(*, distance=False):
                 "Red-label position vs. successful-demo mean\nLower is closer; not a direct grasp-pose measurement.")
     fig.text(0.13, 0.914, subtitle,
              fontsize=15, color=GRAY, linespacing=1.5, va="center")
-    positions = [door_complexity_position(r["source_stage"]) for r in rows]
+    complexity = load_json("docs/assets/code_as_learning_machine/door_code_complexity_report.json")
+    positions = door_complexity_positions(rows, complexity)
     ax = fig.add_subplot(grid[0, :])
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_xlim(-0.45, 2.45)
-    ax.set_xticks([0, 1, 2], ["Demo replay", "Checkpointed\nreplay", "Perception +\nautonomy"], fontsize=16)
+    margin = max((max(positions) - min(positions)) * 0.16, 1)
+    ax.set_xlim(min(positions) - margin, max(positions) + margin)
+    ax.tick_params(axis="x", labelsize=16)
     ax.tick_params(axis="y", labelsize=15)
-    ax.set_xlabel("System complexity (qualitative tiers)", color=NAVY, fontsize=17, labelpad=10)
+    ax.set_xlabel("Code size (non-comment, non-docstring Python lines)", color=NAVY, fontsize=17, labelpad=10)
     ax.set_ylabel("Estimated EE-position distance (mm)" if distance else "Normalized image-position error", color=NAVY, fontsize=17, labelpad=12)
     ax.grid(color=GRID, linestyle=":")
     values = [r["distance_mm"] for r in distance_rows] if distance else [r["uv_error"] for r in rows]
@@ -526,6 +525,9 @@ def make_door_approach_figure(*, distance=False):
     ax.plot(positions, values, linestyle="none", marker="o", color=BLUE,
             markersize=12, markerfacecolor="white", markeredgewidth=3,
             label="Earlier successful contact reference")
+    # D3 and D4 differ by only 14 lines; distinguish them without moving data.
+    ax.plot([positions[-1]], [values[-1]], linestyle="none", marker="s", color=TEAL,
+            markersize=9, markerfacecolor="white", markeredgewidth=2)
     # Keep alternate-reference sensitivity in the evidence report and manuscript
     # table; the main figure shows only the primary reference.
     # Preserve coincident data rather than jittering the complexity or distance.
@@ -533,12 +535,12 @@ def make_door_approach_figure(*, distance=False):
     for row, x, value in zip(rows, positions, values):
         grouped.setdefault((x, value), []).append(row["stage"])
     for (x, value), stages in grouped.items():
-        offset = (0, 16)
-        if not distance and x == 2:
-            offset = (-52, -4) if stages == ["D3"] else (52, 16)
+        offset = {"D1": (-42, 24), "D2": (45, 24),
+                  "D3": (-48, 24), "D4": (52, -48)}[stages[0]]
         label = " / ".join(stages) + "\n" + (f"{value:.1f}" if distance else f"{value:.3f}")
         ax.annotate(label, (x, value), xytext=offset,
-                    textcoords="offset points", ha="center", color=NAVY, fontsize=19, weight="bold")
+                    textcoords="offset points", ha="center", color=NAVY, fontsize=19, weight="bold",
+                    arrowprops={"arrowstyle": "-", "color": GRAY, "lw": 0.8, "shrinkA": 3, "shrinkB": 9})
     graphs = {
         "D1": ("Relative demo", ("Teleoperation data", "Demo compiler", "Contact-relative path")),
         "D2": ("Checkpointed pull", ("Close + aperture gate", "5 mm proof pull", "Checkpoints + slip stop")),
@@ -558,10 +560,10 @@ def make_door_approach_figure(*, distance=False):
                  edge=(BLUE, TEAL, GREEN)[i])
             if i < 2:
                 arrow(panel, (0.5, y-0.015), (0.5, y-0.065), width=1.8)
-    fig.text(0.13, 0.064, "D3 and D4 share a complexity tier and recorded pose; D4 is a continuation, not an independent trial.",
+    fig.text(0.13, 0.064, "D4 adds 14 lines / 1 function but resumes at D3's pose; it is not an independent approach trial.",
              color=GRAY, fontsize=12)
     return finish_figure(fig, stem="door_first_approach_distance" if distance else "door_first_approach", footnote=
-                         "Complexity tiers summarize functional structure, not module counts, code size, or equal complexity increments.")
+                         "Counts: reconstructed Door-specific source before each approach. Shared infrastructure, tests and configs excluded.")
 
 
 def make_door_approach_audit():

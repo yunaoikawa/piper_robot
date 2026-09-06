@@ -1402,16 +1402,54 @@ that reached an open endpoint. The historical endpoint figure remains
 unchanged; unmeasured configurations are omitted from the approach display.
 The added configuration change concerns orchestration, not approach geometry.
 
-The horizontal axis of the approach figures groups these configurations into
-three **qualitative system-complexity tiers**: demonstrated replay (D1),
-checkpointed replay (D2), and perception-assisted autonomous orchestration
-(D3 and D4). These tiers summarize functional structure; they are not measured
-module counts, lines of code, cyclomatic complexity, or equal-sized complexity
-increments. The parser repair does not introduce another perception/control
-layer, so D3 and D4 occupy the same horizontal position. Their distance points
-also coincide and are labeled jointly. Repeated corrections do not acquire a
-higher complexity merely because they occur later. This remains a descriptive
-comparison, not evidence that complexity itself causes improved performance.
+The horizontal axis now uses **quantitative task-code size** rather than
+qualitative complexity tiers: Python source lines excluding blank lines,
+comments, and module/class/function docstrings. We reconstruct each snapshot
+from acknowledged patches in the contemporaneous event log, stopping before
+that selected approach. Reconstructed source matches all scoped files at
+four later Git checkpoints (`2b6ccab`, `bfa9b7e`, `f2149bb`, `283b913`), ignoring
+only redundant trailing newlines. Failed patch calls are not applied. This
+avoids assigning later code to earlier experiments, including before the first
+door commit. It does not establish a complete snapshot of the whole machine.
+
+| Display configuration | Python files | Code lines | Function definitions | Direct external packages | Distinct external API names |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| D1 | 4 | 1,238 | 36 | 4 | 30 |
+| D2 | 4 | 1,312 | 38 | 4 | 30 |
+| D3 | 8 | 3,094 | 85 | 4 | 57 |
+| D4 | 8 | 3,108 | 86 | 4 | 57 |
+
+The fixed scope contains eight Door-specific Python file paths (only files
+existing at each boundary count): the demonstration compiler and trajectory
+module, visual-feature and plane modules, plane-estimation CLI, stage executor,
+articulated-appliance evaluator, and autonomy executor. Shared robot/IK/camera
+infrastructure, dependency implementations, tests, configuration/data files,
+and one-off shell commands are excluded. Diagnostic branches and compilation
+code within the scoped files are included, even if not executed by the selected
+approach. Thus this measures the available task-specific implementation, not
+the dynamically executed approach code.
+
+Functions include Python functions, methods, and nested functions, but not
+lambdas. Direct external package roots are `cv2`, `h5py`, `mink`, and `numpy`
+at all four boundaries. Distinct external API names count statically identifiable
+call targets rooted in those imports, with aliases normalized; they do not
+count runtime calls, dynamically resolved instance methods, subprocess services,
+or all tools used by the agent. In particular, more functionality can be built
+using the same four packages, so package count alone is uninformative here.
+
+The parser repair adds 14 code lines and one function without adding another
+external package/API name. D3 and D4 therefore have slightly different numeric
+X positions, while their achieved EE-distance values remain identical. This
+replaces the earlier qualitative grouping, which put them at the same X value.
+Code size is a reproducible complexity proxy, not a measure of semantic
+complexity or evidence that adding code causes improved performance. No
+weights combine these counts into an arbitrary composite score.
+
+Recompute with `python docs/evaluate_door_code_complexity.py --event-log PATH`.
+The private event log is required for reconstruction and is not redistributed;
+the tracked `door_code_complexity_report.json` contains per-file source hashes,
+counts, patch identifiers/hashes, snapshot boundaries, and Git cross-checks,
+allowing figures to regenerate without access to the private log.
 
 The fixed evaluator detects the red EYELA label on the rigid door parent in
 the right-wrist image. Its target is the existing compiler's mean feature at
@@ -1564,8 +1602,9 @@ robot coordinates.
 
 ![Conditional EE-distance comparison using the earlier contact reference](assets/code_as_learning_machine/door_first_approach_distance.png)
 
-**Figure 14c. Estimated distance to a recorded successful contact.** Blue
-circles use the earlier contact reference; sensitivity to the later contact
+**Figure 14c. Estimated distance to a recorded successful contact.** Markers
+use the earlier contact reference (D4 uses a square to distinguish the nearby
+points); sensitivity to the later contact
 reference is retained in the table and evidence report, not plotted. The estimate assumes a fixed closed door and
 robot base, is not a fully RGB-D-registered handle distance, and does not
 replace the image-only diagnostic. The D1--D2 difference is not evidence of

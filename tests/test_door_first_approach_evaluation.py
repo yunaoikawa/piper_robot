@@ -35,13 +35,16 @@ def test_missing_and_selected_run_boundaries_are_explicit():
         assert "visual_alignment" not in rows[stage]["motion"]
 
 
-def test_complexity_tiers_do_not_promote_parser_repairs_or_unknown_stages():
+def test_complexity_positions_use_measured_code_counts_not_stage_order():
     figure_path = path.parent / "generate_code_learning_tool_graph_figure.py"
     figure_spec = importlib.util.spec_from_file_location("door_paper_figures", figure_path)
     figures = importlib.util.module_from_spec(figure_spec)
     figure_spec.loader.exec_module(figures)
-    position = figures.door_complexity_position
-    assert position("D1") < position("D2") < position("D4_pre_parser_fix")
-    assert position("D4_pre_parser_fix") == position("D4")
+    report = {"configurations": [
+        {"historical_stage": "D1", "code_lines_without_comments_or_docstrings": 140},
+        {"historical_stage": "D2", "code_lines_without_comments_or_docstrings": 120},
+    ]}
+    rows = [{"source_stage": "D1"}, {"source_stage": "D2"}]
+    assert figures.door_complexity_positions(rows, report) == [140, 120]
     with pytest.raises(KeyError):
-        position("unmeasured_new_configuration")
+        figures.door_complexity_positions([{"source_stage": "unknown"}], report)
