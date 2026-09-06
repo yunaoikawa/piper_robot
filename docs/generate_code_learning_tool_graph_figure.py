@@ -519,7 +519,11 @@ def make_door_approach_figure(*, distance=False):
     ax.set_ylabel("Estimated EE-position distance (mm)" if distance else "Normalized image-position error", color=NAVY, fontsize=17, labelpad=12)
     ax.grid(color=GRID, linestyle=":")
     values = [r["distance_mm"] for r in distance_rows] if distance else [r["uv_error"] for r in rows]
-    ax.set_ylim(0, np.nanmax(values) * 1.35)
+    if distance:
+        ax.set_ylim(10, 20)
+        ax.set_yticks(np.arange(10, 21, 2))
+    else:
+        ax.set_ylim(0, np.nanmax(values) * 1.35)
     # Markers only: missing configurations and single observations must not
     # become an interpolated or apparently smooth learning curve.
     ax.plot(positions, values, linestyle="none", marker="o", color=BLUE,
@@ -537,6 +541,8 @@ def make_door_approach_figure(*, distance=False):
     for (x, value), stages in grouped.items():
         offset = {"D1": (-42, 24), "D2": (45, 24),
                   "D3": (-48, 24), "D4": (52, -48)}[stages[0]]
+        if distance and stages[0] in {"D1", "D2"}:
+            offset = (offset[0], -48)
         label = " / ".join(stages) + "\n" + (f"{value:.1f}" if distance else f"{value:.3f}")
         ax.annotate(label, (x, value), xytext=offset,
                     textcoords="offset points", ha="center", color=NAVY, fontsize=19, weight="bold",
