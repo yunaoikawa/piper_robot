@@ -434,15 +434,46 @@ def plot_samples(report):
     return fig
 
 
-def plot_demo_comparison(report):
-    comparison = report["demo_comparison"]
+def build_trial_comparison(report, reference_trial):
+    """Recompute pairwise pose distances, not differences of scalar errors."""
+    original = report["demo_comparison"]
+    matches = [r for r in original["trials"] if r["trial"] == reference_trial]
+    if len(matches) != 1:
+        raise ValueError(f"Expected exactly one reference trial: {reference_trial}")
+    reference = matches[0]
+    rows = []
+    for row in original["trials"]:
+        distance, angle = pose_error(row["contact_pose_wxyz_xyz"],
+                                     reference["contact_pose_wxyz_xyz"])
+        rows.append({**row, "position_difference_mm": distance,
+                     "orientation_difference_deg": angle})
+    return {
+        "reference_trial": reference_trial,
+        "reference_source": reference["source"],
+        "reference_contact_pose_wxyz_xyz": reference["contact_pose_wxyz_xyz"],
+        "metric": original["metric"], "frame": original["frame"],
+        "limitations": [
+            "Retrospective reference selected from an observed successful opening, not a demonstration or held-out target.",
+            "Reference self-distance is zero by construction, not evidence of perfect task execution.",
+            "Saved pre-close contact poses, not door endpoint positions or full-trajectory similarity.",
+            "Door displacement is not compensated; absolute robot-frame EE discrepancy only.",
+            "All saved attempts remain in chronological order; no smoothing or scalar-error subtraction.",
+        ],
+        "trials": rows, "source_sha256": original["source_sha256"],
+    }
+
+
+def plot_demo_comparison(report, reference_trial=None):
+    comparison = (build_trial_comparison(report, reference_trial)
+                  if reference_trial else report["demo_comparison"])
     rows = comparison["trials"]
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.7))
     x = np.arange(len(rows))
     colors = ["#999999" if row["trial"].startswith("E") else
               "#21875D" if row["trial"] in ("T6", "T7") else "#2878B5" for row in rows]
     for ax, key, title, ylabel, ymax in [
-        (axes[0], "position_difference_mm", "Contact-position difference", "Distance to demo EE origin (mm)", 165),
+        (axes[0], "position_difference_mm", "Contact-position difference",
+         f"Distance to {reference_trial or 'demo'} EE origin (mm)", 165),
         (axes[1], "orientation_difference_deg", "Contact-orientation difference", "Full rotation difference (degrees)", 12),
     ]:
         y = [row[key] for row in rows]
@@ -459,10 +490,13 @@ def plot_demo_comparison(report):
         ax.yaxis.label.set_size(15)
         ax.title.set_size(18)
         sns.despine(ax=ax)
-    fig.suptitle("Approaching the successful demo — not monotonically", fontsize=22)
+    fig.suptitle(f"Contact-pose distance to successful trial {reference_trial}" if reference_trial else
+                 "Approaching the successful demo — not monotonically", fontsize=22)
     fig.text(.5, .035,
              "Gray: early contact-only attempts   |   Blue: T1–T5   |   Green: opening observed/verified (T6/T7)\n"
-             "Absolute robot-frame comparison to the fixed medoid; door displacement is NOT compensated.",
+             + (f"Retrospective {reference_trial} reference (self-distance = 0); door displacement is NOT compensated."
+                if reference_trial else
+                "Absolute robot-frame comparison to the fixed medoid; door displacement is NOT compensated."),
              ha="center", fontsize=12)
     fig.tight_layout(rect=(0, .11, 1, .92))
     return fig
@@ -614,6 +648,7 @@ def plot_outcome_overlay(report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rebuild-report", action="store_true")
+    parser.add_argument("--reference-trial", help="Create a separate retrospective trial-relative pose plot only")
     args = parser.parse_args()
     if args.rebuild_report:
         REPORT.write_text(json.dumps(build_report(), indent=2) + "\n")
@@ -622,6 +657,16 @@ def main():
         "font.family": "DejaVu Sans", "svg.fonttype": "none",
         "svg.hashsalt": "door_grasp_signals_v1",
     }):
+        if args.reference_trial:
+            comparison = build_trial_comparison(report, args.reference_trial)
+            stem = f"door_contact_{args.reference_trial.lower()}_comparison"
+            comparison["input_report_sha256"] = hashlib.sha256(REPORT.read_bytes()).hexdigest()
+            (ASSETS / f"{stem}.json").write_text(json.dumps(comparison, indent=2) + "\n")
+            fig = plot_demo_comparison(report, args.reference_trial)
+            save(fig, stem)
+            plt.close(fig)
+            print(ASSETS / f"{stem}.png")
+            return
         for plot, stem in [(plot_summary, "door_grasp_aperture_trials"),
                            (plot_samples, "door_grasp_aperture_samples"),
                            (plot_demo_comparison, "door_contact_demo_comparison"),

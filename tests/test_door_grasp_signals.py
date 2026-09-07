@@ -82,6 +82,29 @@ def test_quaternion_sign_is_not_an_orientation_error():
     assert MODULE.pose_error([-1, 0, 0, 0, .001, 0, 0], ref) == pytest.approx((1, 0))
 
 
+def test_t7_reference_recomputes_pose_distances_without_changing_demo_report():
+    data = report()
+    original = json.dumps(data, sort_keys=True)
+    comparison = MODULE.build_trial_comparison(data, "T7")
+    ref = np.asarray(comparison["reference_contact_pose_wxyz_xyz"])
+    for row in comparison["trials"]:
+        expected = np.linalg.norm(np.asarray(row["contact_pose_wxyz_xyz"])[4:] - ref[4:]) * 1000
+        assert row["position_difference_mm"] == pytest.approx(expected)
+    assert comparison["trials"][-1]["position_difference_mm"] == pytest.approx(0)
+    assert comparison["trials"][-1]["orientation_difference_deg"] == pytest.approx(0, abs=1e-5)
+    assert comparison["trials"][-2]["position_difference_mm"] == pytest.approx(4.59, abs=.01)
+    assert json.dumps(data, sort_keys=True) == original
+    fig = MODULE.plot_demo_comparison(data, "T7")
+    try:
+        for ax, key in zip(fig.axes, ["position_difference_mm", "orientation_difference_deg"]):
+            expected = [[i, r[key]] for i, r in enumerate(comparison["trials"])]
+            np.testing.assert_allclose(ax.collections[0].get_offsets(), expected)
+    finally:
+        MODULE.plt.close(fig)
+    with pytest.raises(ValueError):
+        MODULE.build_trial_comparison(data, "missing")
+
+
 def test_demo_plot_keeps_all_actual_coordinates():
     data = report()
     fig = MODULE.plot_demo_comparison(data)

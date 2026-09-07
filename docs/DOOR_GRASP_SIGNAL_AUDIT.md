@@ -264,3 +264,30 @@ python -m pytest -q tests/test_door_joint_torque.py
 
 Omit `--rebuild-report` to plot only the tracked extracted data and thumbnails.
 No robot commands are issued.
+
+## Retrospective contact-pose comparison against T7
+
+![Contact-pose difference to T7](assets/code_as_learning_machine/door_contact_t7_comparison.png)
+
+This separate version replaces the demonstration medoid with the **saved
+pre-close contact pose of successful opening trial T7**. It recomputes
+`1000 * ||p_i - p_T7||` in millimetres and the full SO(3) quaternion angular
+distance from the stored poses; it does not subtract scalar demo errors.
+The original demo-relative figure remains unchanged.
+
+Position discrepancies are 141.2, 103.8, 95.3 mm for E1--E3; approximately
+18.6--21.8 mm for T1--T5; 4.6 mm for T6; and zero for T7. T6 differs from
+T7 in orientation by 2.4 degrees. All ten preserved observations are included.
+T7 is a retrospectively selected successful **trial**, not a human demo or an
+independent evaluation target. Its zero self-distance is guaranteed by the
+definition, not proof of zero task error. These absolute robot-frame distances
+do not compensate for changes in door position or measure full-pull similarity.
+
+Reproduce without hardware or private logs:
+
+```bash
+python docs/plot_door_grasp_signals.py --reference-trial T7
+```
+
+This writes a separate PNG, SVG and source-hashed JSON report named
+`door_contact_t7_comparison` in the paper assets directory.
