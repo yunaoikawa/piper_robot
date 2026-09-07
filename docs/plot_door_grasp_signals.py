@@ -463,19 +463,21 @@ def build_trial_comparison(report, reference_trial):
     }
 
 
-def plot_demo_comparison(report, reference_trial=None):
+def plot_demo_comparison(report, reference_trial=None, orientation_only=False):
     comparison = (build_trial_comparison(report, reference_trial)
                   if reference_trial else report["demo_comparison"])
     rows = comparison["trials"]
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5.7))
+    fig, axes = plt.subplots(1, 1 if orientation_only else 2,
+                             figsize=(10, 6) if orientation_only else (14, 5.7), squeeze=False)
     x = np.arange(len(rows))
     colors = ["#999999" if row["trial"].startswith("E") else
               "#21875D" if row["trial"] in ("T6", "T7") else "#2878B5" for row in rows]
-    for ax, key, title, ylabel, ymax in [
-        (axes[0], "position_difference_mm", "Contact-position difference",
+    panels = [
+        ("position_difference_mm", "Contact-position difference",
          f"Distance to {reference_trial or 'demo'} EE origin (mm)", 165),
-        (axes[1], "orientation_difference_deg", "Contact-orientation difference", "Full rotation difference (degrees)", 12),
-    ]:
+        ("orientation_difference_deg", "Contact-orientation difference", "Full rotation difference (degrees)", 12),
+    ]
+    for ax, (key, title, ylabel, ymax) in zip(axes.flat, panels[1:] if orientation_only else panels):
         y = [row[key] for row in rows]
         ax.scatter(x, y, c=colors, s=90, zorder=3)
         for xi, yi in zip(x, y):
@@ -490,8 +492,16 @@ def plot_demo_comparison(report, reference_trial=None):
         ax.yaxis.label.set_size(15)
         ax.title.set_size(18)
         sns.despine(ax=ax)
-    fig.suptitle(f"Contact-pose distance to successful trial {reference_trial}" if reference_trial else
+    fig.suptitle(f"Contact-{'orientation difference' if orientation_only else 'pose distance'} to successful trial {reference_trial}" if reference_trial else
                  "Approaching the successful demo — not monotonically", fontsize=22)
+    if orientation_only:
+        fig.text(.5, .035,
+                 "Gray: early attempts  |  Blue: T1–T5  |  Green: opening observed (T6/T7)\n"
+                 f"Retrospective {reference_trial or 'demo'} reference; self-difference = 0 by definition.\n"
+                 "Robot-frame orientation; changes in door pose are not compensated.",
+                 ha="center", fontsize=12)
+        fig.tight_layout(rect=(0, .17, 1, .92))
+        return fig
     fig.text(.5, .035,
              "Gray: early contact-only attempts   |   Blue: T1–T5   |   Green: opening observed/verified (T6/T7)\n"
              + (f"Retrospective {reference_trial} reference (self-distance = 0); door displacement is NOT compensated."
@@ -649,7 +659,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rebuild-report", action="store_true")
     parser.add_argument("--reference-trial", help="Create a separate retrospective trial-relative pose plot only")
+    parser.add_argument("--orientation-only", action="store_true", help="Only plot angular difference (requires --reference-trial)")
     args = parser.parse_args()
+    if args.orientation_only and not args.reference_trial:
+        parser.error("--orientation-only requires --reference-trial")
     if args.rebuild_report:
         REPORT.write_text(json.dumps(build_report(), indent=2) + "\n")
     report = json.loads(REPORT.read_text())
@@ -660,9 +673,11 @@ def main():
         if args.reference_trial:
             comparison = build_trial_comparison(report, args.reference_trial)
             stem = f"door_contact_{args.reference_trial.lower()}_comparison"
+            if args.orientation_only:
+                stem += "_orientation"
             comparison["input_report_sha256"] = hashlib.sha256(REPORT.read_bytes()).hexdigest()
             (ASSETS / f"{stem}.json").write_text(json.dumps(comparison, indent=2) + "\n")
-            fig = plot_demo_comparison(report, args.reference_trial)
+            fig = plot_demo_comparison(report, args.reference_trial, args.orientation_only)
             save(fig, stem)
             plt.close(fig)
             print(ASSETS / f"{stem}.png")

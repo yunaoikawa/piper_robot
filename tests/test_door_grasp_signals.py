@@ -82,6 +82,18 @@ def test_quaternion_sign_is_not_an_orientation_error():
     assert MODULE.pose_error([-1, 0, 0, 0, .001, 0, 0], ref) == pytest.approx((1, 0))
 
 
+def test_orientation_only_keeps_t7_angles():
+    data = report()
+    rows = MODULE.build_trial_comparison(data, "T7")["trials"]
+    fig = MODULE.plot_demo_comparison(data, "T7", orientation_only=True)
+    try:
+        assert len(fig.axes) == 1
+        np.testing.assert_allclose(fig.axes[0].collections[0].get_offsets(),
+                                   [[i, r["orientation_difference_deg"]] for i, r in enumerate(rows)])
+    finally:
+        MODULE.plt.close(fig)
+
+
 def test_t7_reference_recomputes_pose_distances_without_changing_demo_report():
     data = report()
     original = json.dumps(data, sort_keys=True)
