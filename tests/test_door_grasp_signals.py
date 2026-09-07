@@ -92,3 +92,32 @@ def test_demo_plot_keeps_all_actual_coordinates():
             assert len(ax.lines) == 1  # Zero reference only.
     finally:
         MODULE.plt.close(fig)
+
+
+def test_three_patterns_use_measured_cases_and_separate_endpoint_evidence():
+    data = report()
+    a, b, c = data["three_patterns"]["cases"]
+    assert [r["trial"] for r in (a, b, c)] == ["E2", "T1", "T7"]
+    assert a["proof"] is None and a["post_pull"] is None
+    assert a["samples"][-1] < .02
+    assert b["proof"] > .02 and c["proof"] > .02
+    assert b["post_pull"] == c["post_pull"]
+    assert b["door_state"] == "closed" and c["door_state"] == "open"
+    assert c["rotation_clockwise_deg"] == 90
+    fig = MODULE.plot_three_patterns(data)
+    try:
+        for i, case in enumerate((a, b, c)):
+            np.testing.assert_array_equal(fig.axes[i*3].lines[0].get_ydata(), case["samples"])
+            assert len(fig.axes[i*3+2].images) == 1
+            if i:
+                assert len(fig.axes[i*3+1].collections) == 2
+                assert len(fig.axes[i*3+1].lines) == 1  # Bound only, no fictitious slip curve.
+    finally:
+        MODULE.plt.close(fig)
+
+
+def test_three_pattern_image_hashes_match_tracked_thumbnails():
+    import hashlib
+    for case in report()["three_patterns"]["cases"]:
+        actual = hashlib.sha256((MODULE.ROOT / case["display_image"]).read_bytes()).hexdigest()
+        assert actual == case["display_image_sha256"]

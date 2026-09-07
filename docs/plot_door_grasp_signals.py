@@ -174,6 +174,7 @@ def build_report():
             d = read(relative)
             contact_only.append({"source": relative,
                                  "closed_aperture": d["closed_aperture"],
+                                 "aperture_samples": checked_samples(d["aperture_samples"]).tolist(),
                                  "sample_count": len(d["aperture_samples"]),
                                  "stable_nonempty": d["stable_nonempty"]})
 
@@ -195,7 +196,7 @@ def build_report():
         inspect(json.loads(path.read_text()))
     # Keep endpoint outcome provenance distinct from aperture-based evidence.
     read(AUTO + "/12_state_open_attempt_1_result/state.json")
-    return {
+    result = {
         "schema": "door_grasp_signal_audit/v1",
         "measurement": "measured right-gripper normalized opening (0 closed, 1 open)",
         "is_pressure": False,
@@ -220,6 +221,72 @@ def build_report():
         "source_sha256": sources,
         "demo_comparison": build_demo_comparison(),
     }
+    result["three_patterns"] = build_three_patterns(result)
+    return result
+
+
+def build_three_patterns(report):
+    """Preserve measured cases and display thumbnails, not synthetic curves."""
+    from PIL import Image
+
+    endpoint_path = ASSETS / "door_configuration_curve_report.json"
+    endpoints = json.loads(endpoint_path.read_text())
+    by_stage = {row["stage"]: row for row in endpoints["configurations"]}
+    by_trial = {row["trial"]: row for row in report["trials"]}
+    early = report["demo_comparison"]["trials"][1]
+    assert early["trial"] == "E2"
+    early_samples = next(row for row in report["contact_only_attempts_not_in_pull_plot"]
+                         if row["source"] == early["source"])
+    cases = [
+        {"trial": "E2", "title": "A. Empty close",
+         "samples": early_samples["aperture_samples"],
+         "closed": early_samples["closed_aperture"], "proof": None, "post_pull": None,
+         "door_state": "Not evaluated here; stopped before pull",
+         "image_source": str(Path("data/runs/pasteur") / early["source"]).replace("contact_state.json", "after/head.png"),
+         "rotation_clockwise_deg": 0,
+         "interpretation": "Gripper approaches full closure without a retained object."},
+    ]
+    for trial, historical_stage, title in [
+        ("T1", "D1", "B. Grasp lost; door still closed"),
+        ("T7", "D4", "C. Door open; grasp lost"),
+    ]:
+        row = by_trial[trial]
+        endpoint = by_stage[historical_stage]
+        source = endpoint["source"]
+        raw_bundle = "selected_frame" in source
+        image_source = source["selected_frame"] + "/rgb.png" if raw_bundle else source["image"]
+        expected_hash = source["files"][image_source] if raw_bundle else source["image_sha256"]
+        if hashlib.sha256((ROOT / image_source).read_bytes()).hexdigest() != expected_hash:
+            raise ValueError(f"Endpoint image changed: {image_source}")
+        cases.append({
+            "trial": trial, "title": title, "samples": row["close_samples"],
+            "closed": row["closed_aperture"], "proof": row["post_proof_median"],
+            "post_pull": row["post_pull_aperture"],
+            "door_state": endpoint["classified_state"],
+            "endpoint_evaluation_source": str(endpoint_path.relative_to(ROOT)),
+            "endpoint_evaluation_sha256": hashlib.sha256(endpoint_path.read_bytes()).hexdigest(),
+            "endpoint_historical_key_not_trial_number": historical_stage,
+            "image_source": image_source, "rotation_clockwise_deg": 90 if raw_bundle else 0,
+            "interpretation": "Final aperture alone cannot distinguish B from C; registered RGB-D establishes the door endpoint.",
+        })
+    for case in cases:
+        source = ROOT / case["image_source"]
+        case["image_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+        thumbnail = ASSETS / f"door_grasp_pattern_{case['trial']}_head.jpg"
+        with Image.open(source) as image:
+            image = image.convert("RGB")
+            if case["rotation_clockwise_deg"] == 90:
+                image = image.transpose(Image.Transpose.ROTATE_270)
+            image.thumbnail((768, 576))
+            image.save(thumbnail, quality=92)
+        case["display_image"] = str(thumbnail.relative_to(ROOT))
+        case["display_image_sha256"] = hashlib.sha256(thumbnail.read_bytes()).hexdigest()
+    return {"cases": cases, "limitations": [
+        "Representative observed patterns, not schematic or complete continuous pull traces.",
+        "Images are later observations, not necessarily simultaneous with the aperture samples.",
+        "Case C confirms an open endpoint and absent grasp, not the precise temporal order of opening and slip.",
+        "Display images are full-frame downscaled only; T7 is rotated clockwise as in the endpoint loader.",
+    ]}
 
 
 def save(fig, stem):
@@ -328,6 +395,60 @@ def plot_demo_comparison(report):
     return fig
 
 
+def plot_three_patterns(report):
+    cases = report["three_patterns"]["cases"]
+    fig, axes = plt.subplots(3, 3, figsize=(16, 11),
+                             gridspec_kw={"width_ratios": [1.15, 1, 1.2]})
+    colors = ["#C44E52", "#D78B22", "#21875D"]
+    for index, (case, color) in enumerate(zip(cases, colors)):
+        close_ax, pull_ax, image_ax = axes[index]
+        samples = checked_samples(case["samples"])
+        close_ax.plot(np.arange(len(samples)), samples, color=color, lw=2,
+                      marker=".", markersize=3)
+        close_ax.axhline(report["empty_aperture_reference"], color="#999999", ls=":", lw=1)
+        close_ax.set(xlim=(-1, 71), ylim=(-.03, .9), xlabel="Sample index after close command",
+                     ylabel="Measured opening (0–1)")
+        close_ax.set_title(f'{case["title"]} ({case["trial"]})', loc="left", fontsize=15, color=color)
+        close_ax.annotate(f'Settled: {case["closed"]:.3f}',
+                          (len(samples)-1, samples[-1]), xytext=(-8, 15),
+                          textcoords="offset points", ha="right", fontsize=13)
+
+        if case["proof"] is None:
+            pull_ax.axis("off")
+            pull_ax.text(.5, .62, "Empty grasp\nNo proof / full pull", transform=pull_ax.transAxes,
+                         ha="center", va="center", color=color, fontsize=18)
+            pull_ax.text(.5, .24, "Stopped at contact verification", transform=pull_ax.transAxes,
+                         ha="center", fontsize=12, color="#666666")
+        else:
+            for x, val in enumerate([case["proof"], case["post_pull"]]):
+                pull_ax.scatter(x, val, color=color, s=110, zorder=3)
+                pull_ax.annotate(f"{val:.4f}", (x, val), xytext=(0, 13),
+                                 textcoords="offset points", ha="center", fontsize=14)
+            pull_ax.axvspan(.28, .72, color="#EEEEEE", zorder=0)
+            pull_ax.text(.5, .24, "Full-pull\ntrace\nunavailable", ha="center", fontsize=12, color="#666666")
+            pull_ax.axhline(report["empty_aperture_reference"], color="#999999", ls=":", lw=1)
+            pull_ax.set(xticks=[0, 1], xticklabels=["After 5 mm\nproof pull", "Post-pull\nobservation"],
+                        xlim=(-.4, 1.4), ylim=(-.03, .5), ylabel="Measured opening (0–1)")
+            pull_ax.set_title("Retained after proof → later near zero", fontsize=14)
+        image_ax.imshow(plt.imread(ROOT / case["display_image"]))
+        image_ax.axis("off")
+        state = case["door_state"]
+        caption = "After close attempt (no endpoint test)" if index == 0 else f"RGB-D endpoint: {state.upper()}"
+        image_ax.set_title(caption, fontsize=16, color=color)
+        image_ax.text(.5, -.06, "Full-frame head image; later observation", transform=image_ax.transAxes,
+                      ha="center", fontsize=11, color="#555555")
+        for ax in (close_ax, pull_ax):
+            ax.tick_params(labelsize=12)
+            sns.despine(ax=ax)
+    fig.suptitle("Three observed grasp patterns — measured aperture, not pressure", fontsize=22)
+    fig.text(.5, .025,
+             "B and C both end at 0.0034: aperture alone cannot determine whether the door opened.\n"
+             "Separate observation blocks, not a continuous time axis; the exact opening/slip timing is unresolved.",
+             ha="center", fontsize=14)
+    fig.tight_layout(rect=(0, .085, 1, .94), h_pad=3, w_pad=2)
+    return fig
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rebuild-report", action="store_true")
@@ -341,7 +462,8 @@ def main():
     }):
         for plot, stem in [(plot_summary, "door_grasp_aperture_trials"),
                            (plot_samples, "door_grasp_aperture_samples"),
-                           (plot_demo_comparison, "door_contact_demo_comparison")]:
+                           (plot_demo_comparison, "door_contact_demo_comparison"),
+                           (plot_three_patterns, "door_grasp_three_patterns")]:
             fig = plot(report)
             save(fig, stem)
             plt.close(fig)

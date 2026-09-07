@@ -106,3 +106,48 @@ that monotonically reproducing the original absolute pose caused success.
 Regeneration uses the same commands above and additionally produces
 `door_contact_demo_comparison.{png,svg}`. Re-auditing raw demos requires h5py;
 plotting the tracked report does not.
+
+## Trial labels and three observed patterns
+
+These labels were assigned for the retrospective figure; they were not
+controller version names. Times below are saved pre-close observation times
+on August 8, 2026, in JST, not exact first motor-command times.
+
+| Label | Time | Meaning |
+| --- | --- | --- |
+| E1 | 13:05:05 | Early close verification: 12 samples still closing, failed stability gate; not sufficient to classify as empty from this block alone |
+| E2 | 13:24:09 | Early empty close; aperture settled near 0.005 |
+| E3 | 13:27:38 | Another early empty close; aperture settled near 0.005 |
+| T1 | 13:33:27 | First demo-contact long pull; later aperture near zero, RGB-D endpoint closed |
+| T2--T5 | 13:44--14:04 | Subsequent contact/proof/full-pull attempts |
+| T6 | 14:42:21 | Yaw-aligned contact, proof and pull; open endpoint observed, grasp later absent |
+| T7 | 19:03:46 | Autonomous orchestration with open endpoint verification; grasp later absent |
+
+E1--E3 precede the direct demo-contact trials, not necessarily the arrival of
+the demo files. D1--D4 in the code-complexity paper figure refer to different
+code snapshots and must not be substituted for these trial labels.
+
+![Three observed grasp patterns](assets/code_as_learning_machine/door_grasp_three_patterns.png)
+
+This figure selects E2, T1, and T7 as observed examples. Left: the actual
+close-monitoring samples. Middle: measurements after proof and after full pull,
+with the unrecorded motion interval left blank. Right: the corresponding later
+head image. E2 never reached the proof pull. T1 and T7 have the **same post-pull
+aperture, 0.0034286**, but the frozen RGB-D endpoint evaluation classifies T1
+as closed and T7 as open. This directly illustrates why aperture alone cannot
+determine task success.
+
+The third case is labelled "Door open; grasp lost" rather than asserting an
+exact sequence of opening and slip: the sparse measurements do not identify
+the moment the door became open relative to the moment of losing contact.
+The images are later evidence, not synchronized to every point in the plots.
+
+The tracked report includes per-case image paths and hashes, and the historical
+endpoint report keys (distinct from trial labels). Display thumbnails preserve
+the full frame and are downscaled. T7's raw portrait frame is rotated 90 degrees
+clockwise, matching `load_bundle_endpoint`; there is no mirroring or retouching.
+The frozen endpoint report is not re-fit for this comparison.
+
+The standard plotting command now also generates `door_grasp_three_patterns`
+in PNG/SVG. Local re-extraction generates three tracked JPEG thumbnails; the
+default plotting command requires no original camera files.
