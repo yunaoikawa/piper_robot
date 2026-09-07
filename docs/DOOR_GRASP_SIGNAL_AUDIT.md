@@ -228,3 +228,39 @@ Future logging should append each measured checkpoint and timestamp to disk
 before evaluating the stop condition, including exceptions/termination. That
 would prevent this particular data loss; no runtime control changes or new
 physical trials were made for the present retrospective figure request.
+
+## Joint torque as a different observable
+
+![Four trials: post-proof joint torque](assets/code_as_learning_machine/door_joint_torque_comparison.png)
+
+All seven proof-pull result files retain one `last_torque_warning.sample`
+vector, labelled `while settling after trajectory`. This provides a same-stage
+comparison for T1/T2 (closed endpoints) and T6/T7 (open endpoints), alongside the
+same later head images. An additional annotated heatmap shows all seven trials:
+`door_joint_torque_all_trials.png`.
+
+These are six controller-reported **joint torque magnitudes in N m**, not
+gripper pressure. The historical monitor applied `abs()` before storing them.
+Each vector is the last warning-triggered observation, not the mean or maximum
+over the motion. This is a threshold-selected sample, and its precise timestamp
+is not available. T1--T6 recorded two torque warnings during proof execution,
+and T7 three; the earlier vectors were overwritten. Torque-stop enforcement
+was false in these recorded motions. Do not interpret this figure as an
+unbiased success/failure discriminator or contact-force estimate.
+
+Joint configuration, gravity, dynamics, friction and contact affect the signal.
+No gravity subtraction, matched-posture baseline, or Jacobian force estimate is
+applied. Consequently it would be invalid to interpret a larger plotted torque
+as stronger grasp pressure. The x-axis is the joint index, not elapsed time.
+There is insufficient saved data for a close/proof/full-pull torque time curve
+across these trials.
+
+Reproduce the figure and source-hashed report with:
+
+```bash
+python docs/plot_door_joint_torque.py --rebuild-report
+python -m pytest -q tests/test_door_joint_torque.py
+```
+
+Omit `--rebuild-report` to plot only the tracked extracted data and thumbnails.
+No robot commands are issued.
