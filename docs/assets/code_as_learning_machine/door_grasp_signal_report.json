@@ -105,6 +105,7 @@
         0.4122857142857143,
         0.4122857142857143
       ],
+      "preclose_measured_aperture": 1.0,
       "post_proof_samples": [
         0.36628571428571427,
         0.36628571428571427,
@@ -205,6 +206,7 @@
         0.4074285714285714,
         0.4074285714285714
       ],
+      "preclose_measured_aperture": 1.0,
       "post_proof_samples": [
         0.36514285714285716,
         0.36514285714285716,
@@ -305,6 +307,7 @@
         0.36628571428571427,
         0.36628571428571427
       ],
+      "preclose_measured_aperture": 1.0,
       "post_proof_samples": [
         0.36628571428571427,
         0.36628571428571427,
@@ -405,6 +408,7 @@
         0.3231428571428571,
         0.3231428571428571
       ],
+      "preclose_measured_aperture": 1.0,
       "post_proof_samples": [
         0.31857142857142856,
         0.31885714285714284,
@@ -505,6 +509,7 @@
         0.2925714285714286,
         0.2925714285714286
       ],
+      "preclose_measured_aperture": 1.0,
       "post_proof_samples": [
         0.29114285714285715,
         0.29114285714285715,
@@ -605,6 +610,7 @@
         0.4074285714285714,
         0.4074285714285714
       ],
+      "preclose_measured_aperture": 1.0,
       "post_proof_samples": [
         0.2897142857142857,
         0.2897142857142857,
@@ -705,6 +711,7 @@
         0.3057142857142857,
         0.3057142857142857
       ],
+      "preclose_measured_aperture": 1.0,
       "post_proof_samples": [
         0.296,
         0.296,
@@ -1516,5 +1523,78 @@
       "docs/assets/code_as_learning_machine/door_grasp_success_T7_initial.jpg": "212c58f274a487e0b773c5ee354d0ed7814dd1b0054b57dd49ce8cc45fa0120e"
     },
     "display_note": "Both full-frame RGB images rotated clockwise 90 degrees and downscaled, not mirrored."
+  },
+  "outcome_overlay": {
+    "cases": [
+      {
+        "trial": "T1",
+        "door_state": "closed",
+        "aperture": [
+          1.0,
+          0.4122857142857143,
+          0.36628571428571427,
+          0.0034285714285714284
+        ],
+        "image_source": "data/runs/pasteur/incubator_door_20260808T043620Z_open_door_demo_contact/after/head.png",
+        "image_sha256": "fc7599dfec828520bd3af266b6e12da0c7e08a2396521b0154c2247f9eadaad7",
+        "display_image": "docs/assets/code_as_learning_machine/door_grasp_overlay_T1_head.jpg",
+        "display_image_sha256": "a76ff4a2500043a04a219cf1790a9655ec2371c0148bce62006bc27ba6f102ab",
+        "rotation_clockwise_deg": 0
+      },
+      {
+        "trial": "T2",
+        "door_state": "closed",
+        "aperture": [
+          1.0,
+          0.4074285714285714,
+          0.36514285714285716,
+          0.0034285714285714284
+        ],
+        "image_source": "data/runs/pasteur/incubator_door_20260808T044541Z_retry2_slip_observe/head.png",
+        "image_sha256": "66b27efb8191d9786b2224d52db46cb1362b78a415cfa6ca1f40163bf8d87d85",
+        "display_image": "docs/assets/code_as_learning_machine/door_grasp_overlay_T2_head.jpg",
+        "display_image_sha256": "7997db2c570ef2219ca498480e1e8c5767b63275f6744ae1a5775d267281c1cc",
+        "rotation_clockwise_deg": 0
+      },
+      {
+        "trial": "T6",
+        "door_state": "open",
+        "aperture": [
+          1.0,
+          0.4074285714285714,
+          0.2897142857142857,
+          0.0034285714285714284
+        ],
+        "image_source": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_slip_observe/head.png",
+        "image_sha256": "efd4b95047564b2cebf4141669fd61d0f00b5e1a0472450f275b379421128e10",
+        "display_image": "docs/assets/code_as_learning_machine/door_grasp_overlay_T6_head.jpg",
+        "display_image_sha256": "fa20cc135e4e7cf43625c6048364c1b0436ac78d2a3cc4411b8b29c031f6d253",
+        "rotation_clockwise_deg": 0
+      },
+      {
+        "trial": "T7",
+        "door_state": "open",
+        "aperture": [
+          1.0,
+          0.3057142857142857,
+          0.296,
+          0.0034285714285714284
+        ],
+        "image_source": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/captures/2026-08-08/20260808T100427.298699Z_head_open_attempt_1_result_95dc7b74/raw/head/000004/rgb.png",
+        "image_sha256": "e9754f70c5b30c4890bba7a98bb00d18ef3d548f81e8eb6f58f12c026ecc1d6b",
+        "display_image": "docs/assets/code_as_learning_machine/door_grasp_overlay_T7_head.jpg",
+        "display_image_sha256": "ee8ed2f8d56954edd25bf5a63c1b5dbf94f10b60f3f3024ba37142051acf23ae",
+        "rotation_clockwise_deg": 90
+      }
+    ],
+    "endpoint_report": "docs/assets/code_as_learning_machine/door_configuration_curve_report.json",
+    "endpoint_report_sha256": "e19ab9146947f3e37b25cadbfde5c71c1892966551acd24155a43f5517ac4a67",
+    "selection": "All four pull attempts with endpoints re-evaluated by the frozen classifier: two closed, two open.",
+    "limitations": [
+      "Start values are measured, not imputed ones.",
+      "Dashed connections between observation phases are visual guides, not sampled trajectories.",
+      "No line crosses the missing full-pull interval. Endpoint dots overlap at their actual values.",
+      "Observed open endpoints are task successes, not continuously retained grasps."
+    ]
   }
 }

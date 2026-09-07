@@ -167,3 +167,64 @@ door-run records; no idealized successful-grasp curve is substituted.
 The initial state report and raw image are additionally source-hashed in
 `successful_opening` in the tracked report. The standard command also emits
 `door_grasp_success_T7.{png,svg}`.
+
+## Overlay: two failed and two successful openings
+
+![Overlaid phase observations and four endpoint images](assets/code_as_learning_machine/door_grasp_outcome_overlay.png)
+
+The overlay uses T1/T2 (closed endpoints) and T6/T7 (open endpoints): all four
+pull attempts with independently re-evaluated endpoints in the existing frozen
+report. All four **measured** pre-close apertures are 1.0. This starting value
+is not imputed for presentation. After-close and post-proof values are the
+same saved summaries used above. The final four dots coincide at 0.0034286;
+they are not jittered. Broken/dashed guides connect phases only up to proof;
+no line traverses the unrecorded full-pull interval. Right-hand photographs
+retain the full head frames and distinguish the door endpoints.
+
+The selected successful examples have smaller post-proof openings, but this
+tiny observational comparison does not establish an aperture threshold for
+success. In particular other unsuccessful attempts also had smaller openings.
+The endpoint labels are based on the door, not derived from these aperture values.
+
+### Why the full-pull trace is missing, and what could be recovered
+
+The historical implementation at `f2149bb` collected checkpoint apertures in
+an in-memory list inside `_stream_retargeted_segment.gate`. If the aperture
+fell below the bound, `gate` appended the reading and immediately raised
+`TrajectoryStreamError`. The list was attached to the returned result only
+**after** `streamer.execute()` returned normally, and the caller wrote its JSON
+later. Consequently, the slip-triggered exception prevented all accumulated
+checkpoint readings from being persisted. The first long pull predates the
+checkpoint implementation and has only before/after aperture.
+
+This is a historical logging limitation, not absence of real-time monitoring.
+It is also not evidence of a high-frequency full-pull measurement stream: even
+successful persistence would have provided sparse checkpoints, not 30 Hz samples.
+
+The expanded search covered run JSON, stdout/stderr, matching local log/temp
+files, and 642 tool-output records in the historical event-log window. Five
+local stderr files preserve the failing reading, and the archived outputs also
+preserve T6's error. In particular T3 and T5's stopping apertures can now be
+recovered as **0.0034 rounded to four decimal places**, although their selected
+post-pull observation JSON remains missing. No timestamped continuous full-pull
+trace or complete checkpoint sequence was recovered. Repeated copies of an
+error are not new samples. The precise original floating-point values cannot
+be reconstructed from the rounded messages.
+
+The audit outputs are in `door_pull_trace_audit.json`. Reproduce the local
+stderr/source audit with:
+
+```bash
+python docs/audit_door_pull_trace.py
+```
+
+To include the optional private transcript audit, pass `--event-log PATH`.
+Only numeric errors, line references, timestamps and metadata are exported;
+commands from the transcript are never executed. The optional log remains
+private and is not committed. The plot itself needs only tracked report data
+and thumbnails.
+
+Future logging should append each measured checkpoint and timestamp to disk
+before evaluating the stop condition, including exceptions/termination. That
+would prevent this particular data loss; no runtime control changes or new
+physical trials were made for the present retrospective figure request.

@@ -156,6 +156,7 @@ def build_report():
             "proof_source": proof_dir + "/proof_state.json",
             "post_pull_source": post_path,
             "close_samples": close_samples.tolist(),
+            "preclose_measured_aperture": float(close["before"]["right_gripper"]),
             "post_proof_samples": proof_samples.tolist(),
             "closed_aperture": float(close["closed_aperture"]),
             "post_proof_median": float(np.median(proof_samples)),
@@ -223,7 +224,50 @@ def build_report():
     }
     result["three_patterns"] = build_three_patterns(result)
     result["successful_opening"] = build_successful_opening(result)
+    result["outcome_overlay"] = build_outcome_overlay(result)
     return result
+
+
+def build_outcome_overlay(report):
+    from PIL import Image
+
+    path = ASSETS / "door_configuration_curve_report.json"
+    endpoint_report = json.loads(path.read_text())
+    endpoints = {r["stage"]: r for r in endpoint_report["configurations"]}
+    trials = {r["trial"]: r for r in report["trials"]}
+    cases = []
+    for trial, historical_stage in [("T1", "D1"), ("T2", "D2"), ("T6", "D3"), ("T7", "D4")]:
+        source = endpoints[historical_stage]["source"]
+        raw = "selected_frame" in source
+        image_path = source["selected_frame"] + "/rgb.png" if raw else source["image"]
+        expected = source["files"][image_path] if raw else source["image_sha256"]
+        if hashlib.sha256((ROOT / image_path).read_bytes()).hexdigest() != expected:
+            raise ValueError(f"Image hash mismatch: {image_path}")
+        target = ASSETS / f"door_grasp_overlay_{trial}_head.jpg"
+        with Image.open(ROOT / image_path) as image:
+            image = image.convert("RGB")
+            if raw:
+                image = image.transpose(Image.Transpose.ROTATE_270)
+            image.thumbnail((768, 576))
+            image.save(target, quality=92)
+        row = trials[trial]
+        cases.append({
+            "trial": trial, "door_state": endpoints[historical_stage]["classified_state"],
+            "aperture": [row["preclose_measured_aperture"], row["closed_aperture"],
+                         row["post_proof_median"], row["post_pull_aperture"]],
+            "image_source": image_path, "image_sha256": expected,
+            "display_image": str(target.relative_to(ROOT)),
+            "display_image_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            "rotation_clockwise_deg": 90 if raw else 0,
+        })
+    return {"cases": cases,
+            "endpoint_report": str(path.relative_to(ROOT)),
+            "endpoint_report_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "selection": "All four pull attempts with endpoints re-evaluated by the frozen classifier: two closed, two open.",
+            "limitations": ["Start values are measured, not imputed ones.",
+                            "Dashed connections between observation phases are visual guides, not sampled trajectories.",
+                            "No line crosses the missing full-pull interval. Endpoint dots overlap at their actual values.",
+                            "Observed open endpoints are task successes, not continuously retained grasps."]}
 
 
 def build_successful_opening(report):
@@ -524,6 +568,49 @@ def plot_successful_opening(report):
     return fig
 
 
+def plot_outcome_overlay(report):
+    cases = report["outcome_overlay"]["cases"]
+    fig = plt.figure(figsize=(16, 8))
+    gs = fig.add_gridspec(2, 3, width_ratios=[2.1, 1, 1])
+    ax = fig.add_subplot(gs[:, 0])
+    colors = ["#C44E52", "#DE8F05", "#21966F", "#246CB4"]
+    markers = ["o", "s", "^", "D"]
+    ax.axvspan(2.4, 3.6, color="#EEEEEE", zorder=0)
+    ax.text(3, .51, "Full pull\n(no saved\ncontinuous trace)", ha="center", fontsize=13, color="#666666")
+    for index, (case, color, marker) in enumerate(zip(cases, colors, markers)):
+        values = case["aperture"]
+        outcome = "success: open" if case["door_state"] == "open" else "failure: closed"
+        ax.plot([0, 1, 2], values[:3], ls="--", color=color, lw=1.5, alpha=.8)
+        ax.scatter([0, 1, 2, 4], values, marker=marker, s=110, linewidths=1.8,
+                   facecolors="none", edgecolors=color, zorder=3+index,
+                   label=f'{case["trial"]} — {outcome}')
+        photo_ax = fig.add_subplot(gs[index//2, 1+index%2])
+        photo_ax.imshow(plt.imread(ROOT / case["display_image"]))
+        photo_ax.axis("off")
+        photo_ax.set_title(f'{case["trial"]}: {case["door_state"].upper()}', fontsize=19, color=color)
+    ax.axhline(report["empty_aperture_reference"], color="#888888", ls=":", lw=1)
+    ax.set(xticks=[0, 1, 2, 4], xticklabels=["Open\nstart", "After\nclose", "After 5 mm\nproof", "Post-pull"],
+           xlim=(-.25, 4.3), ylim=(-.06, 1.12), ylabel="Measured gripper opening (0–1)",
+           xlabel="Observation phase (not elapsed time)")
+    ax.annotate("All four start at measured 1.0", (0, 1), xytext=(.25, 1.045), fontsize=13)
+    ax.annotate("All four end at 0.0034\n(points overlap)", (4, cases[0]["aperture"][-1]),
+                xytext=(2.3, .17), fontsize=13,
+                arrowprops={"arrowstyle": "->", "color": "#555555"})
+    ax.legend(loc="upper right", bbox_to_anchor=(1, .91), fontsize=13, frameon=True)
+    ax.tick_params(labelsize=14)
+    ax.yaxis.label.set_size(17)
+    ax.xaxis.label.set_size(15)
+    sns.despine(ax=ax)
+    fig.suptitle("Gripper opening: two failed and two successful door-opening trials", fontsize=22)
+    fig.text(.72, .88, "Later head images / RGB-D endpoint labels", ha="center", fontsize=14)
+    fig.text(.5, .025,
+             "Dashed lines only connect saved phase summaries; no full-pull curve is inferred.\n"
+             "Opening remaining after proof does not by itself distinguish success from failure. This is not pressure.",
+             ha="center", fontsize=13)
+    fig.tight_layout(rect=(0, .085, 1, .86), w_pad=2, h_pad=3.5)
+    return fig
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rebuild-report", action="store_true")
@@ -539,7 +626,8 @@ def main():
                            (plot_samples, "door_grasp_aperture_samples"),
                            (plot_demo_comparison, "door_contact_demo_comparison"),
                            (plot_three_patterns, "door_grasp_three_patterns"),
-                           (plot_successful_opening, "door_grasp_success_T7")]:
+                           (plot_successful_opening, "door_grasp_success_T7"),
+                           (plot_outcome_overlay, "door_grasp_outcome_overlay")]:
             fig = plot(report)
             save(fig, stem)
             plt.close(fig)

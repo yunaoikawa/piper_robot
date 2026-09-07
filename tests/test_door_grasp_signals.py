@@ -136,3 +136,33 @@ def test_task_success_is_distinct_from_continuous_grasp():
         assert len(fig.axes[1].lines) == 1  # Reference only; no fabricated retained-grasp trace.
     finally:
         MODULE.plt.close(fig)
+
+
+def test_overlay_has_two_failures_two_successes_and_measured_open_starts():
+    data = report()
+    cases = data["outcome_overlay"]["cases"]
+    assert [c["trial"] for c in cases] == ["T1", "T2", "T6", "T7"]
+    assert [c["door_state"] for c in cases] == ["closed", "closed", "open", "open"]
+    assert all(c["aperture"][0] == 1.0 for c in cases)
+    assert len(set(c["aperture"][-1] for c in cases)) == 1
+    fig = MODULE.plot_outcome_overlay(data)
+    try:
+        ax = fig.axes[0]
+        for collection, case in zip(ax.collections, cases):
+            np.testing.assert_allclose(collection.get_offsets(), list(zip([0, 1, 2, 4], case["aperture"])))
+        for line in ax.lines[:4]:
+            np.testing.assert_array_equal(line.get_xdata(), [0, 1, 2])
+        assert len(fig.axes) == 5
+    finally:
+        MODULE.plt.close(fig)
+
+
+def test_recovered_stopping_values_are_not_treated_as_full_traces():
+    audit = json.loads((MODULE.ASSETS / "door_pull_trace_audit.json").read_text())
+    assert audit["runtime_modified"] is False
+    recovered = audit["recovered_stop_readings"]
+    assert len(recovered) == 5
+    for label in ["retry3", "retry5"]:
+        sample = next(r for r in recovered if label in r["source"])
+        assert sample["aperture_rounded_4dp"] == .0034
+    assert audit["private_event_log_audit"]["tool_output_records_scanned"] == 642

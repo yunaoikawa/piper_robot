@@ -1,0 +1,98 @@
+{
+  "schema": "door_pull_trace_audit/v1",
+  "stderr_files_scanned": 20,
+  "recovered_stop_readings": [
+    {
+      "source": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/09_open-door/stderr.txt",
+      "sha256": "22db34a43b930fd3aeb3210bed9b91321c89b0d1796dccfbca86188068f2c853",
+      "aperture_rounded_4dp": 0.0034,
+      "bound_rounded_4dp": 0.0739
+    },
+    {
+      "source": "data/runs/pasteur/incubator_door_20260808T044504Z_retry2_open_slow_checkpointed.stderr",
+      "sha256": "49585dcc041baf13f89b9a1be4327dac2ea84e4cce07c6e94f9a62579c7c29ab",
+      "aperture_rounded_4dp": 0.0034,
+      "bound_rounded_4dp": 0.0913
+    },
+    {
+      "source": "data/runs/pasteur/incubator_door_20260808T044945Z_retry3_open_slow_checkpointed.stderr",
+      "sha256": "8105ae76cb7aec5f2c14608718c4b7c50a67e4bd6fe2509055a3c5738147eaf8",
+      "aperture_rounded_4dp": 0.0034,
+      "bound_rounded_4dp": 0.0916
+    },
+    {
+      "source": "data/runs/pasteur/incubator_door_20260808T050052Z_retry4_open_slow_checkpointed.stderr",
+      "sha256": "9270e49af378381d10ef1ed13eff6c17dadf2020bb6d9c63cf2c68fbe51e3a8d",
+      "aperture_rounded_4dp": 0.0034,
+      "bound_rounded_4dp": 0.0796
+    },
+    {
+      "source": "data/runs/pasteur/incubator_door_20260808T050548Z_retry5_open_slow_checkpointed.stderr",
+      "sha256": "b6e38cb9fa3009c52602e7a55d0a54c5b0a5b5f196a50d018e18ff680d16016b",
+      "aperture_rounded_4dp": 0.0034,
+      "bound_rounded_4dp": 0.0728
+    }
+  ],
+  "private_event_log_audit": {
+    "event_log_filename": "rollout-2026-08-06T09-12-22-019fd469-f996-7680-be0b-cf63eca2a112.jsonl",
+    "window_utc": [
+      "2026-08-08T03:34",
+      "2026-08-08T10:10"
+    ],
+    "tool_output_records_scanned": 642,
+    "slip_errors": [
+      {
+        "line": 84598,
+        "timestamp": "2026-08-08T04:45:25.867Z",
+        "aperture_rounded_4dp": 0.0034,
+        "bound_rounded_4dp": 0.0913
+      },
+      {
+        "line": 84681,
+        "timestamp": "2026-08-08T04:50:06.702Z",
+        "aperture_rounded_4dp": 0.0034,
+        "bound_rounded_4dp": 0.0916
+      },
+      {
+        "line": 84897,
+        "timestamp": "2026-08-08T05:01:12.113Z",
+        "aperture_rounded_4dp": 0.0034,
+        "bound_rounded_4dp": 0.0796
+      },
+      {
+        "line": 84995,
+        "timestamp": "2026-08-08T05:06:09.931Z",
+        "aperture_rounded_4dp": 0.0034,
+        "bound_rounded_4dp": 0.0728
+      },
+      {
+        "line": 85793,
+        "timestamp": "2026-08-08T05:45:42.868Z",
+        "aperture_rounded_4dp": 0.0034,
+        "bound_rounded_4dp": 0.0724
+      }
+    ],
+    "note": "Repeated error outputs are not independent samples; do not concatenate as a time trace."
+  },
+  "historical_code": {
+    "commit": "f2149bb",
+    "path": "src/run_incubator_door_demo.py",
+    "sha256": "9e77c453172833c2459ded3061f6357a3669ebd7f9fc9f6d5774c2d9e6bc9fc4"
+  },
+  "cause": [
+    "Sparse aperture_checks accumulated in RAM inside _stream_retargeted_segment.gate.",
+    "gate raises TrajectoryStreamError immediately on aperture loss.",
+    "aperture_checkpoints is attached to the returned result only after streamer.execute returns normally.",
+    "open_door.json is written later; interruption therefore loses accumulated checkpoint readings.",
+    "stderr retains the failing reading rounded to 4 decimal places, without checkpoint time/index.",
+    "The first full pull predates sparse checkpoint logging; its result has only before/after aperture."
+  ],
+  "recoverability": "Individual stopping values recovered, including T3 and T5 previously absent from selected JSON observations; no complete measured full-pull curve found.",
+  "not_valid_replacements": [
+    "Binary demo gripper commands",
+    "Arm joint torques",
+    "Interpolated phase summaries"
+  ],
+  "video_option": "Sparse still images cannot supply an actual continuous mechanical aperture trace. Calibrated continuous video, if separately found, would be a distinct visual estimate.",
+  "runtime_modified": false
+}
