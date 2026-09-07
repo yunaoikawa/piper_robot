@@ -62,3 +62,33 @@ def test_raw_trace_uses_indices_not_fabricated_timestamps():
 def test_bad_samples_are_rejected(values):
     with pytest.raises(ValueError):
         MODULE.checked_samples(values)
+
+
+def test_demo_comparison_includes_early_failures_and_later_nonmonotonic_change():
+    data = report()["demo_comparison"]
+    assert [r["trial"] for r in data["trials"]] == ["E1", "E2", "E3"] + [f"T{i}" for i in range(1, 8)]
+    assert len(data["demo_gripper_audit"]) == 12
+    assert all(r["unique_gripper_values"] == [0., 1.] for r in data["demo_gripper_audit"])
+    for row in data["trials"]:
+        position, angle = MODULE.pose_error(row["contact_pose_wxyz_xyz"], data["reference_contact_pose_wxyz_xyz"])
+        assert position == pytest.approx(row["position_difference_mm"])
+        assert angle == pytest.approx(row["orientation_difference_deg"])
+    assert data["trials"][3]["position_difference_mm"] < 2
+    assert data["trials"][-1]["position_difference_mm"] > 19
+
+
+def test_quaternion_sign_is_not_an_orientation_error():
+    ref = [1, 0, 0, 0, 0, 0, 0]
+    assert MODULE.pose_error([-1, 0, 0, 0, .001, 0, 0], ref) == pytest.approx((1, 0))
+
+
+def test_demo_plot_keeps_all_actual_coordinates():
+    data = report()
+    fig = MODULE.plot_demo_comparison(data)
+    try:
+        for ax, key in zip(fig.axes, ["position_difference_mm", "orientation_difference_deg"]):
+            expected = [[i, r[key]] for i, r in enumerate(data["demo_comparison"]["trials"])]
+            np.testing.assert_allclose(ax.collections[0].get_offsets(), expected)
+            assert len(ax.lines) == 1  # Zero reference only.
+    finally:
+        MODULE.plt.close(fig)

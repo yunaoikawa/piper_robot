@@ -70,3 +70,39 @@ python docs/plot_door_grasp_signals.py --rebuild-report
 Outputs: `door_grasp_signal_report.json`, `door_grasp_aperture_trials.{png,svg}`,
 and `door_grasp_aperture_samples.{png,svg}` in `docs/assets/code_as_learning_machine/`.
 No robot-control code or logging configuration is modified by this analysis.
+
+## Did the physical trials become closer to the demonstration?
+
+![Contact pose versus the fixed demo](assets/code_as_learning_machine/door_contact_demo_comparison.png)
+
+The successful demonstrations' `right_gripper` channel contains only 0 and 1
+in all twelve verified recordings. The collector's trigger-derived open/close
+recording is consistent with this: see `teleop_collect_example.py`'s
+`RecordingSample` construction. This is not the same measurement as the
+continuous actual aperture read by the trial controller. Direct aperture-curve
+matching would be invalid (and could incorrectly reward empty, fully closed
+grasps for matching a zero-valued close command).
+
+Instead, the additional figure compares every preserved August 8 contact pose
+with the **fixed representative demo's contact pose**. E1--E3 are the three
+early contact-only attempts. T1--T7 use the mapping above. The report includes
+the reference and per-trial poses, numerical differences, source hashes, and
+the per-demo binary-channel audit.
+
+The robot-frame position differences initially fall from 139.7 to 103.0 to
+97.9 mm, then to 1.7 mm at T1. However, later attempts are not monotonically
+closer; successful T6/T7 differ by 22.0/19.4 mm, and their angular differences
+are larger than T1's. No smoothing, best-so-far curve, trial omission, or fitted
+registration is used to conceal this.
+
+This metric is **absolute robot-frame EE discrepancy**, not distance to the
+current handle. The user warned that the appliance had moved, and later
+control incorporated live alignment. Also, the reference demo helped generate
+the tested motions, so closeness to it is not held-out generalization evidence.
+The supported narrative is that demonstrations corrected a large initial pose
+mismatch, followed by environment-specific adjustment and verification—not
+that monotonically reproducing the original absolute pose caused success.
+
+Regeneration uses the same commands above and additionally produces
+`door_contact_demo_comparison.{png,svg}`. Re-auditing raw demos requires h5py;
+plotting the tracked report does not.

@@ -69,6 +69,68 @@ def checked_samples(values):
     return values
 
 
+def pose_error(pose, reference):
+    pose, reference = np.asarray(pose, dtype=float), np.asarray(reference, dtype=float)
+    if pose.shape != (7,) or reference.shape != (7,) or not np.isfinite([pose, reference]).all():
+        raise ValueError("Expected finite wxyz_xyz poses")
+    q, r = pose[:4], reference[:4]
+    if min(np.linalg.norm(q), np.linalg.norm(r)) <= 0:
+        raise ValueError("Zero quaternion")
+    cosine = np.clip(abs(q @ r) / (np.linalg.norm(q) * np.linalg.norm(r)), 0, 1)
+    return float(np.linalg.norm(pose[4:] - reference[4:]) * 1000), float(np.degrees(2 * np.arccos(cosine)))
+
+
+def build_demo_comparison():
+    """Compare saved measured contact poses, without fitting any alignment."""
+    import h5py  # Only required to re-audit local reference recordings.
+
+    path = ROOT / "data/reference/pasteur/incubator/compiled_door_open_v1.json"
+    compiled = json.loads(path.read_text())
+    sources = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()}
+    reference = compiled["medoid"]["contact_pose_wxyz_xyz"]
+    gripper_audit = []
+    for episode in compiled["successes"]:
+        path = ROOT / "data/reference/pasteur/incubator/incoming/door_open" / (episode["stem"] + ".hdf5")
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest != episode["hdf5_sha256"]:
+            raise ValueError(f"Demo source changed: {path}")
+        sources[str(path.relative_to(ROOT))] = digest
+        with h5py.File(path) as recording:
+            gripper_audit.append({"stem": episode["stem"],
+                                  "unique_gripper_values": np.unique(recording["right_gripper"][:]).tolist()})
+    labels = {close + "/contact_state.json": ident for ident, _, close, *_ in TRIALS}
+    rows = []
+    for path in sorted(RUNS.glob("incubator*20260808*/**/contact_state.json")):
+        raw = path.read_bytes()
+        state = json.loads(raw)
+        relative = str(path.relative_to(RUNS))
+        position, orientation = pose_error(state["contact_pose_wxyz_xyz"], reference)
+        rows.append({"trial": labels.get(relative), "timestamp_s": state["before"]["timestamp_s"],
+                     "source": relative, "contact_pose_wxyz_xyz": state["contact_pose_wxyz_xyz"],
+                     "position_difference_mm": position, "orientation_difference_deg": orientation})
+        sources[str(path.relative_to(ROOT))] = hashlib.sha256(raw).hexdigest()
+    rows.sort(key=lambda row: row["timestamp_s"])
+    early = 0
+    for row in rows:
+        if row["trial"] is None:
+            early += 1
+            row["trial"] = f"E{early}"
+    return {
+        "reference_stem": compiled["medoid"]["stem"],
+        "reference_contact_pose_wxyz_xyz": reference,
+        "metric": "Euclidean EE-origin position difference and full SO(3) angular difference at saved contact pose",
+        "frame": "Saved robot base coordinates; no registration for physical door displacement",
+        "limitations": [
+            "Not object-relative handle error, not pressure, not full-trajectory similarity.",
+            "The reference medoid was also used to generate the controller trajectory; this is not held-out evaluation.",
+            "All ten preserved August 8 contact records are shown chronologically, with no monotonic smoothing.",
+            "Later successful trials need not minimize this absolute-demo discrepancy after live alignment.",
+            "Demo gripper values are binary (all twelve recordings); they cannot be compared as measured aperture curves.",
+        ],
+        "demo_gripper_audit": gripper_audit, "trials": rows, "source_sha256": sources,
+    }
+
+
 def build_report():
     sources = {}
 
@@ -156,6 +218,7 @@ def build_report():
         "contact_only_attempts_not_in_pull_plot": contact_only,
         "endpoint_context": "docs/PASTEUR_INCUBATOR_DOOR_OPENING_RETROSPECTIVE.md and door_configuration_curve_report.json",
         "source_sha256": sources,
+        "demo_comparison": build_demo_comparison(),
     }
 
 
@@ -231,6 +294,40 @@ def plot_samples(report):
     return fig
 
 
+def plot_demo_comparison(report):
+    comparison = report["demo_comparison"]
+    rows = comparison["trials"]
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.7))
+    x = np.arange(len(rows))
+    colors = ["#999999" if row["trial"].startswith("E") else
+              "#21875D" if row["trial"] in ("T6", "T7") else "#2878B5" for row in rows]
+    for ax, key, title, ylabel, ymax in [
+        (axes[0], "position_difference_mm", "Contact-position difference", "Distance to demo EE origin (mm)", 165),
+        (axes[1], "orientation_difference_deg", "Contact-orientation difference", "Full rotation difference (degrees)", 12),
+    ]:
+        y = [row[key] for row in rows]
+        ax.scatter(x, y, c=colors, s=90, zorder=3)
+        for xi, yi in zip(x, y):
+            ax.annotate(f"{yi:.1f}", (xi, yi), xytext=(0, 9),
+                        textcoords="offset points", ha="center", fontsize=12)
+        ax.axhline(0, ls=":", color="#999999", lw=1)
+        ax.set(xticks=x, xticklabels=[row["trial"] for row in rows],
+               ylim=(-.03*ymax, ymax), xlim=(-.6, len(rows)-.4),
+               xlabel="Chronological contact attempt", ylabel=ylabel, title=title)
+        ax.tick_params(labelsize=13)
+        ax.xaxis.label.set_size(15)
+        ax.yaxis.label.set_size(15)
+        ax.title.set_size(18)
+        sns.despine(ax=ax)
+    fig.suptitle("Approaching the successful demo — not monotonically", fontsize=22)
+    fig.text(.5, .035,
+             "Gray: early contact-only attempts   |   Blue: T1–T5   |   Green: opening observed/verified (T6/T7)\n"
+             "Absolute robot-frame comparison to the fixed medoid; door displacement is NOT compensated.",
+             ha="center", fontsize=12)
+    fig.tight_layout(rect=(0, .11, 1, .92))
+    return fig
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rebuild-report", action="store_true")
@@ -243,7 +340,8 @@ def main():
         "svg.hashsalt": "door_grasp_signals_v1",
     }):
         for plot, stem in [(plot_summary, "door_grasp_aperture_trials"),
-                           (plot_samples, "door_grasp_aperture_samples")]:
+                           (plot_samples, "door_grasp_aperture_samples"),
+                           (plot_demo_comparison, "door_contact_demo_comparison")]:
             fig = plot(report)
             save(fig, stem)
             plt.close(fig)
