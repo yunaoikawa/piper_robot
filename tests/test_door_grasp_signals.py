@@ -121,3 +121,18 @@ def test_three_pattern_image_hashes_match_tracked_thumbnails():
     for case in report()["three_patterns"]["cases"]:
         actual = hashlib.sha256((MODULE.ROOT / case["display_image"]).read_bytes()).hexdigest()
         assert actual == case["display_image_sha256"]
+
+
+def test_task_success_is_distinct_from_continuous_grasp():
+    data = report()
+    success = data["successful_opening"]
+    assert success["task_success"] is True
+    assert success["continuous_grasp_success"] is False
+    assert (success["initial_state"], success["final_state"]) == ("closed", "open")
+    fig = MODULE.plot_successful_opening(data)
+    try:
+        assert len(fig.axes) == 4
+        assert len(fig.axes[2].images) == len(fig.axes[3].images) == 1
+        assert len(fig.axes[1].lines) == 1  # Reference only; no fabricated retained-grasp trace.
+    finally:
+        MODULE.plt.close(fig)

@@ -151,3 +151,19 @@ The frozen endpoint report is not re-fit for this comparison.
 The standard plotting command now also generates `door_grasp_three_patterns`
 in PNG/SVG. Local re-extraction generates three tracked JPEG thumbnails; the
 default plotting command requires no original camera files.
+
+## Successful opening, shown separately
+
+![Successful autonomous opening T7](assets/code_as_learning_machine/door_grasp_success_T7.png)
+
+This standalone figure labels the **door-opening task as successful** and
+shows its independently classified closed start and open end, together with
+the actual close/proof/post-pull aperture measurements. It is the same T7 as
+case C above, not a newly discovered additional successful trial. Its grasp
+was not maintained throughout the full pull. No preserved full-pull aperture
+trace demonstrating continuously retained grasp was identified in the audited
+door-run records; no idealized successful-grasp curve is substituted.
+
+The initial state report and raw image are additionally source-hashed in
+`successful_opening` in the tracked report. The standard command also emits
+`door_grasp_success_T7.{png,svg}`.

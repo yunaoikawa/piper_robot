@@ -1498,5 +1498,23 @@
       "Case C confirms an open endpoint and absent grasp, not the precise temporal order of opening and slip.",
       "Display images are full-frame downscaled only; T7 is rotated clockwise as in the endpoint loader."
     ]
+  },
+  "successful_opening": {
+    "trial": "T7",
+    "task_goal": "Open the door",
+    "task_success": true,
+    "continuous_grasp_success": false,
+    "initial_state": "closed",
+    "final_state": "open",
+    "initial_display_image": "docs/assets/code_as_learning_machine/door_grasp_success_T7_initial.jpg",
+    "final_display_image": "docs/assets/code_as_learning_machine/door_grasp_pattern_T7_head.jpg",
+    "initial_source_image": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/captures/2026-08-08/20260808T100303.328276Z_head_initial_5e2b9e3f/raw/head/000004/rgb.png",
+    "source_sha256": {
+      "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/02_state_initial/state.json": "777d691fb1f38a145f06c114e10287f7dd739c92f8e2477e32f90c574df54ab3",
+      "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/12_state_open_attempt_1_result/state.json": "fccf43d69b419d7c0ae578bcff9fc214c149a46677460ad2ffdc1b102e6376ea",
+      "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/captures/2026-08-08/20260808T100303.328276Z_head_initial_5e2b9e3f/raw/head/000004/rgb.png": "d081dc075549f244a995c4080f99657d65ea4a539e6ddaccaf91675e0e240e26",
+      "docs/assets/code_as_learning_machine/door_grasp_success_T7_initial.jpg": "212c58f274a487e0b773c5ee354d0ed7814dd1b0054b57dd49ce8cc45fa0120e"
+    },
+    "display_note": "Both full-frame RGB images rotated clockwise 90 degrees and downscaled, not mirrored."
   }
 }

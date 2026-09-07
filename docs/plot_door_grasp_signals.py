@@ -222,7 +222,36 @@ def build_report():
         "demo_comparison": build_demo_comparison(),
     }
     result["three_patterns"] = build_three_patterns(result)
+    result["successful_opening"] = build_successful_opening(result)
     return result
+
+
+def build_successful_opening(report):
+    from PIL import Image
+
+    initial_path = RUNS / AUTO / "02_state_initial/state.json"
+    final_path = RUNS / AUTO / "12_state_open_attempt_1_result/state.json"
+    initial, final = json.loads(initial_path.read_text()), json.loads(final_path.read_text())
+    if (initial["state"], final["state"]) != ("closed", "open"):
+        raise ValueError("Historical success endpoints changed")
+    source = Path(initial["source"]) / "rgb.png"
+    target = ASSETS / "door_grasp_success_T7_initial.jpg"
+    with Image.open(source) as image:
+        image = image.convert("RGB").transpose(Image.Transpose.ROTATE_270)
+        image.thumbnail((768, 576))
+        image.save(target, quality=92)
+    end_case = next(c for c in report["three_patterns"]["cases"] if c["trial"] == "T7")
+    return {
+        "trial": "T7", "task_goal": "Open the door", "task_success": True,
+        "continuous_grasp_success": False,
+        "initial_state": initial["state"], "final_state": final["state"],
+        "initial_display_image": str(target.relative_to(ROOT)),
+        "final_display_image": end_case["display_image"],
+        "initial_source_image": str(source.relative_to(ROOT)),
+        "source_sha256": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
+                          for p in [initial_path, final_path, source, target]},
+        "display_note": "Both full-frame RGB images rotated clockwise 90 degrees and downscaled, not mirrored.",
+    }
 
 
 def build_three_patterns(report):
@@ -449,6 +478,52 @@ def plot_three_patterns(report):
     return fig
 
 
+def plot_successful_opening(report):
+    data = report["successful_opening"]
+    trial = next(t for t in report["trials"] if t["trial"] == data["trial"])
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), gridspec_kw={"height_ratios": [1, 1.15]})
+    color = "#21875D"
+    ax = axes[0, 0]
+    values = trial["close_samples"]
+    ax.plot(np.arange(len(values)), values, color=color, lw=2, marker=".", markersize=4)
+    ax.axhline(.02, color="#999999", ls=":", lw=1)
+    ax.set(xlim=(-1, 71), ylim=(-.03, .9), xlabel="Sample index after close command",
+           ylabel="Measured opening (0–1)", title="Close: settles with opening remaining")
+    ax.annotate(f'{trial["closed_aperture"]:.4f}', (69, values[-1]),
+                xytext=(-10, 15), textcoords="offset points", ha="right", fontsize=15)
+    ax = axes[0, 1]
+    for x, value in enumerate([trial["post_proof_median"], trial["post_pull_aperture"]]):
+        ax.scatter(x, value, color=color, s=120, zorder=3)
+        ax.annotate(f"{value:.4f}", (x, value), xytext=(0, 12),
+                    textcoords="offset points", ha="center", fontsize=15)
+    ax.axvspan(.28, .72, color="#EEEEEE", zorder=0)
+    ax.text(.5, .22, "Full-pull trace\nunavailable", ha="center", fontsize=13, color="#666666")
+    ax.axhline(.02, color="#999999", ls=":", lw=1)
+    ax.set(xlim=(-.4, 1.4), ylim=(-.03, .5), xticks=[0, 1],
+           xticklabels=["After 5 mm proof", "Post-pull"], ylabel="Measured opening (0–1)",
+           title="Proof retained; grasp later lost")
+    for ax in axes[0]:
+        ax.tick_params(labelsize=13)
+        ax.xaxis.label.set_size(14)
+        ax.yaxis.label.set_size(14)
+        ax.title.set_size(16)
+        sns.despine(ax=ax)
+    for ax, key, title in [
+        (axes[1, 0], "initial_display_image", "Before: CLOSED (RGB-D verified)"),
+        (axes[1, 1], "final_display_image", "After: OPEN (RGB-D verified)"),
+    ]:
+        ax.imshow(plt.imread(ROOT / data[key]))
+        ax.axis("off")
+        ax.set_title(title, fontsize=18, color=color)
+    fig.suptitle("Successful autonomous door opening — T7", fontsize=23, color=color)
+    fig.text(.5, .025,
+             "Task success: door changed from closed to open. Continuous grasp was not maintained.\n"
+             "Measured aperture, not pressure; separate observation blocks, not a continuous time trace.",
+             ha="center", fontsize=13)
+    fig.tight_layout(rect=(0, .075, 1, .94), h_pad=2)
+    return fig
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rebuild-report", action="store_true")
@@ -463,7 +538,8 @@ def main():
         for plot, stem in [(plot_summary, "door_grasp_aperture_trials"),
                            (plot_samples, "door_grasp_aperture_samples"),
                            (plot_demo_comparison, "door_contact_demo_comparison"),
-                           (plot_three_patterns, "door_grasp_three_patterns")]:
+                           (plot_three_patterns, "door_grasp_three_patterns"),
+                           (plot_successful_opening, "door_grasp_success_T7")]:
             fig = plot(report)
             save(fig, stem)
             plt.close(fig)
