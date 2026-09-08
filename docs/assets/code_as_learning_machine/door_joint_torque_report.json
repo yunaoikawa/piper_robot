@@ -1,0 +1,286 @@
+{
+  "schema": "door_joint_torque_audit/v1",
+  "measurement": "Controller-reported physical-right arm joint torque magnitude",
+  "units": "N m",
+  "is_pressure": false,
+  "phase": "Settling after the 5 mm proof pull",
+  "trials": [
+    {
+      "trial": "T1",
+      "label": "First demo pull",
+      "source": "data/runs/pasteur/incubator_door_20260808T043548Z_proof_pull_demo_contact/proof_pull.json",
+      "selection": "last_torque_warning",
+      "stage": "while settling after trajectory",
+      "torque_magnitude_nm": [
+        0.05788124848622828,
+        0.5091187432408333,
+        1.5946875281631945,
+        0.25494504251360894,
+        0.8472609631991386,
+        0.07379987960010767
+      ],
+      "warning_limit_nm": [
+        0.30050999645143744,
+        1.692495008111,
+        1.46,
+        0.68,
+        1.58,
+        0.28
+      ],
+      "torque_warning_count": 2,
+      "torque_stop_enforced": false,
+      "saved_vectors": 1,
+      "door_state": "closed"
+    },
+    {
+      "trial": "T2",
+      "label": "Retry 2",
+      "source": "data/runs/pasteur/incubator_door_20260808T044442Z_retry2_proof_pull/proof_pull.json",
+      "selection": "last_torque_warning",
+      "stage": "while settling after trajectory",
+      "torque_magnitude_nm": [
+        0.009450000448850915,
+        0.452418733946979,
+        1.6466625630855558,
+        0.2789060482263565,
+        0.8530115862894058,
+        0.20798147303044795
+      ],
+      "warning_limit_nm": [
+        0.30050999645143744,
+        1.692495008111,
+        1.46,
+        0.68,
+        1.58,
+        0.28
+      ],
+      "torque_warning_count": 2,
+      "torque_stop_enforced": false,
+      "saved_vectors": 1,
+      "door_state": "closed"
+    },
+    {
+      "trial": "T3",
+      "label": "Retry 3",
+      "source": "data/runs/pasteur/incubator_door_20260808T044921Z_retry3_proof_pull/proof_pull.json",
+      "selection": "last_torque_warning",
+      "stage": "while settling after trajectory",
+      "torque_magnitude_nm": [
+        0.017718749603955072,
+        0.4618687530979514,
+        1.6029562421143053,
+        0.25686192639827726,
+        0.8875154390859603,
+        0.060381720971167084
+      ],
+      "warning_limit_nm": [
+        0.30050999645143744,
+        1.692495008111,
+        1.46,
+        0.68,
+        1.58,
+        0.28
+      ],
+      "torque_warning_count": 2,
+      "torque_stop_enforced": false,
+      "saved_vectors": 1,
+      "door_state": null
+    },
+    {
+      "trial": "T4",
+      "label": "Retry 4",
+      "source": "data/runs/pasteur/incubator_door_20260808T050021Z_retry4_proof_pull/proof_pull.json",
+      "selection": "last_torque_warning",
+      "stage": "while settling after trajectory",
+      "torque_magnitude_nm": [
+        0.08032500436529516,
+        0.7288312308490276,
+        1.5769687950611113,
+        0.5118069403481483,
+        0.9028504530358314,
+        0.0709245609140396
+      ],
+      "warning_limit_nm": [
+        0.30050999645143744,
+        1.692495008111,
+        1.46,
+        0.68,
+        1.58,
+        0.28
+      ],
+      "torque_warning_count": 2,
+      "torque_stop_enforced": false,
+      "saved_vectors": 1,
+      "door_state": null
+    },
+    {
+      "trial": "T5",
+      "label": "Retry 5",
+      "source": "data/runs/pasteur/incubator_door_20260808T050518Z_retry5_proof_pull/proof_pull.json",
+      "selection": "last_torque_warning",
+      "stage": "while settling after trajectory",
+      "torque_magnitude_nm": [
+        0.0236249994719401,
+        0.8386874746531248,
+        1.5864188142120836,
+        0.44279929188251493,
+        0.9507724644613266,
+        0.14376600571274756
+      ],
+      "warning_limit_nm": [
+        0.30050999645143744,
+        1.692495008111,
+        1.46,
+        0.68,
+        1.58,
+        0.28
+      ],
+      "torque_warning_count": 2,
+      "torque_stop_enforced": false,
+      "saved_vectors": 1,
+      "door_state": null
+    },
+    {
+      "trial": "T6",
+      "label": "Yaw-aligned retry",
+      "source": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_proof/proof_pull.json",
+      "selection": "last_torque_warning",
+      "stage": "while settling after trajectory",
+      "torque_magnitude_nm": [
+        0.34610626492649316,
+        0.5398312350735068,
+        1.5852375090122222,
+        0.6296950850272178,
+        0.9316036827421188,
+        0.006709080207087099
+      ],
+      "warning_limit_nm": [
+        0.30050999645143744,
+        1.692495008111,
+        1.46,
+        0.68,
+        1.58,
+        0.28
+      ],
+      "torque_warning_count": 2,
+      "torque_stop_enforced": false,
+      "saved_vectors": 1,
+      "door_state": "open"
+    },
+    {
+      "trial": "T7",
+      "label": "Autonomous opening",
+      "source": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/07_proof-pull/motion/proof_pull.json",
+      "selection": "last_torque_warning",
+      "stage": "while settling after trajectory",
+      "torque_magnitude_nm": [
+        0.5114812480285763,
+        0.7111124977469444,
+        1.6065000168979167,
+        0.4696356091403961,
+        0.999652903547287,
+        0.008625959628671407
+      ],
+      "warning_limit_nm": [
+        0.30050999645143744,
+        1.692495008111,
+        1.46,
+        0.68,
+        1.58,
+        0.28
+      ],
+      "torque_warning_count": 3,
+      "torque_stop_enforced": false,
+      "saved_vectors": 1,
+      "door_state": "open"
+    }
+  ],
+  "plotted_trials": [
+    "T1",
+    "T2",
+    "T6",
+    "T7"
+  ],
+  "endpoint_images": [
+    {
+      "trial": "T1",
+      "door_state": "closed",
+      "aperture": [
+        1.0,
+        0.4122857142857143,
+        0.36628571428571427,
+        0.0034285714285714284
+      ],
+      "image_source": "data/runs/pasteur/incubator_door_20260808T043620Z_open_door_demo_contact/after/head.png",
+      "image_sha256": "fc7599dfec828520bd3af266b6e12da0c7e08a2396521b0154c2247f9eadaad7",
+      "display_image": "docs/assets/code_as_learning_machine/door_grasp_overlay_T1_head.jpg",
+      "display_image_sha256": "a76ff4a2500043a04a219cf1790a9655ec2371c0148bce62006bc27ba6f102ab",
+      "rotation_clockwise_deg": 0
+    },
+    {
+      "trial": "T2",
+      "door_state": "closed",
+      "aperture": [
+        1.0,
+        0.4074285714285714,
+        0.36514285714285716,
+        0.0034285714285714284
+      ],
+      "image_source": "data/runs/pasteur/incubator_door_20260808T044541Z_retry2_slip_observe/head.png",
+      "image_sha256": "66b27efb8191d9786b2224d52db46cb1362b78a415cfa6ca1f40163bf8d87d85",
+      "display_image": "docs/assets/code_as_learning_machine/door_grasp_overlay_T2_head.jpg",
+      "display_image_sha256": "7997db2c570ef2219ca498480e1e8c5767b63275f6744ae1a5775d267281c1cc",
+      "rotation_clockwise_deg": 0
+    },
+    {
+      "trial": "T6",
+      "door_state": "open",
+      "aperture": [
+        1.0,
+        0.4074285714285714,
+        0.2897142857142857,
+        0.0034285714285714284
+      ],
+      "image_source": "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_slip_observe/head.png",
+      "image_sha256": "efd4b95047564b2cebf4141669fd61d0f00b5e1a0472450f275b379421128e10",
+      "display_image": "docs/assets/code_as_learning_machine/door_grasp_overlay_T6_head.jpg",
+      "display_image_sha256": "fa20cc135e4e7cf43625c6048364c1b0436ac78d2a3cc4411b8b29c031f6d253",
+      "rotation_clockwise_deg": 0
+    },
+    {
+      "trial": "T7",
+      "door_state": "open",
+      "aperture": [
+        1.0,
+        0.3057142857142857,
+        0.296,
+        0.0034285714285714284
+      ],
+      "image_source": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/captures/2026-08-08/20260808T100427.298699Z_head_open_attempt_1_result_95dc7b74/raw/head/000004/rgb.png",
+      "image_sha256": "e9754f70c5b30c4890bba7a98bb00d18ef3d548f81e8eb6f58f12c026ecc1d6b",
+      "display_image": "docs/assets/code_as_learning_machine/door_grasp_overlay_T7_head.jpg",
+      "display_image_sha256": "ee8ed2f8d56954edd25bf5a63c1b5dbf94f10b60f3f3024ba37142051acf23ae",
+      "rotation_clockwise_deg": 90
+    }
+  ],
+  "limitations": [
+    "One last warning-triggered vector per proof-pull stage, not a mean, peak, or uniformly sampled trace.",
+    "Values were stored after abs(); torque signs cannot be recovered from these warning records.",
+    "Trigger selection is biased toward threshold-exceeding states; no unbiased success/failure test is possible.",
+    "Joint configuration, gravity, motion, friction and contact can all affect reported torque.",
+    "No gravity/dynamics subtraction or Jacobian-based contact-force estimation is applied.",
+    "6 joint categories on x-axis, NOT time or motion progress. No values normalized to 1.",
+    "Door endpoints come from the separate RGB-D evaluation, not a torque threshold.",
+    "No complete full-pull torque trace was identified in these run summaries."
+  ],
+  "source_sha256": {
+    "docs/assets/code_as_learning_machine/door_grasp_signal_report.json": "9da1d3bb8b4d2400e283b954d0fdf74b5daa52b5af3b1f4a9ab38e355b888f92",
+    "data/runs/pasteur/incubator_door_20260808T043548Z_proof_pull_demo_contact/proof_pull.json": "7ca8e7da6c7062088c7c463127413cfaf5c13611b6fd2142aabee7cd9bec059f",
+    "data/runs/pasteur/incubator_door_20260808T044442Z_retry2_proof_pull/proof_pull.json": "b2ccc9770aa74499593c44bc667b2856aa766710dc95107291d441fad98479e1",
+    "data/runs/pasteur/incubator_door_20260808T044921Z_retry3_proof_pull/proof_pull.json": "01ab370f59d26fb14fece4a1ce2efa20d914242847e3a03d572eaf407f602f93",
+    "data/runs/pasteur/incubator_door_20260808T050021Z_retry4_proof_pull/proof_pull.json": "750ab3c264cebdab0a1f3fdc6110b7cb66ae2a8aa6a3d736fed4692f96f0c906",
+    "data/runs/pasteur/incubator_door_20260808T050518Z_retry5_proof_pull/proof_pull.json": "3f1015d2b645203fdb499ce175c324706e531373e39411b3690e449e23228735",
+    "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_proof/proof_pull.json": "8391d96cc93700bc26345d7dee2852aac9fd39688ad338232860763205db45ed",
+    "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/07_proof-pull/motion/proof_pull.json": "e7f7ccdf70c2fd2fff865c013db53fc81e8da75824e1ad81d8b7c1a3e4ad8775"
+  }
+}

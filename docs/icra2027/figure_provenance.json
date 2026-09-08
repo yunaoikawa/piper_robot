@@ -1,0 +1,51 @@
+{
+  "description": "Read-only input provenance for ICRA figures; no robot calls",
+  "sources": {
+    "docs/assets/code_as_learning_machine/door_contact_t7_comparison_orientation.json": "3bcc93e1809f1eb465d1737c55817f2e91309f1d9b779f4227de0eda5d67424f",
+    "docs/assets/code_as_learning_machine/door_grasp_signal_report.json": "9da1d3bb8b4d2400e283b954d0fdf74b5daa52b5af3b1f4a9ab38e355b888f92",
+    "docs/assets/code_as_learning_machine/door_grasp_overlay_T7_head.jpg": "ee8ed2f8d56954edd25bf5a63c1b5dbf94f10b60f3f3024ba37142051acf23ae",
+    "docs/assets/code_as_learning_machine/cap_verified_transfer_rgb.jpg": "87612d3552679534c79d97cdb041d7ffcb334769ee1df99d0f72d56a92bc73b0",
+    "docs/icra2027/figures/cap_endpoint.png": "c8603556c13cd317e21b863a153365a4d2c14e2c4690bef188fa71f31c75badd",
+    "docs/assets/code_as_learning_machine/door_grasp_overlay_T1_head.jpg": "a76ff4a2500043a04a219cf1790a9655ec2371c0148bce62006bc27ba6f102ab",
+    "docs/assets/code_as_learning_machine/door_grasp_overlay_T2_head.jpg": "7997db2c570ef2219ca498480e1e8c5767b63275f6744ae1a5775d267281c1cc",
+    "docs/assets/code_as_learning_machine/door_grasp_overlay_T6_head.jpg": "fa20cc135e4e7cf43625c6048364c1b0436ac78d2a3cc4411b8b29c031f6d253"
+  },
+  "orientation_deg": {
+    "E1": 9.244353748772793,
+    "E2": 8.249327940199686,
+    "E3": 8.721228737239532,
+    "T1": 8.915271306769375,
+    "T2": 9.044114564701028,
+    "T3": 9.131461559786361,
+    "T4": 9.527871358854432,
+    "T5": 9.039792606117055,
+    "T6": 2.385750648007793,
+    "T7": 0.0
+  },
+  "aperture_phases": {
+    "T1": [
+      1.0,
+      0.4122857142857143,
+      0.36628571428571427,
+      0.0034285714285714284
+    ],
+    "T2": [
+      1.0,
+      0.4074285714285714,
+      0.36514285714285716,
+      0.0034285714285714284
+    ],
+    "T6": [
+      1.0,
+      0.4074285714285714,
+      0.2897142857142857,
+      0.0034285714285714284
+    ],
+    "T7": [
+      1.0,
+      0.3057142857142857,
+      0.296,
+      0.0034285714285714284
+    ]
+  }
+}

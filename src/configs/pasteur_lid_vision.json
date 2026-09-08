@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "goal_frame": 82,
+  "marker_hsv": {
+    "low": [106, 100, 60],
+    "high": [115, 255, 255]
+  },
+  "right_goal": {
+    "marker_center": [206, 300],
+    "lid_ellipse": {
+      "center": [182, 322],
+      "axes": [121, 66],
+      "angle_deg": -8
+    }
+  },
+  "roi_padding": 24,
+  "search_band_px": 18
+}

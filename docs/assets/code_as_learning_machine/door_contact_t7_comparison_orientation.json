@@ -1,0 +1,210 @@
+{
+  "reference_trial": "T7",
+  "reference_source": "incubator_auto_open_20260808_demo_retry2/06_close-verify/motion/contact_state.json",
+  "reference_contact_pose_wxyz_xyz": [
+    0.6776652825176966,
+    0.700539381815763,
+    -0.1610403474851639,
+    0.1551784323843265,
+    0.32830277325747187,
+    0.08230111732781521,
+    0.9824335983782583
+  ],
+  "metric": "Euclidean EE-origin position difference and full SO(3) angular difference at saved contact pose",
+  "frame": "Saved robot base coordinates; no registration for physical door displacement",
+  "limitations": [
+    "Retrospective reference selected from an observed successful opening, not a demonstration or held-out target.",
+    "Reference self-distance is zero by construction, not evidence of perfect task execution.",
+    "Saved pre-close contact poses, not door endpoint positions or full-trajectory similarity.",
+    "Door displacement is not compensated; absolute robot-frame EE discrepancy only.",
+    "All saved attempts remain in chronological order; no smoothing or scalar-error subtraction."
+  ],
+  "trials": [
+    {
+      "trial": "E1",
+      "timestamp_s": 1786161905.6504605,
+      "source": "incubator_door_20260808T040503Z_close_verify/contact_state.json",
+      "contact_pose_wxyz_xyz": [
+        0.6670258842560068,
+        0.7051613388734682,
+        -0.10802348958918326,
+        0.21483687203933488,
+        0.22423440176286374,
+        0.17724714714471224,
+        0.992494798124236
+      ],
+      "position_difference_mm": 141.23102443818544,
+      "orientation_difference_deg": 9.244353748772793
+    },
+    {
+      "trial": "E2",
+      "timestamp_s": 1786163049.391498,
+      "source": "incubator_door_20260808T042407Z_close_verify_retry/contact_state.json",
+      "contact_pose_wxyz_xyz": [
+        0.6618022345676448,
+        0.7242421818770497,
+        -0.09622017906181511,
+        0.16802601421373742,
+        0.24701983867669308,
+        0.1443058674334276,
+        0.9643488309201285
+      ],
+      "position_difference_mm": 103.81985987149682,
+      "orientation_difference_deg": 8.249327940199686
+    },
+    {
+      "trial": "E3",
+      "timestamp_s": 1786163258.2765422,
+      "source": "incubator_door_20260808T042736Z_close_verify_retry3/contact_state.json",
+      "contact_pose_wxyz_xyz": [
+        0.6604073367520146,
+        0.7252142674136953,
+        -0.09300251106941085,
+        0.17110508127613477,
+        0.24507635343272774,
+        0.12830343781057313,
+        0.9755648681752529
+      ],
+      "position_difference_mm": 95.34164830358561,
+      "orientation_difference_deg": 8.721228737239532
+    },
+    {
+      "trial": "T1",
+      "timestamp_s": 1786163607.1793997,
+      "source": "incubator_door_20260808T043325Z_close_verify_demo_contact/contact_state.json",
+      "contact_pose_wxyz_xyz": [
+        0.6618669576187886,
+        0.7258655654593303,
+        -0.0897943567604627,
+        0.164281115125355,
+        0.3367296403929649,
+        0.09815999875402714,
+        0.9774828066092066
+      ],
+      "position_difference_mm": 18.62864860773351,
+      "orientation_difference_deg": 8.915271306769375
+    },
+    {
+      "trial": "T2",
+      "timestamp_s": 1786164262.300504,
+      "source": "incubator_door_20260808T044420Z_retry2_close_verify/contact_state.json",
+      "contact_pose_wxyz_xyz": [
+        0.6619879062565986,
+        0.7249639895265848,
+        -0.08884063749690756,
+        0.1682455556288062,
+        0.33655937288131055,
+        0.09913631493687967,
+        0.9779527539496937
+      ],
+      "position_difference_mm": 19.27882990945303,
+      "orientation_difference_deg": 9.044114564701028
+    },
+    {
+      "trial": "T3",
+      "timestamp_s": 1786164542.4977741,
+      "source": "incubator_door_20260808T044900Z_retry3_close_verify/contact_state.json",
+      "contact_pose_wxyz_xyz": [
+        0.66415285175672,
+        0.7227041230610203,
+        -0.08724725423161106,
+        0.17025761845821422,
+        0.33793778056974616,
+        0.10179932220659484,
+        0.9804909541048238
+      ],
+      "position_difference_mm": 21.8354580024224,
+      "orientation_difference_deg": 9.131461559786361
+    },
+    {
+      "trial": "T4",
+      "timestamp_s": 1786165188.538087,
+      "source": "incubator_door_20260808T045946Z_retry4_close_verify/contact_state.json",
+      "contact_pose_wxyz_xyz": [
+        0.663158909113044,
+        0.7211452705066782,
+        -0.08614516385974455,
+        0.1809662146187103,
+        0.3272925454245506,
+        0.06163538031628571,
+        0.9871906052898218
+      ],
+      "position_difference_mm": 21.23022282645127,
+      "orientation_difference_deg": 9.527871358854432
+    },
+    {
+      "trial": "T5",
+      "timestamp_s": 1786165499.4295008,
+      "source": "incubator_door_20260808T050457Z_retry5_close_verify/contact_state.json",
+      "contact_pose_wxyz_xyz": [
+        0.6633036433721811,
+        0.7203871271342289,
+        -0.09074003754595263,
+        0.18120957296633705,
+        0.3261408936823625,
+        0.06149476484213436,
+        0.9789220689645917
+      ],
+      "position_difference_mm": 21.211055274990883,
+      "orientation_difference_deg": 9.039792606117055
+    },
+    {
+      "trial": "T6",
+      "timestamp_s": 1786167741.6058404,
+      "source": "incubator_door_20260808_retry6_yaw_aligned_close2/contact_state.json",
+      "contact_pose_wxyz_xyz": [
+        0.6812229173568417,
+        0.6999640615407721,
+        -0.16631916470470717,
+        0.13536463670807233,
+        0.3299222067961105,
+        0.07809644739920761,
+        0.9815710938030096
+      ],
+      "position_difference_mm": 4.587562352375136,
+      "orientation_difference_deg": 2.385750648007793
+    },
+    {
+      "trial": "T7",
+      "timestamp_s": 1786183426.120809,
+      "source": "incubator_auto_open_20260808_demo_retry2/06_close-verify/motion/contact_state.json",
+      "contact_pose_wxyz_xyz": [
+        0.6776652825176966,
+        0.700539381815763,
+        -0.1610403474851639,
+        0.1551784323843265,
+        0.32830277325747187,
+        0.08230111732781521,
+        0.9824335983782583
+      ],
+      "position_difference_mm": 0.0,
+      "orientation_difference_deg": 0.0
+    }
+  ],
+  "source_sha256": {
+    "data/reference/pasteur/incubator/compiled_door_open_v1.json": "e71233cc2381fd0850de651a025d68e93b22b443b76310a6a87897365d2f783a",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_164850.hdf5": "bab18857a4959e652aff1be33a593934cde4ca1627f3af03ab4bfe8a0ceb1776",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_163756.hdf5": "5ff6f91eba2fd6cbbbcfbe6ff139ad64496fbdd5e86052e3ea26f9f0d11fef6b",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_173136.hdf5": "d8876892ff537b0d91756ceb482d1c81a46307d5a9fe77a8fdc59f149d27d802",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_165810.hdf5": "d933d4831c466f846dfad9450b63ac77f18c12cce3b3749291313b27f391dd1b",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_170229.hdf5": "402cb1af03038805928995fd09bd0fa38e7ff3216b63e998f640980ba7cf80ed",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_175546.hdf5": "787c5314e0ce9eed4e87dfab75472df103e2fc5a30dbcdf7ee3fa4d820832387",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_180246.hdf5": "d0fd017257869f97e8c7aa4ae8972e6d5314da22b2e0eb77b734b00ff1a3b43b",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_163437.hdf5": "776938ce0b5e5e5173578c3c29a74394f131715e5ad872c529566fea403d533d",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_162442.hdf5": "74ceefd5c5c5a60c3017f60ec73da25675ac532b25c0103c6245b19b1ca3865e",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260708_151315.hdf5": "690fe42e950eaeeae435fabe4505e2bc485625eca00e77bfdfb4fe4897f75a15",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_164136.hdf5": "e41189c183756166af22f39734b971ac5d145ca21d1c28ad6ba42da04a185102",
+    "data/reference/pasteur/incubator/incoming/door_open/door_open_20260703_175931.hdf5": "595c72d67bda88292638ff745f2e76bcd762de04bbe3242fc6bf4c1e2365d13b",
+    "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/06_close-verify/motion/contact_state.json": "02ca244691c53257da791570d98d4aace72939c664b0abd476d69dc414cc1084",
+    "data/runs/pasteur/incubator_door_20260808T040503Z_close_verify/contact_state.json": "319ed62a74b2876e381c8ab32c9e2a26997362f7a57e344f9014a3fb776a0513",
+    "data/runs/pasteur/incubator_door_20260808T042407Z_close_verify_retry/contact_state.json": "eae2ed61ef214d2b4a7161cfd77ac9ec3a465c4bb58fb1d2a36893a57a1bc827",
+    "data/runs/pasteur/incubator_door_20260808T042736Z_close_verify_retry3/contact_state.json": "9f3a51f99c68409d0e1be4b2d3c5c4d8d1beace2bab36d49231b3e2fb79296da",
+    "data/runs/pasteur/incubator_door_20260808T043325Z_close_verify_demo_contact/contact_state.json": "ca3de882994b52e4dd7ecd1599e36fe903d427e2d8a22c9a5994434cf5f59c5b",
+    "data/runs/pasteur/incubator_door_20260808T044420Z_retry2_close_verify/contact_state.json": "f561ceb7447f2e3cc976d776ac5dac5e978a363db5b7f880ef216066cf2459df",
+    "data/runs/pasteur/incubator_door_20260808T044900Z_retry3_close_verify/contact_state.json": "7ec241f6c0873aa2bb151fd7f6dbd4d82c0ee6b77027701fdcec8ddd9039dd63",
+    "data/runs/pasteur/incubator_door_20260808T045946Z_retry4_close_verify/contact_state.json": "78efb0660a69c620b1769041d1de34d514a30e46bc784c5ce4ee56ea7460b846",
+    "data/runs/pasteur/incubator_door_20260808T050457Z_retry5_close_verify/contact_state.json": "d5e6f30ff357209324f00ec123cf19aadf25f0212d366712bfba90d389a2a565",
+    "data/runs/pasteur/incubator_door_20260808_retry6_yaw_aligned_close2/contact_state.json": "051372d02f160c1bd5de41186494b9cb2e93ec72d71bf78d18e0b4a5ff7672c2"
+  },
+  "input_report_sha256": "9da1d3bb8b4d2400e283b954d0fdf74b5daa52b5af3b1f4a9ab38e355b888f92"
+}

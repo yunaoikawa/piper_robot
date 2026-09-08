@@ -1,0 +1,45 @@
+{
+  "schema": "piper_robot.contact_placement_profile/v1",
+  "policy": {
+    "physical_arm": "right",
+    "required_cameras": [
+      "head",
+      "manipulator",
+      "observer"
+    ],
+    "maximum_frame_age_s": 0.75,
+    "maximum_camera_skew_s": 0.15,
+    "maximum_normalized_goal_error": 0.2,
+    "free_space_step_fraction": 0.25,
+    "probe_step_fraction": 0.04,
+    "minimum_free_space_step_m": 0.005,
+    "maximum_free_space_step_m": 0.03,
+    "minimum_probe_step_m": 0.001,
+    "maximum_probe_step_m": 0.005,
+    "route_clearance_fraction": 0.75,
+    "final_hover_fraction": 0.2,
+    "maximum_support_clearance_fraction": 0.08,
+    "minimum_progress_ratio": 0.35,
+    "minimum_torque_change_nm": 0.1,
+    "required_contact_candidates": 2,
+    "maximum_probe_count": 20
+  },
+  "level_reference": {
+    "support_up_robot": [0.0, 0.0, 1.0],
+    "tip_baseline_ee": [0.0, 0.0, 1.0],
+    "approach_axis_ee": [1.0, 0.0, 0.0],
+    "open_tip_span_m": 0.135,
+    "maximum_checkpoint_tilt_deg": 3.0,
+    "maximum_planned_tilt_deg": 2.0,
+    "maximum_tip_height_difference_m": 0.0017,
+    "source": "site_calibrated_physical_tool_frame"
+  },
+  "planning": {},
+  "scene_requirements": {
+    "camera_to_robot_transform": "accepted",
+    "semantic_scene_readiness": "motion",
+    "robot_geometry": "exact_cad",
+    "moveable_objects": "fresh_sam_plus_depth_or_confirmed_rgbd_target",
+    "static_obstacles": "rgbd_polygon_or_reviewed_catalog_geometry"
+  }
+}

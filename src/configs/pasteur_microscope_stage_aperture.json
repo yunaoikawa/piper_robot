@@ -1,0 +1,40 @@
+{
+  "schema": "piper_robot.user_selected_tag_relative_target/v1",
+  "semantic_name": "microscope_stage_central_aperture",
+  "selection": "user-confirmed elongated central hole",
+  "anchor_tag_id": 12,
+  "anchor_tag_size_m": 0.03,
+  "target_point_tag_xyz_m": [
+    0.36049851,
+    -0.16136659,
+    -0.26974133
+  ],
+  "camera_matrix": [
+    [437.8232, 0.0, 318.2832],
+    [0.0, 437.8232, 239.7419],
+    [0.0, 0.0, 1.0]
+  ],
+  "reference": {
+    "rgb": "data/captures/pasteur/record3d_multiview_import/2026-07-30/20260730T050529.878846Z_head_record3d_exr_d7d3a413/derived/path_00/rgb_landscape.jpg",
+    "target_pixel_uv": [548.0, 600.0],
+    "target_depth_m": 1.40625,
+    "reference_anchor_corners_canonical": [
+      [553.0, 357.0],
+      [551.0, 402.0],
+      [506.0, 394.0],
+      [509.0, 350.0]
+    ],
+    "online_refinement": {
+      "rgb": "data/runs/pasteur/dish_transport_rehearsal/live_20260811_stage_hole_after_light/images/after_light_right.jpg",
+      "user_confirmed_target_pixel_uv": [203.0, 320.0],
+      "method": "retain reference target depth, back-project confirmed right-camera aperture center into tag frame"
+    },
+    "note": "One-time user selection; runtime uses the metric tag-frame point, not a fixed current-camera pixel."
+  },
+  "visibility": {
+    "minimum_border_tag_ratio": 0.35,
+    "maximum_blue_occlusion": 0.18,
+    "minimum_appearance_score": 0.35,
+    "search_radius_tag_ratio": 0.42
+  }
+}

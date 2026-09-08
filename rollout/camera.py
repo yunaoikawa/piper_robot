@@ -4,20 +4,61 @@ import cv2
 import time
 import threading
 import numpy as np
+from robot.camera_id import load_camera_map
 from record3d import Record3DStream
+from .head_stream import HeadCameraStreamServer
+
+
+RECORD3D_SHUTDOWN_TIMEOUT_S = 5.0
+RECORD3D_SHUTDOWN_GRACE_S = 0.10
+
+
+def _disconnect_record3d_session(
+    session,
+    *,
+    stopped_event: threading.Event,
+    label: str,
+):
+    """Wait for Record3D's detached native receive thread before teardown.
+
+    Record3D 1.4 detaches its C++ receive thread. ``disconnect()`` invokes the
+    stopped callback once synchronously, then the receive loop invokes it a
+    second time immediately before that native thread returns.  Releasing the
+    Python session before the second callback can segfault the interpreter.
+    """
+
+    if session is None:
+        return
+    session.disconnect()
+    if not stopped_event.wait(RECORD3D_SHUTDOWN_TIMEOUT_S):
+        raise RuntimeError(
+            f"{label} Record3D native thread did not stop"
+        )
+    # The second callback runs just before the detached C++ thread returns.
+    # Keep the bound object alive for a short grace interval after that signal.
+    time.sleep(RECORD3D_SHUTDOWN_GRACE_S)
+    session.on_new_frame = lambda: None
+    session.on_stream_stopped = lambda: None
 
 
 class CameraFeedManager:
     """Manages iPhone camera feed and live display."""
 
-    def __init__(self, stop_event: threading.Event):
+    def __init__(self, stop_event: threading.Event, *, display=True,
+                 head_stream=True, head_stream_host="0.0.0.0",
+                 head_stream_port=8080, head_stream_token=None,
+                 head_stream_fps=15.0):
         self.stop_event = stop_event
+        self.display = display
         self.latest_rgb_frame = None
         self.latest_depth_frame = None
         self.latest_rgb_timestamp = None
         self.rgb_frame_lock = threading.Lock()
         self.session = None
         self.frame_event = threading.Event()
+        self._native_stop_lock = threading.Lock()
+        self._native_stop_count = 0
+        self._native_stopped = threading.Event()
 
         self.is_episode_active = False
         self.episode_start_time = None
@@ -28,18 +69,61 @@ class CameraFeedManager:
         self.wrist_camera = None
         self.left_wrist_camera = None
 
+        self.head_stream = None
+        if head_stream:
+            self.head_stream = HeadCameraStreamServer(
+                self._head_frame_for_stream,
+                host=head_stream_host,
+                port=head_stream_port,
+                token=head_stream_token,
+                fps=head_stream_fps,
+                status_provider=lambda: " / ".join(self._build_status_text()),
+            )
+
     def _on_new_frame(self):
         self.frame_event.set()
+
+    def _on_stream_stopped(self):
+        with self._native_stop_lock:
+            self._native_stop_count += 1
+            if self._native_stop_count >= 2:
+                self._native_stopped.set()
+        print("iPhone stream stopped")
 
     def start(self):
         self.iphone_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.iphone_thread.start()
-        self.display_thread = threading.Thread(target=self._display_loop, daemon=True)
-        self.display_thread.start()
+        self.display_thread = None
+        if self.display:
+            self.display_thread = threading.Thread(target=self._display_loop, daemon=True)
+            self.display_thread.start()
+        if self.head_stream:
+            self.head_stream.start()
 
     def stop(self):
-        self.iphone_thread.join(timeout=2.0)
-        self.display_thread.join(timeout=2.0)
+        self.stop_event.set()
+        if self.head_stream:
+            self.head_stream.stop()
+        iphone_thread = getattr(self, "iphone_thread", None)
+        if iphone_thread is not None:
+            iphone_thread.join(timeout=2.0)
+        display_thread = getattr(self, "display_thread", None)
+        if display_thread:
+            self.display_thread.join(timeout=2.0)
+        session = self.session
+        if session is not None:
+            _disconnect_record3d_session(
+                session,
+                stopped_event=self._native_stopped,
+                label="head camera",
+            )
+            self.session = None
+
+    def _head_frame_for_stream(self):
+        with self.rgb_frame_lock:
+            if self.latest_rgb_frame is None:
+                return None
+            return self.latest_rgb_frame.copy()
 
     def get_latest_frame(self):
         with self.rgb_frame_lock:
@@ -59,10 +143,10 @@ class CameraFeedManager:
             print("WARNING: No iPhone devices found. RGB recording disabled.")
             return
 
-        dev = devs[1]
+        cam_map = load_camera_map(); dev = devs[cam_map.get("head", 0)]
         self.session = Record3DStream()
         self.session.on_new_frame = self._on_new_frame
-        self.session.on_stream_stopped = lambda: print('iPhone stream stopped')
+        self.session.on_stream_stopped = self._on_stream_stopped
         self.session.connect(dev)
 
         print("iPhone connected (head camera), starting RGB capture")
@@ -179,13 +263,34 @@ class USBWristCameraFeedManager:
         self.lock = threading.Lock()
         self.latest_rgb = None
         self.latest_ts = None
+        self._native_stop_lock = threading.Lock()
+        self._native_stop_count = 0
+        self._native_stopped = threading.Event()
+
+    def _on_stream_stopped(self):
+        with self._native_stop_lock:
+            self._native_stop_count += 1
+            if self._native_stop_count >= 2:
+                self._native_stopped.set()
+        print(f"[{self.label}] stream stopped")
 
     def start(self):
         self.thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.thread.start()
 
     def stop(self):
-        self.thread.join(timeout=2.0)
+        self.stop_event.set()
+        thread = getattr(self, "thread", None)
+        if thread is not None:
+            thread.join(timeout=2.0)
+        session = self.session
+        if session is not None:
+            _disconnect_record3d_session(
+                session,
+                stopped_event=self._native_stopped,
+                label=self.label,
+            )
+            self.session = None
 
     def get_latest_frame(self):
         with self.lock:
@@ -201,7 +306,7 @@ class USBWristCameraFeedManager:
 
         self.session = Record3DStream()
         self.session.on_new_frame = lambda: self.frame_event.set()
-        self.session.on_stream_stopped = lambda: print(f"[{self.label}] stream stopped")
+        self.session.on_stream_stopped = self._on_stream_stopped
         self.session.connect(devs[self.device_index])
         print(f"[{self.label}] Connected to device {self.device_index}")
 

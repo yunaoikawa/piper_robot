@@ -1,0 +1,121 @@
+{
+  "schema": "piper_robot.dish_transport_air_rehearsal_profile/v1",
+  "profile_name": "pasteur_horizontal_dish_air_transport",
+  "production_model": "robot/cone-e-description/robot-welded-base-and-lift.mjcf",
+  "planning_model": "robot/pasteur-calibrated-scene/scene.mjcf",
+  "semantic_scene_report": "data/runs/pasteur/current_scene_automatic_20260731/base_scene/scene.json",
+  "scene_layout_contract": {
+    "station_in_front_of_arm": {
+      "microscope": "left",
+      "incubator": "right"
+    }
+  },
+  "level_config": "src/configs/pasteur_fast_lid_grasp_level.json",
+  "demonstration_directory": "teleop_demonstrations_pipette_add/pipette",
+  "rpc": {
+    "host": "127.0.0.1",
+    "port": 8081,
+    "timeout_ms": 10000
+  },
+  "camera_names": {
+    "head": "head",
+    "left": "left",
+    "right": "right"
+  },
+  "geometry": {
+    "dish_diameter_m": 0.09,
+    "dish_thickness_m": 0.014,
+    "dish_center_offset_ee_m": [-0.075, 0.0, 0.0],
+    "ignored_absent_scene_bodies": [
+      "culture_media_bottle-1",
+      "petri_dish-1",
+      "petri_lid-1"
+    ]
+  },
+  "planning": {
+    "source_lift_m": 0.015,
+    "arrival_hover_m": 0.015,
+    "route_samples": 61,
+    "maximum_cartesian_step_m": 0.006,
+    "minimum_dish_clearance_m": 0.01,
+    "low_route_search_step_m": 0.005,
+    "maximum_low_route_lift_m": 0.12,
+    "maximum_ik_joint_step_rad": 0.12,
+    "require_collision_free": true,
+    "left_retarget_policy": "operator_confirmed_air_rehearsal_home_relative_translation"
+  },
+  "observer": {
+    "enabled": true,
+    "physical_arm": "left",
+    "carrier_arm": "right",
+    "motion_policy": "move_only_while_carrier_is_stopped",
+    "reference_config": "src/configs/pasteur_right_jaw_side_view_reference.json"
+  },
+  "execution": {
+    "control_hz": 30.0,
+    "preview_time_s": 0.05,
+    "endpoint_settle_s": 0.8,
+    "jaw_level_refinement": {
+      "enabled": true,
+      "maximum_attempts": 3,
+      "target_maximum_tilt_deg": 0.25,
+      "target_maximum_tip_height_difference_m": 0.0005,
+      "maximum_correction_deg": 5.0,
+      "maximum_total_correction_deg": 8.0,
+      "correction_duration_s": 0.5,
+      "settle_s": 0.6,
+      "maximum_xyz_drift_m": 0.005,
+      "maximum_xyz_correction_per_attempt_m": 0.005,
+      "maximum_xyz_command_offset_m": 0.012,
+      "hard_xyz_drift_m": 0.015
+    },
+    "speed_m_s": 0.03,
+    "observer_speed_m_s": 0.02,
+    "maximum_checkpoint_tilt_deg": 1.0,
+    "air_gripper_open_ratio": 1.0,
+    "tracking_check_interval": 15,
+    "maximum_tracking_position_error_m": 0.015,
+    "maximum_tracking_rotation_error_rad": 0.0872664626,
+    "maximum_camera_timestamp_skew_s": 0.15,
+    "camera_timeout_s": 10.0,
+    "home_before_start": true,
+    "home_after_completion": true,
+    "home_joint_tolerance_rad": 0.12,
+    "home_timeout_s": 25.0,
+    "operator_approval_timeout_s": 1800.0,
+    "torque_policy": "observe_only",
+    "torque_consecutive_samples": 5,
+    "torque_limits_nm": {
+      "right": [0.30051, 1.6925, 1.46, 0.68, 1.58, 0.28],
+      "left": [0.5, 2.0, 1.8, 0.9, 1.8, 0.4]
+    },
+    "left_torque_limit_source": "uncalibrated_warning_only"
+  },
+  "approval_ui": {
+    "host": "0.0.0.0",
+    "port": 8097
+  },
+  "segments": [
+    {
+      "name": "incubator_to_microscope",
+      "source": "incubator",
+      "destination": "microscope",
+      "physical_arm": "right",
+      "demonstration_glob": "petri2microscope_*.hdf5"
+    },
+    {
+      "name": "microscope_to_bench",
+      "source": "microscope",
+      "destination": "bench",
+      "physical_arm": "left",
+      "demonstration_glob": "petri2bench_*.hdf5"
+    },
+    {
+      "name": "bench_to_incubator",
+      "source": "bench",
+      "destination": "incubator",
+      "physical_arm": "right",
+      "demonstration_glob": "petri2incubator_*.hdf5"
+    }
+  ]
+}

@@ -17,3 +17,8 @@ inference_outcome/
 test/
 *.swp
 tmp/
+archive/
+slurm-*.out
+pipette/
+MUJOCO_LOG.TXT
+runs/

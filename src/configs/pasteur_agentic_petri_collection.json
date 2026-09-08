@@ -1,0 +1,63 @@
+{
+  "schema": "piper_robot.agentic_collection_profile/v1",
+  "profile_name": "pasteur_act_primary_petri_cycle",
+  "require_closed_cycle": true,
+  "initial_station": "incubator",
+  "tasks": [
+    {
+      "name": "petri2microscope",
+      "instruction": "move the petri dish to the microscope",
+      "source": "incubator",
+      "destination": "microscope",
+      "arm": "right",
+      "reference_glob": "petri_{condition}/petri2microscope/*.hdf5"
+    },
+    {
+      "name": "petri2bench",
+      "instruction": "move the petri dish to the bench",
+      "source": "microscope",
+      "destination": "bench",
+      "arm": "right",
+      "reference_glob": "petri_{condition}/petri2bench/*.hdf5"
+    },
+    {
+      "name": "petri2incubator",
+      "instruction": "move the petri dish to the incubator",
+      "source": "bench",
+      "destination": "incubator",
+      "arm": "right",
+      "reference_glob": "petri_{condition}/petri2incubator/*.hdf5"
+    }
+  ],
+  "verifier": {
+    "object_diameter_m": 0.09,
+    "maximum_observation_age_s": 0.75,
+    "maximum_camera_skew_s": 0.2,
+    "reference_position_tolerance_diameters": 0.75,
+    "minimum_lift_diameters": 0.12,
+    "minimum_visual_change_fraction": 0.002,
+    "gripper_open_threshold": 0.65,
+    "gripper_closed_threshold": 0.35,
+    "maximum_closed_reference_error": 0.15,
+    "stable_observations": 2,
+    "required_cameras": ["cam_high", "cam_left_wrist", "cam_right_wrist"]
+  },
+  "sam": {
+    "enabled": true,
+    "endpoint": "tcp://127.0.0.1:15563",
+    "timeout_ms": 5000,
+    "prompt": "petri dish",
+    "confidence_threshold": 0.25,
+    "minimum_transport_displacement_diagonal_fraction": 0.01,
+    "input_color": "rgb"
+  },
+  "online_reasoner": {
+    "primary": "deterministic_checkpoint_verifier",
+    "fallback": "external_semantic_provider_when_configured",
+    "raw_rgb_to_code_model_every_turn": false
+  },
+  "dataset_policy": {
+    "act_training_classes": ["clean_success"],
+    "retain_classes": ["clean_success", "recovery", "failure", "uncertain", "invalid"]
+  }
+}

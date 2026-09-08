@@ -1,0 +1,65 @@
+{
+  "schema": "piper_robot.physical_gripper_level_calibration/v1",
+  "physical_arm": "right",
+  "calibrated_at": "2026-08-10T17:40:00+09:00",
+  "source_run": "data/runs/pasteur/rgbd_gripper_level/empirical_probe_correction_20260810",
+  "method": "stopped_head_rgbd_blue_jaw_axis_against_record3d_gravity",
+  "level_consensus": {
+    "accepted": true,
+    "sample_count": 3,
+    "median_angle_deg": 0.22749356035969617,
+    "interburst_range_deg": 0.620663121537067,
+    "maximum_individual_mad_deg": 0.4341006630201909,
+    "maximum_accepted_angle_deg": 0.25,
+    "maximum_allowed_interburst_range_deg": 0.75,
+    "reasons": []
+  },
+  "independent_bursts": [
+    {
+      "stage": "07_rollback_verified",
+      "signed_angle_deg": -0.17284757665572012,
+      "mad_deg": 0.3941877153927228
+    },
+    {
+      "stage": "08_level_confirmation_a",
+      "signed_angle_deg": 0.22749356035969617,
+      "mad_deg": 0.4341006630201909
+    },
+    {
+      "stage": "09_level_confirmation_b",
+      "signed_angle_deg": 0.4478155448813469,
+      "mad_deg": 0.23396850687348247
+    }
+  ],
+  "calibrated_q_rad_audit_only": [
+    0.31241393089294434,
+    1.4234555959701538,
+    -1.3460153341293335,
+    0.4962494671344757,
+    -0.16287413239479065,
+    1.8232756853103638
+  ],
+  "calibrated_pose_wxyz_xyz_audit_only": [
+    0.7046423165732265,
+    0.6958854905752553,
+    0.11454414342621269,
+    0.07811676457655771,
+    0.3276016766441123,
+    0.2666392915360704,
+    0.9192949222208493
+  ],
+  "production_model_outward_tip_pitch_deg": 3.021154082407347,
+  "physical_attachment_pitch_offset_deg": 2.793699003568027,
+  "calibrated_physical_approach_axis_ee": [
+    0.9988115034638719,
+    0.04873992765936156,
+    0.0
+  ],
+  "runtime_policy": {
+    "calibrated_q_is_audit_only": true,
+    "blind_joint_pose_replay_allowed": false,
+    "each_correction_iteration_requires_a_fresh_local_probe": true,
+    "single_rgbd_burst_can_authorize_level": false,
+    "non_improving_candidate_returns_to_fresh_anchor": true
+  }
+}

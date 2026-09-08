@@ -4,16 +4,19 @@
 #SBATCH --error=logs/pi05_finetune_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
+# NOTE: this node does NOT schedule GPUs via Slurm gres (AllocTRES has no gpu);
+# every job sees all 8 A100s and the nvidia-smi scan below self-selects a free
+# one (>= MIN_FREE_MIB). So we only need to request CPU/mem here. `--gpus` is
+# kept for portability but is effectively a no-op on this cluster.
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=6
 #SBATCH --mem=64G
 #SBATCH --time=72:00:00
 #
-# Usage - always the same command:
-#   bash src/finetune_pi05.sbatch
+# Usage:
+#   bash src/train.sh
 #
-# First run:  trains from lerobot/pi05_base → saves to outputs/main
-# Next runs:  backs up outputs/main → trains from backup → saves to outputs/main
+# 4-GPU DDP: batch_size=32 per GPU × 4 GPUs = 128 effective batch size
 #
 # Latest checkpoint always at: outputs/main/checkpoints/last/pretrained_model
 
@@ -25,48 +28,72 @@ cd /home/yoikawa/src/robot
 source .venv/bin/activate
 
 # ── Configure ─────────────────────────────────────────────────────────────────
-DATASET_REPO_ID="yoikawa/flask_tasks"
-DATASET_ROOT="data/train/v3"
-OUTPUT_DIR="outputs/main"
+DATASET_REPO_ID="yoikawa/lab"
+# Optional positional args: $1=DATASET_ROOT  $2=OUTPUT_DIR (defaults below)
+DATASET_ROOT="${1:-data/train/new_fps23/}"
+OUTPUT_DIR="${2:-outputs/lab_act/}"
 JOB_NAME="pi05_finetune"
 
 STEPS=100000
-BATCH_SIZE=8
-NUM_WORKERS=2
+
+BATCH_SIZE=8          # per GPU (×4 GPUs = 128 effective)
+NUM_WORKERS=4          # per GPU
 SAVE_FREQ=500
-MIN_FREE_MIB=50000
+NUM_GPUS=1
+MIN_FREE_MIB=40000
 # ──────────────────────────────────────────────────────────────────────────────
 
-# ── Auto-select free GPU ──────────────────────────────────────────────────────
-FREE_GPU=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits \
-    | awk -F',' -v min="$MIN_FREE_MIB" '{gsub(/ /,"",$2); if ($2+0 >= min) print $2, $1}' \
-    | sort -rn \
-    | head -1 \
-    | awk '{print $2}')
+# ── Wait for N free GPUs ──────────────────────────────────────────────────────
+# This node doesn't schedule GPUs via Slurm, so a job can land while all GPUs are
+# busy. Rather than fail instantly, poll until NUM_GPUS have >= MIN_FREE_MIB free
+# (or give up after GPU_WAIT_SECS). The job only holds its cheap CPU/mem slot
+# while waiting.
+GPU_WAIT_SECS=21600     # max time to wait for free GPU(s) (6h)
+GPU_POLL_SECS=60
+WAITED=0
+while :; do
+    # `|| FREE_GPUS=""` keeps a transient nvidia-smi failure from tripping `set -e`.
+    FREE_GPUS=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits \
+        | awk -F',' -v min="$MIN_FREE_MIB" '{gsub(/ /,"",$2); if ($2+0 >= min) print $2, $1}' \
+        | sort -rn \
+        | head -${NUM_GPUS} \
+        | awk '{print $2}' \
+        | sort -n \
+        | paste -sd,) || FREE_GPUS=""
 
-if [[ -z "$FREE_GPU" ]]; then
-    echo "ERROR: No GPU with >= ${MIN_FREE_MIB} MiB free. Current state:"
-    nvidia-smi --query-gpu=index,memory.free,memory.used,utilization.gpu \
-        --format=csv,noheader
-    exit 1
-fi
+    if [[ -n "$FREE_GPUS" ]]; then
+        N_FOUND=$(echo "$FREE_GPUS" | tr ',' '\n' | grep -c .)
+    else
+        N_FOUND=0
+    fi
 
-export CUDA_VISIBLE_DEVICES=$FREE_GPU
-FREE_MIB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i $FREE_GPU | tr -d ' ')
+    [[ "$N_FOUND" -ge "$NUM_GPUS" ]] && break
+
+    if [[ "$WAITED" -ge "$GPU_WAIT_SECS" ]]; then
+        echo "ERROR: Timed out after ${WAITED}s waiting for ${NUM_GPUS} GPU(s) with >= ${MIN_FREE_MIB} MiB free. Found ${N_FOUND}."
+        nvidia-smi --query-gpu=index,memory.free,memory.used,utilization.gpu \
+            --format=csv,noheader
+        exit 1
+    fi
+
+    echo "[gpu-wait] Need ${NUM_GPUS} GPU(s) >= ${MIN_FREE_MIB} MiB free; found ${N_FOUND}. Sleeping ${GPU_POLL_SECS}s (waited ${WAITED}s)."
+    sleep ${GPU_POLL_SECS}
+    WAITED=$((WAITED + GPU_POLL_SECS))
+done
+
+export CUDA_VISIBLE_DEVICES=$FREE_GPUS
 
 # ── Handle existing checkpoint ────────────────────────────────────────────────
 CHECKPOINT_DIR="${OUTPUT_DIR}/checkpoints/last/pretrained_model"
 PRETRAINED_PATH="lerobot/pi05_base"
 
 if [[ -f "${CHECKPOINT_DIR}/config.json" ]]; then
-    # Back up existing run, keep only the checkpoint we need
     BACKUP_DIR="outputs/main_prev_$(date +%Y%m%d_%H%M%S)"
     echo "Found existing checkpoint. Backing up to ${BACKUP_DIR}"
     mv "${OUTPUT_DIR}" "${BACKUP_DIR}"
 
     PRETRAINED_PATH="${BACKUP_DIR}/checkpoints/last/pretrained_model"
 
-    # Ensure compile_model is false
     sed -i 's/"compile_model": true/"compile_model": false/' "${PRETRAINED_PATH}/config.json" 2>/dev/null
     sed -i 's/"compile_model": true/"compile_model": false/' "${PRETRAINED_PATH}/train_config.json" 2>/dev/null
 
@@ -78,14 +105,15 @@ fi
 echo "============================================="
 echo "Job ID:       ${SLURM_JOB_ID:-local}"
 echo "Node:         $(hostname)"
-echo "GPU:          $FREE_GPU  (${FREE_MIB} MiB free)"
+echo "GPUs:         ${FREE_GPUS} (${NUM_GPUS} GPUs)"
+echo "Batch size:   ${BATCH_SIZE}/GPU × ${NUM_GPUS} = $((BATCH_SIZE * NUM_GPUS)) effective"
 echo "Output dir:   $OUTPUT_DIR"
 echo "Dataset:      $DATASET_REPO_ID  @ ${DATASET_ROOT}"
 echo "Pretrained:   $PRETRAINED_PATH"
 echo "Steps:        $STEPS"
-echo "Batch size:   $BATCH_SIZE"
 echo "============================================="
 
+#
 lerobot-train \
     --dataset.repo_id=${DATASET_REPO_ID} \
     --dataset.root=${DATASET_ROOT} \
@@ -104,9 +132,16 @@ lerobot-train \
     --batch_size=${BATCH_SIZE} \
     --num_workers=${NUM_WORKERS} \
     --save_freq=${SAVE_FREQ} \
-    --wandb.enable=false \
+    --wandb.enable=true \
     --policy.push_to_hub=false \
     --dataset.video_backend=pyav \
+    --optimizer.lr=2.5e-5 \
+    --scheduler.type=cosine_decay_with_warmup \
+    --scheduler.num_warmup_steps=500 \
+    --scheduler.peak_lr=2.5e-5 \
+    --scheduler.num_decay_steps=100000 \
+    --scheduler.decay_lr=1e-6 \
+    --use_policy_training_preset=false \
     --tolerance_s=0.04
 
 echo ""

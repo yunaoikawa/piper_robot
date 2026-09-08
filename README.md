@@ -2,6 +2,11 @@
 
 End-to-end pipeline for bimanual robot manipulation using Piper arms, VR teleoperation, and Pi0.5 policy learning.
 
+> **New: WetRobo** — a code-based autonomous wet-lab robot that learns tasks by performing
+> them in MuJoCo (perceive → act → verify → reflect → retry), instead of a learned VLA
+> policy. See [the WetRobo section](#wetrobo--code-based-autonomous-wet-lab-robot) below and
+> [`CLAUDE.md`](CLAUDE.md).
+
 ## System Overview
 
 ```
@@ -291,3 +296,113 @@ The collaborator's code (`tmp/pi05_training_clean-main/`) patches LeRobot to add
 1. `modeling_pi05.py` line ~1083: pop `dataset_stats` and `dataset_meta` from kwargs
 2. `modeling_pi05.py` line ~569: disable transformer version check
 3. `gradient_checkpointing_enable`: attribute path mismatch (`language_model` vs `model.language_model`)
+
+---
+
+# WetRobo — code-based autonomous wet-lab robot
+
+WetRobo is an alternative to the Pi0.5 VLA pipeline above: instead of learning a policy
+from teleop demonstrations, it is a **code-based agent** that learns a wet-lab task by
+performing it in a MuJoCo simulation and refining its skill parameters — perceive → act →
+verify the real end-state → reflect on the failure → refine → retry. It is **sim-first**
+(this machine does not drive the real robot). Full architecture and rules are in
+[`CLAUDE.md`](CLAUDE.md).
+
+### Paper thesis
+
+Authoring a CAD/MJCF of the lab each day (capturing where the movable labware actually is)
+makes WetRobo faster and more reliable than recovering the layout from vision. The
+`daily_cad_ablation` experiment measures this as an A/B on **real MuJoCo rollouts**
+(no fabricated data), and `report.py` turns the log into the paper figure.
+
+### Package layout (`wetrobo/`)
+
+| Module | Role |
+|--------|------|
+| `sim/{ik,lab_env}.py` | mink IK + headless MuJoCo world (grasp/move/render). |
+| `perception/{cad,vision}.py` | day's CAD (exact poses) vs vision (rendered depth, transparent-glass failure model). |
+| `skills/library.py` | parametric `pick`/`place` skills + JSON param store. |
+| `tasks/flask_to_incubator.py` | goal region from the incubator geoms; success = real flask pose. |
+| `agent/planner.py` | `DeterministicPlanner` — reproducible attempt/verify/reflect/refine loop. |
+| `agent/llm_agent.py` | `LLMSkillAuthor` — opt-in LLM parameter-patch proposer (clamped; never required). |
+| `experiment/` | daily layouts + the daily-CAD A/B. |
+| `report.py`, `run_wetrobo.py`, `episode_log.py` | figure/table, single-episode runner, JSONL logging. |
+
+Reuses `robot/piper-mujoco/bench_verify/` (scene graph + `SceneVerifier`) as the daily CAD
+and success signal; world = `robot/piper-mujoco/xml/lab-scene.xml`.
+
+### Running
+
+```bash
+# one episode — independent variable is --observer
+python -m wetrobo.run_wetrobo --observer cad
+python -m wetrobo.run_wetrobo --observer vision --seed 3 --max-attempts 6
+
+# the daily-CAD A/B (real rollouts -> JSONL) and the figure
+python -m wetrobo.experiment.daily_cad_ablation --days 6 --seeds 4 --out runs/ablation.jsonl
+python -m wetrobo.report --log runs/ablation.jsonl --out runs/figure.png
+
+# opt-in LLM skill-author (summarises real logged failures; needs anthropic + API key)
+python -m wetrobo.agent.llm_agent --log runs/ablation.jsonl --condition vision
+```
+
+### Real-camera fiducials and measured daily CAD
+
+WetRobo uses three distinct aids rather than treating one printed marker as a complete
+calibration: a temporary ChArUco sheet for camera intrinsics, four fixed AprilTag 36h11
+anchors for camera-to-robot pose, and optional object tags on repeatable caps/holders.
+An object tag is unusable for pose until its measured `T_object_tag` is registered.
+
+```bash
+# 1. Generate exact-size operational tags. Print PDF at 100%, measure the black edge,
+#    then fill printed_size_m and the registered transforms in the manifest.
+python -m wetrobo.fiducial_cli generate-markers \
+  --manifest wetrobo/perception/marker_manifest.template.json --out markers/
+
+# 2. One intrinsic profile per camera (tripod, left wrist, right wrist).
+python -m wetrobo.fiducial_cli generate-charuco \
+  --out wetrobo/assets/calibration
+python -m wetrobo.fiducial_cli calibrate-intrinsics \
+  --images 'calib/tripod/*.png' --camera-id tripod --out calib/tripod.json
+
+# 3. Merge measured robot-base anchor and object-mount transforms.
+python -m wetrobo.fiducial_cli register-mounts \
+  --manifest markers/manifest.json --transforms calib/mounts.json \
+  --out calib/registered_markers.json
+
+# 4. Validate before motion; exit status 2 means the robot must not move.
+python -m wetrobo.fiducial_cli validate-calibration --image bench.png \
+  --profile calib/tripod.json --manifest calib/registered_markers.json \
+  --out runs/calibration_check.json
+
+# 5. Create the provenance record and optional measured daily-CAD MJCF.
+python -m wetrobo.fiducial_cli author-daily-cad --image bench.png \
+  --profile calib/tripod.json --manifest calib/registered_markers.json \
+  --out runs/daily_cad.json --mjcf runs/daily_cad.xml
+```
+
+The current lab placement uses
+`wetrobo/perception/marker_manifest.lab.json`: IDs 0, 3, and fixed-incubator ID 13
+are the required tripod anchors; ID 1 is optional redundancy and ID 2 is unused.
+`inspect-image` records detection pixel evidence without requiring calibration first.
+
+The runtime gate requires at least three registered anchors, intrinsic RMS ≤0.5 px,
+multi-anchor reprojection RMS ≤1.5 px, and leave-one-anchor-out work-plane error ≤5 mm.
+Wrist-camera corrections are limited to 15 mm / 5°; larger changes require regenerating
+the daily CAD. Fixed anchors are shared by all research conditions. Object-tag poses are
+reported separately as `tag_assisted_deployment` and must not be called vision-only.
+
+### Representative result (real rollouts)
+
+> **Numbers pending regeneration.** The physics was tightened (solid incubator walls,
+> sponge-pad grasp gate, consistent 5-DOF side-approach — see `CLAUDE.md`), which
+> invalidated the earlier A/B. Re-run `daily_cad_ablation` before quoting a table.
+> Spot checks under the new physics: CAD succeeds in 1 attempt; vision (stricter pad
+> gate on the transparent flask) is markedly harder — the CAD-vs-vision gap widened,
+> and the vision success rate is sensitive to the pad tolerance / depth-noise model,
+> which is a calibration choice, not a tuned result.
+
+These are aggregated from logged MuJoCo rollouts, not synthesised. Deliberate simulation
+abstractions (sponge-pad kinematic grasp, weak-actuator gain stiffening, 5-DOF
+side-approach, etc.) are documented in `CLAUDE.md` and commented at their definitions so
+results are not over-claimed.

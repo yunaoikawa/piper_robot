@@ -1,0 +1,40 @@
+{
+  "schema": "piper_robot.semantic_scene_profile/v1",
+  "catalog": "scene_object_catalog.json",
+  "objects": [
+    "robot",
+    "incubator",
+    "microscope",
+    "culture_media_bottle",
+    "petri_dish",
+    "petri_lid",
+    "work_platform"
+  ],
+  "organized_shape_hw": [192, 256],
+  "sam_candidate_threshold": 0.2,
+  "sam_roi_padding_px": 24.0,
+  "sam_roi_scale": 4.0,
+  "sam_timeout_ms": 20000,
+  "accepted_mask_score": 1.0,
+  "default_minimum_confidence": 0.72,
+  "minimum_depth_points": 12,
+  "support_height_tolerance_m": 0.008,
+  "support_minimum_area_fraction": 0.004,
+  "support_collision_thickness_m": 0.025,
+  "esdf_voxel_size_m": 0.02,
+  "esdf_maximum_voxels": 2000000,
+  "unknown_minimum_area_fraction": 0.008,
+  "robot_model": "robot/arm/mujoco/bimanual_piper_table.xml",
+  "robot_placement": {
+    "semantic_name": "robot",
+    "anchor_map": "anchor_xyz_level_m",
+    "yaw_offset_rad": 1.5707963267948966,
+    "instances": [
+      {"body": "left/base_link", "anchor": "left_piper_base"},
+      {"body": "right/base_link", "anchor": "right_piper_base"}
+    ]
+  },
+  "accepted_camera_to_robot": false,
+  "camera_id": "unspecified-rgbd",
+  "calibration_id": "levelled-rgbd-display-only"
+}

@@ -1,0 +1,43 @@
+{
+  "version": 2,
+  "runtime_apriltag_count": 0,
+  "recovery_apriltag_count": 1,
+  "head_camera_reference_shape_hw": [1440, 1920],
+  "head_camera_matrix_rotated": [
+    [1466.4942626953125, 0.0, 959.1229553222656],
+    [0.0, 1466.4942626953125, 749.0789489746094],
+    [0.0, 0.0, 1.0]
+  ],
+  "head_camera_intrinsics_provenance": {
+    "method": "median Record3D LiDAR intrinsics across 30 synchronized frames",
+    "capture_id": "20260727T034333.072580Z_head_front_oblique_lidar_baseline_verified_f0fb6378",
+    "record3d_device_type": 1
+  },
+  "head_camera_placement_reference": {
+    "capture_id": "20260728T045144.210894Z_head_front_oblique_recalibration_20260728_after_reframe_33b32ef4",
+    "record3d_udid": "00008101-0015486E1412001E",
+    "rgb_path": "src/configs/placement_references/pasteur_head_20260728T045144_q90.jpg",
+    "rgb_sha256": "7f78edcb3a9a85fbf84b10d4672412164607f745cfd372ad55cecd3a544a1e12",
+    "source_rgb_sha256": "f2e8c5ab8b2a6cd42b3829d5e7ea1646b7d4c4fc50e46bb80962cec7ad32aca7",
+    "encoding": "JPEG quality 90, original 1440x1920 resolution",
+    "registration_gate": "orb_identity_v1"
+  },
+  "temporal_depth_frames": 15,
+  "support_plane": {
+    "ring_margin_px": 70,
+    "ransac_threshold_m": 0.006,
+    "minimum_confidence": 0.2
+  },
+  "geometry_quality": {
+    "maximum_view_angle_deg": 40.0,
+    "maximum_native_depth_pixel_footprint_m": 0.007
+  },
+  "registration": {
+    "voxel_m": 0.008,
+    "max_correspondence_m": 0.035,
+    "maximum_rmse_m": 0.012,
+    "minimum_inlier_fraction": 0.55
+  },
+  "proximity_warning_m": 0.02,
+  "proximity_is_hard_stop": false
+}

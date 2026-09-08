@@ -1,0 +1,63 @@
+{
+  "schema": "piper_robot.dynamic_dish_lid_scene/v1",
+  "source": {
+    "kind": "historical_verified_grasp",
+    "capture_manifest": "data/captures/pasteur/2026-07-30/20260730T084808.308665Z_right_verified_closed_grasp_before_lift_ba5ed5b8/manifest.json",
+    "capture_manifest_sha256": "b12af8685d44ae3cf461947ce3252bebb0d7ab83897f44b8281392fcf1bb167b",
+    "note": "The user verified the closed grasp. The lid pose is suitable for offline trajectory visualization; the container was not localized in robot coordinates."
+  },
+  "camera_to_robot_accepted": false,
+  "operator_confirmed": true,
+  "objects": [
+    {
+      "instance_id": "petri-lid-target",
+      "semantic_name": "petri dish lid",
+      "role": "target_lid",
+      "status": "confirmed",
+      "grasp_ee_pose_robot_wxyz_xyz": [
+        0.6876633882549044,
+        0.7039949694826682,
+        -0.13618504953054342,
+        -0.11385859511361494,
+        0.07302270093438953,
+        0.014294303884329264,
+        0.8334418005341017
+      ],
+      "grasp_right_q_rad": [
+        -0.15770794451236725,
+        0.20463985204696655,
+        -0.06920230388641357,
+        -0.558732271194458,
+        0.21561796963214874,
+        2.922431707382202
+      ],
+      "verification_lift_right_q_rad": [
+        -0.1318770796060562,
+        0.07930776476860046,
+        -0.09988519549369812,
+        -0.6114411950111389,
+        0.18154914677143097,
+        2.929290771484375
+      ],
+      "geometry": {
+        "type": "cylinder",
+        "radius_m": 0.045,
+        "height_m": 0.002,
+        "pose_anchor": "top_center"
+      }
+    },
+    {
+      "instance_id": "petri-container",
+      "semantic_name": "petri dish body",
+      "role": "target_container",
+      "status": "unknown",
+      "geometry": {
+        "type": "cylinder",
+        "radius_m": 0.045,
+        "height_m": 0.015,
+        "pose_anchor": "top_center",
+        "uncertainty_margin_m": 0.005
+      }
+    }
+  ]
+}

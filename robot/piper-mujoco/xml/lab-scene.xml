@@ -86,16 +86,24 @@
           pos="0.68 -0.42 0.15" material="white_wall_mat"
           contype="0" conaffinity="0" mass="0"/>
 
-    <!-- Incubator: 20cm W x 30cm D x 35cm H, 70cm in front of right piper -->
-    <body name="fridge" pos="0.70 0.0 0.175" euler="0 0 1.5708">
+    <!-- Incubator: 20cm W x 30cm D x 35cm H. Placed within the 5-DOF right arm's
+         reachable envelope (interior front ~x=0.36) so "flask -> incubator" is
+         physically feasible in sim; the real bench places it further (see CLAUDE.md). -->
+    <body name="fridge" pos="0.50 0.0 0.175" euler="0 0 1.5708">
+      <!-- Chamber walls collide (the gripper cannot pass through the incubator body);
+           only the top is left open so the arm can still load the shelf from above
+           through the open door. The flask rests on the colliding shelf/bottom. -->
       <geom name="fridge_back" type="box" size="0.10 0.004 0.175"
             pos="0 -0.146 0" material="fridge_body_mat" contype="1" conaffinity="1" mass="1.5"/>
       <geom name="fridge_left" type="box" size="0.004 0.15 0.175"
             pos="-0.096 0 0" material="fridge_body_mat" contype="1" conaffinity="1" mass="0.8"/>
       <geom name="fridge_right" type="box" size="0.004 0.15 0.175"
             pos="0.096 0 0" material="fridge_body_mat" contype="1" conaffinity="1" mass="0.8"/>
+      <!-- Top is visual-only (no collision) so the arm can load the shelf from above
+           (models loading through the open door); the flask is still contained by the
+           colliding side/bottom walls. -->
       <geom name="fridge_top" type="box" size="0.10 0.15 0.004"
-            pos="0 0 0.171" material="fridge_body_mat" contype="1" conaffinity="1" mass="0.5"/>
+            pos="0 0 0.171" material="fridge_body_mat" contype="0" conaffinity="0" mass="0.5"/>
       <geom name="fridge_bottom" type="box" size="0.10 0.15 0.004"
             pos="0 0 -0.171" material="fridge_body_mat" contype="1" conaffinity="1" mass="0.5"/>
       <geom name="fridge_int_back" type="box" size="0.09 0.002 0.165"

@@ -1,0 +1,10 @@
+{
+  "schema": "piper_robot.camera_robot_calibration/v1",
+  "accepted": false,
+  "record3d_udid": "00008101-0015486E1412001E",
+  "accepted_at_s": null,
+  "T_robot_camera": null,
+  "T_esdf_robot": null,
+  "method": "multi-pose SAM-labelled robot CAD fit",
+  "note": "Fail-closed template. Populate and explicitly accept only after multi-pose residual validation."
+}

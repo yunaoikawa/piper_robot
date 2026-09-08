@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reconstruct 3D Scene"
+  short_description: "Build a SAM-first RGB-D scene and MuJoCo model"
+  default_prompt: "Use $reconstruct-3d-scene to reconstruct this RGB-D capture as a verified 3D and MuJoCo scene."

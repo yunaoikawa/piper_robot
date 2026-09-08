@@ -1,0 +1,65 @@
+{
+  "_comment": "The lab's real inventory = the closed set recognition matches against. Identity is chosen from HERE, never open-vocab named. Dims are PROVISIONAL (measure with calipers / LiDAR before trusting for grasping). tag_id refers to the operational AprilTag manifest; pose is invalid until that manifest has a measured T_object_tag. aliases are coarse closed-set cues, never ground truth.",
+  "entries": [
+    {
+      "container": "culture_medium_bottle_500ml",
+      "label": "culture medium bottle",
+      "kind": "Reagent",
+      "shape": "cyl",
+      "dims": [0.038, 0.14],
+      "transparent": true,
+      "graspable": true,
+      "grasp_local": [0.0, 0.0, 0.12],
+      "mass": 0.55,
+      "tag_id": 10,
+      "aliases": ["culture medium", "media bottle", "reagent bottle", "flask", "water bottle", "bottle", "培養液"],
+      "ref_images": [],
+      "provisional_dims": true
+    },
+    {
+      "container": "petri_dish_90mm",
+      "label": "petri dish",
+      "kind": "Labware",
+      "shape": "cyl",
+      "dims": [0.045, 0.0145],
+      "transparent": true,
+      "graspable": true,
+      "grasp_local": [0.0, 0.0, 0.007],
+      "mass": 0.02,
+      "tag_id": 11,
+      "aliases": ["petri dish", "culture dish", "dish", "シャーレ", "plate"],
+      "ref_images": [],
+      "provisional_dims": true
+    },
+    {
+      "container": "inverted_microscope",
+      "label": "inverted microscope",
+      "kind": "Labware",
+      "shape": "box",
+      "dims": [0.20, 0.30, 0.30],
+      "transparent": false,
+      "graspable": false,
+      "grasp_local": [0.0, 0.0, 0.0],
+      "mass": 8.0,
+      "tag_id": 12,
+      "aliases": ["microscope", "inverted microscope", "顕微鏡"],
+      "ref_images": [],
+      "provisional_dims": true
+    },
+    {
+      "container": "co2_incubator",
+      "label": "CO2 incubator",
+      "kind": "Labware",
+      "shape": "box",
+      "dims": [0.24, 0.30, 0.30],
+      "transparent": false,
+      "graspable": false,
+      "grasp_local": [0.0, 0.0, 0.0],
+      "mass": 15.0,
+      "tag_id": 13,
+      "aliases": ["incubator", "co2 incubator", "fridge", "インキュベータ"],
+      "ref_images": [],
+      "provisional_dims": true
+    }
+  ]
+}

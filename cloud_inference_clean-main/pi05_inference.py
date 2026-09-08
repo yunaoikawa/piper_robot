@@ -475,9 +475,9 @@ class Pi05InferencePolicy:
             # Helper to process image
             def process_image(img):
                 if isinstance(img, np.ndarray):
-                    # Resize is handled within the policy class
-                    # if img.shape[:2] != image_size:
-                    #     img = cv2.resize(img, (image_size[1], image_size[0]), interpolation=cv2.INTER_AREA)
+
+                    if img.shape[:2] != (480, 640):
+                        img = cv2.resize(img, (640, 480), interpolation=cv2.INTER_AREA)
                     # Convert to torch tensor (H, W, C) -> (C, H, W)
                     if img.dtype == np.uint8:
                         img = img.astype(np.float32) / 255.0

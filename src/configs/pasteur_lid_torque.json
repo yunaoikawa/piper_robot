@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "method": "non-contact replay plus active-view envelope, 20% margin",
+  "motion_torque_policy": "observe_only",
+  "consecutive_samples": 5,
+  "recovery_teleop": {
+    "residual_fraction": 0.3,
+    "residual_floor_nm": 0.1,
+    "residual_ceiling_nm": 0.3,
+    "residual_duration_s": 0.35,
+    "baseline_slew_nm_per_s": 0.5,
+    "hard_limit_multiplier": 2.0
+  },
+  "thresholds": {
+    "right": [
+      0.30050999645143744,
+      1.692495008111,
+      1.46,
+      0.68,
+      1.58,
+      0.28
+    ]
+  },
+  "calibration": {
+    "right": {
+      "samples": 5524,
+      "observed_max_abs": [
+        0.25042499704286453,
+        1.4104125067591666,
+        1.074937530979514,
+        0.32491114720344544,
+        1.285268002524376,
+        0.18497892354190348
+      ],
+      "median_abs": [
+        0.13348124767653644,
+        0.49140001013875007,
+        0.4760437466204166,
+        0.27698916434168813,
+        1.109873512687683,
+        0.0776336402285099
+      ],
+      "mad_abs": [
+        0.0035437483806163017,
+        0.0023625047877430805,
+        0.003543739579617955,
+        0.001916883884668319,
+        0.0028753401088714714,
+        0.0038337606284022246
+      ]
+    }
+  },
+  "active_view_observed_max_abs": {
+    "right": [0.2056, 1.2899, 1.2144, 0.5617, 1.3102, 0.2282]
+  }
+}

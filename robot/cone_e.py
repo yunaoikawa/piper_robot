@@ -1,6 +1,5 @@
 import argparse
 import functools
-import time
 import numpy as np
 import mink
 import atexit
@@ -8,23 +7,6 @@ from pathlib import Path
 
 from robot.arm.arm import ArmNode
 from robot.rpc import RPCServer
-
-
-# =============================================================================
-# Workspace boundaries (metres)
-# =============================================================================
-WORKSPACE_MIN = np.array([0.080, -0.498, 0.617])
-WORKSPACE_MAX = np.array([0.563, 0.428, 1.095])
-
-
-def clamp_ee_target(ee_target: mink.SE3) -> mink.SE3:
-    """Return a new SE3 with translation clamped to workspace boundaries."""
-    p = ee_target.translation()
-    p_clamped = np.clip(p, WORKSPACE_MIN, WORKSPACE_MAX)
-    if not np.allclose(p, p_clamped):
-        print(f"[Workspace] Position clamped: {np.round(p, 3)} → {np.round(p_clamped, 3)}")
-    wxyz = ee_target.rotation().wxyz
-    return mink.SE3(np.concatenate([wxyz, p_clamped]))
 
 
 def require_initialization(func):
@@ -39,10 +21,12 @@ def require_initialization(func):
 
 class ConeE:
     def __init__(
-        self, base_max_vel=np.array((1.0, 1.0, 1.57)), base_max_accel=np.array((1.0, 1.0, 1.57)), no_arms=False
+        self, base_max_vel=np.array((1.0, 1.0, 1.57)), base_max_accel=np.array((1.0, 1.0, 1.57)),
+        no_arms=False, reset_arms_on_init=True,
     ):
         self._initialized = False
         self.no_arms = no_arms
+        self.reset_arms_on_init = reset_arms_on_init
 
         if not self.no_arms:
             _HERE = Path(__file__).parent
@@ -58,14 +42,16 @@ class ConeE:
                 use_gripper=True,
             )
 
-    def init(self):
+    def init(self, reset_arms: bool | None = None):
         if self._initialized:
             print("Warning: ConeE already initialized")
             return
 
         if not self.no_arms:
-            self.left_arm.init()
-            self.right_arm.init()
+            if reset_arms is None:
+                reset_arms = self.reset_arms_on_init
+            self.left_arm.init(reset=reset_arms)
+            self.right_arm.init(reset=reset_arms)
 
         self._initialized = True
 
@@ -93,6 +79,30 @@ class ConeE:
     # Left arm
     # ----------------------------------------------------------------------
     @require_initialization
+    def machine_zero_left_arm(self):
+        """Fold the left arm to Piper's true q=0 pose."""
+        return self.left_arm.machine_zero()
+
+    @require_initialization
+    def machine_zero_right_arm(self):
+        """Fold the right arm to Piper's true q=0 pose."""
+        return self.right_arm.machine_zero()
+
+    @require_initialization
+    def machine_zero_arms(self):
+        """Fold both arms to their true q=0 pose, matching server startup.
+
+        Keep the same deterministic left-then-right order used by ``init``.
+        This is intentionally distinct from ``home_left_arm`` and
+        ``home_right_arm``, which select the upright manipulation pose.
+        """
+        print("Returning left arm to machine zero (q=0)...", flush=True)
+        self.machine_zero_left_arm()
+        print("Returning right arm to machine zero (q=0)...", flush=True)
+        self.machine_zero_right_arm()
+        print("Both arms are at machine zero.", flush=True)
+
+    @require_initialization
     def set_left_joint_target(
         self, joint_target: np.ndarray, gripper_target: float | None = None, preview_time: float = 0.1
     ):
@@ -100,8 +110,24 @@ class ConeE:
 
     @require_initialization
     def set_left_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
-        # ee_target = clamp_ee_target(ee_target)  # boundary clamping disabled
-        self.left_arm.set_ee_target(ee_target, gripper_target, preview_time)
+        return self.left_arm.set_ee_target(
+            ee_target, gripper_target, preview_time
+        )
+
+    @require_initialization
+    def set_left_teleop_ee_target(
+        self,
+        ee_target: mink.SE3,
+        gripper_target: float | None = None,
+        preview_time: float = 0.1,
+        max_joint_step_rad: float = 4.0 * 0.1,
+    ):
+        return self.left_arm.set_teleop_ee_target(
+            ee_target,
+            gripper_target,
+            preview_time,
+            max_joint_step_rad,
+        )
 
     @require_initialization
     def set_left_gain(self, kp: np.ndarray, kd: np.ndarray):
@@ -144,11 +170,29 @@ class ConeE:
         return self.left_arm.get_joint_positions()
 
     @require_initialization
+    def get_left_joint_torque(self) -> np.ndarray:
+        return self.left_arm.get_joint_torque()
+
+    @require_initialization
+    def get_left_gain(self) -> dict[str, np.ndarray]:
+        gain = self.left_arm.piper.get_gain()
+        return {
+            "kp": np.asarray(gain.kp, dtype=float).copy(),
+            "kd": np.asarray(gain.kd, dtype=float).copy(),
+        }
+
+    @require_initialization
     def get_left_gripper_exact(self) -> float:
         """Get left gripper position as open ratio (0.0=closed, 1.0=open)."""
         if self.left_arm.gripper is not None:
             return self.left_arm.gripper.get_open_ratio()
         return 0.0
+
+    @require_initialization
+    def get_left_gripper_status(self) -> dict:
+        if self.left_arm.gripper is not None:
+            return self.left_arm.gripper.get_status()
+        return {}
 
     # ----------------------------------------------------------------------
     # Right arm
@@ -161,8 +205,24 @@ class ConeE:
 
     @require_initialization
     def set_right_ee_target(self, ee_target: mink.SE3, gripper_target: float | None = None, preview_time: float = 0.1):
-        # ee_target = clamp_ee_target(ee_target)  # boundary clamping disabled
-        self.right_arm.set_ee_target(ee_target, gripper_target, preview_time)
+        return self.right_arm.set_ee_target(
+            ee_target, gripper_target, preview_time
+        )
+
+    @require_initialization
+    def set_right_teleop_ee_target(
+        self,
+        ee_target: mink.SE3,
+        gripper_target: float | None = None,
+        preview_time: float = 0.1,
+        max_joint_step_rad: float = 4.0 * 0.1,
+    ):
+        return self.right_arm.set_teleop_ee_target(
+            ee_target,
+            gripper_target,
+            preview_time,
+            max_joint_step_rad,
+        )
 
     @require_initialization
     def set_right_gain(self, kp: np.ndarray, kd: np.ndarray):
@@ -181,11 +241,29 @@ class ConeE:
         return self.right_arm.get_joint_positions()
 
     @require_initialization
+    def get_right_joint_torque(self) -> np.ndarray:
+        return self.right_arm.get_joint_torque()
+
+    @require_initialization
+    def get_right_gain(self) -> dict[str, np.ndarray]:
+        gain = self.right_arm.piper.get_gain()
+        return {
+            "kp": np.asarray(gain.kp, dtype=float).copy(),
+            "kd": np.asarray(gain.kd, dtype=float).copy(),
+        }
+
+    @require_initialization
     def get_right_gripper_exact(self) -> float:
         """Get right gripper position as open ratio (0.0=closed, 1.0=open)."""
         if self.right_arm.gripper is not None:
             return self.right_arm.gripper.get_open_ratio()
         return 0.0
+
+    @require_initialization
+    def get_right_gripper_status(self) -> dict:
+        if self.right_arm.gripper is not None:
+            return self.right_arm.gripper.get_status()
+        return {}
 
     # ----------------------------------------------------------------------
     # Rest positions (for rollout controller 'h' key)
@@ -227,17 +305,36 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Skip initializing the Piper arms. Useful for smoke tests on machines without hardware.",
     )
+    parser.add_argument(
+        "--attach-current",
+        action="store_true",
+        help="Attach to the current joint state without resetting either arm to home.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None):
     args = _parse_args(argv)
-    cone = ConeE(no_arms=args.no_arms)
+    cone = ConeE(
+        no_arms=args.no_arms,
+        reset_arms_on_init=not args.attach_current,
+    )
+    # Every server mode must expose valid state before a client connects.
+    # In normal mode init() performs Piper's true q=0 reset; attach-current
+    # latches the measured pose without moving because reset_arms_on_init is
+    # false.  Omitting this call leaves every guarded getter uninitialized even
+    # though the RPC socket appears healthy.
+    cone.init()
     rpc_server = RPCServer(cone, args.host, args.port, threaded=False)
     stop_callback = rpc_server.stop
     atexit.register(stop_callback)
 
-    mode_desc = "without arm hardware" if args.no_arms else "with full hardware control"
+    if args.no_arms:
+        mode_desc = "without arm hardware"
+    elif args.attach_current:
+        mode_desc = "attached to current arm state"
+    else:
+        mode_desc = "with full hardware control"
     print(f"ConeE RPC server listening on {args.host}:{args.port} ({mode_desc}).")
     print("Press Ctrl+C to exit.")
 

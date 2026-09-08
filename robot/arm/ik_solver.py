@@ -74,6 +74,11 @@ class SingleArmIK:
     def solve_ik(self, T_wt: mink.SE3, max_iter: int = 10, pos_eps: float = 1e-3, rot_eps: float = 1e-3):
         if not self.initalized_:
             raise ValueError("IK solver not initialized")
+        # Use the measured/current configuration as the posture reference on
+        # every solve.  Keeping the initialization posture here lets a nearby
+        # Cartesian target select a remote IK branch and is visible as the
+        # wrist joints "winding up" during teleoperation or visual servoing.
+        self.posture_task.set_target_from_configuration(self.configuration)
         self.end_effector_task.set_target(T_wt)
         is_solved = False
         for _ in range(max_iter):

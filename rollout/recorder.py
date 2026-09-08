@@ -2,10 +2,12 @@
 
 import cv2
 import h5py
+import json
 import time
 import queue
 import subprocess
 import threading
+import tempfile
 import numpy as np
 from pathlib import Path
 from datetime import datetime
@@ -28,6 +30,8 @@ RecordingSample = namedtuple('RecordingSample', [
     'right_joint_positions',
     'left_wrist_rgb_frame',
     'right_wrist_rgb_frame',
+    'left_wrist_rgb_timestamp',
+    'right_wrist_rgb_timestamp',
 ])
 
 
@@ -123,6 +127,10 @@ class DataRecorder:
         self._left_writer = None
         self._right_writer = None
         self._episode_name = None
+        self._episode_context = {}
+        self._episode_outcome = None
+        self._episode_events = []
+        self.last_episode_artifacts = None
 
         # Recording queue and worker thread
         self.recording_queue = queue.Queue(maxsize=100)
@@ -146,6 +154,8 @@ class DataRecorder:
             'right_gripper_exact': [],
             'right_gripper': [],
             'rgb_frame_timestamps': [],
+            'left_wrist_rgb_timestamps': [],
+            'right_wrist_rgb_timestamps': [],
             'left_joint_positions': [],
             'right_joint_positions': [],
         }
@@ -167,6 +177,9 @@ class DataRecorder:
         )
 
         self.episode_data = self._init_episode_data()
+        self._episode_context = {}
+        self._episode_outcome = None
+        self._episode_events = []
         self.is_recording = True
         print(f"\n🔴 RECORDING STARTED - Episode {self.episode_count}")
 
@@ -196,11 +209,51 @@ class DataRecorder:
         num_samples = len(self.episode_data['timestamps'])
         if num_samples > 0:
             self._save_hdf5()
+            if self._has_agentic_metadata():
+                self._save_agentic_sidecar()
             print(f"⚫ RECORDING STOPPED - Saved {num_samples} samples")
         else:
             print("⚫ RECORDING STOPPED - No samples recorded")
 
         self.episode_count += 1
+
+    def set_episode_context(self, context):
+        """Attach JSON-compatible provenance without changing legacy datasets."""
+        self._episode_context = dict(context or {})
+
+    def _has_agentic_metadata(self):
+        return bool(self._episode_context or self._episode_outcome or self._episode_events)
+
+    def set_episode_outcome(self, outcome):
+        """Set the verified terminal classification before ``end_episode``."""
+        self._episode_outcome = dict(outcome or {})
+
+    def record_event(self, kind, **payload):
+        """Record policy/checkpoint events in a sidecar, not the 30 Hz arrays."""
+        if not self.is_recording:
+            return
+        self._episode_events.append({
+            'timestamp': float(time.time()),
+            'kind': str(kind),
+            **payload,
+        })
+
+    def record_action(self, action, *, source='act'):
+        """Record the command provenance needed to distinguish policy/recovery."""
+        compact = {}
+        for key, value in dict(action).items():
+            if key in {
+                'left_ee_pose', 'right_ee_pose', 'left_delta_pose',
+                'right_delta_pose', 'left_gripper', 'right_gripper',
+                'total_buffer_updates', 'buffer_age', 'buffer_remaining',
+                'is_stale',
+            }:
+                compact[key] = (
+                    np.asarray(value).tolist()
+                    if isinstance(value, (np.ndarray, list, tuple))
+                    else value
+                )
+        self.record_event('command', source=str(source), action=compact)
 
     def record_sample(self, sample: RecordingSample):
         """Add a sample to the recording queue."""
@@ -261,6 +314,16 @@ class DataRecorder:
                     self.episode_data['rgb_frame_timestamps'].append(
                         sample.rgb_timestamp if sample.rgb_timestamp is not None else sample.timestamp
                     )
+                    self.episode_data['left_wrist_rgb_timestamps'].append(
+                        sample.left_wrist_rgb_timestamp
+                        if sample.left_wrist_rgb_timestamp is not None
+                        else sample.timestamp
+                    )
+                    self.episode_data['right_wrist_rgb_timestamps'].append(
+                        sample.right_wrist_rgb_timestamp
+                        if sample.right_wrist_rgb_timestamp is not None
+                        else sample.timestamp
+                    )
 
             except queue.Empty:
                 continue
@@ -287,10 +350,46 @@ class DataRecorder:
                     f.create_dataset('right_gripper', data=np.array(self.episode_data['right_gripper']))
                     f.create_dataset('right_joint_positions', data=np.array(self.episode_data['right_joint_positions']))
                     f.create_dataset('rgb_frame_timestamps', data=np.array(self.episode_data['rgb_frame_timestamps']))
+                    f.create_dataset('left_wrist_rgb_timestamps', data=np.array(self.episode_data['left_wrist_rgb_timestamps']))
+                    f.create_dataset('right_wrist_rgb_timestamps', data=np.array(self.episode_data['right_wrist_rgb_timestamps']))
                     f.attrs['num_samples'] = len(self.episode_data['timestamps'])
+                    if self._has_agentic_metadata():
+                        f.attrs['agentic_schema'] = 'piper_robot.agentic_collection/v1'
+                    if self._episode_outcome is not None:
+                        f.attrs['agentic_classification'] = str(
+                            self._episode_outcome.get('classification', 'uncertain')
+                        )
                 f.attrs['episode_number'] = self.episode_count
                 f.attrs['timestamp'] = self._episode_name.split('_', 2)[-1]
 
             print(f"  ✓ Saved HDF5 with {len(self.episode_data['timestamps'])} samples")
+            self.last_episode_artifacts = {
+                'hdf5': str(h5_path),
+                'sidecar': (
+                    str(self.save_dir / f"{self._episode_name}.agentic.json")
+                    if self._has_agentic_metadata()
+                    else None
+                ),
+            }
         except Exception as e:
             print(f"ERROR saving HDF5: {e}")
+
+    def _save_agentic_sidecar(self):
+        path = self.save_dir / f"{self._episode_name}.agentic.json"
+        value = {
+            'schema': 'piper_robot.agentic_collection_episode/v1',
+            'episode_name': self._episode_name,
+            'context': self._episode_context,
+            'outcome': self._episode_outcome or {
+                'classification': 'uncertain',
+                'reason': 'no_agentic_verifier_outcome',
+            },
+            'events': self._episode_events,
+        }
+        with tempfile.NamedTemporaryFile(
+            'w', dir=self.save_dir, delete=False, encoding='utf-8'
+        ) as stream:
+            json.dump(value, stream, indent=2, ensure_ascii=False)
+            stream.write('\n')
+            temporary = Path(stream.name)
+        temporary.replace(path)

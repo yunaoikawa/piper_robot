@@ -1,0 +1,14 @@
+{
+  "family": "DICT_APRILTAG_36H11",
+  "version": 1,
+  "markers": [
+    {"marker_id": 0, "role": "anchor", "size_m": 0.06, "parent": "robot_base", "T_parent_tag": null, "printed_size_m": null, "note": "register after mounting"},
+    {"marker_id": 1, "role": "anchor", "size_m": 0.06, "parent": "robot_base", "T_parent_tag": null, "printed_size_m": null, "note": "register after mounting"},
+    {"marker_id": 2, "role": "anchor", "size_m": 0.06, "parent": "robot_base", "T_parent_tag": null, "printed_size_m": null, "note": "register after mounting"},
+    {"marker_id": 3, "role": "anchor", "size_m": 0.06, "parent": "robot_base", "T_parent_tag": null, "printed_size_m": null, "note": "register after mounting"},
+    {"marker_id": 10, "role": "object", "size_m": 0.03, "parent": "culture_medium_bottle_500ml", "T_parent_tag": null, "printed_size_m": null, "note": "mount on a repeatable cap or holder"},
+    {"marker_id": 11, "role": "object", "size_m": 0.03, "parent": "petri_dish_90mm", "T_parent_tag": null, "printed_size_m": null, "note": "mount on a repeatable holder"},
+    {"marker_id": 12, "role": "object", "size_m": 0.03, "parent": "inverted_microscope", "T_parent_tag": null, "printed_size_m": null, "note": "register after mounting"},
+    {"marker_id": 13, "role": "object", "size_m": 0.03, "parent": "co2_incubator", "T_parent_tag": null, "printed_size_m": null, "note": "register after mounting"}
+  ]
+}

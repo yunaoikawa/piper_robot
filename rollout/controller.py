@@ -1,5 +1,6 @@
 """Main policy controller orchestrating robot control and data collection."""
 
+import cv2
 import zmq
 import time
 import mink
@@ -9,6 +10,10 @@ from pathlib import Path
 from scipy.spatial.transform import Rotation as R
 
 from robot.rpc import RPCClient
+from robot.camera_id import load_camera_map
+from robot.arm.startup import (
+    prepare_arms_for_manipulation as prepare_arms_for_inference,
+)
 from loop_rate_limiters import RateLimiter
 
 from .camera import CameraFeedManager, USBWristCameraFeedManager
@@ -16,146 +21,226 @@ from .recorder import DataRecorder, RecordingSample
 from .episode import EpisodeManager
 from .keyboard import KeyboardController
 from .manipulability import ManipulabilityCalculator
+from .safety import SafetyLayer
 
-
-# Default data directory
 DATA_DIR = Path("./your_save_dir_here")
-
-# Default task description (override with --task flag)
 DEFAULT_TASK = "put the flask in the incubator"
+TARGET_H, TARGET_W = 480, 640
 
 
 def quat_to_r6(quat, batched=False):
-    """Convert quaternion to 6D rotation representation."""
     rot_mat = R.from_quat(quat, scalar_first=True).as_matrix()
     if batched:
         a1, a2 = rot_mat[:, :, 0], rot_mat[:, :, 1]
         return np.concatenate((a1, a2), axis=-1)
-    else:
-        a1, a2 = rot_mat[:, 0], rot_mat[:, 1]
-        return np.concatenate((a1, a2))
+    a1, a2 = rot_mat[:, 0], rot_mat[:, 1]
+    return np.concatenate((a1, a2))
+
+
+def _rotate_and_resize(frame):
+    if frame is None:
+        return None
+    frame = np.rot90(frame, k=3)
+    if frame.shape[0] != TARGET_H or frame.shape[1] != TARGET_W:
+        frame = cv2.resize(frame, (TARGET_W, TARGET_H), interpolation=cv2.INTER_AREA)
+    return frame
 
 
 class PolicyController:
-    """Main controller for robot policy execution and data collection."""
-
     def __init__(self, hpc_host="192.168.1.50", obs_port=5555, action_port=5556,
                  enable_recording=False, save_dir=None, autonomous_mode=False,
                  episode_timeout=600.0, manipulability_threshold=0.05,
-                 task=DEFAULT_TASK):
+                 task=DEFAULT_TASK, safety_config=None, bias_port=5560,
+                 display=True, head_stream=True, head_stream_host="0.0.0.0",
+                 head_stream_port=8080, head_stream_token=None,
+                 head_stream_fps=15.0, max_episode_actions=None,
+                 home_on_init=True, reanchor_chunks=False,
+                 agentic_supervisor=None):
         self.stop_event = threading.Event()
         self.policy_active = False
-        self.task = task
+        self.agentic_supervisor = agentic_supervisor
+        self.task = (
+            agentic_supervisor.instruction
+            if agentic_supervisor is not None
+            else task
+        )
+        self.max_episode_actions = max_episode_actions
+        self.reanchor_chunks = reanchor_chunks
+        self._chunk_anchor = {'left': None, 'right': None}
 
-        # Robot connection
+        # Per-arm EE offset in robot frame, applied in apply_action(). This
+        # replaces the server-side --z-bias so the bias exists in exactly one
+        # place; two independent biases would silently sum.
+        self.xyz_bias = {'left': np.zeros(3), 'right': np.zeros(3)}
+        self.safety = SafetyLayer.from_config(safety_config)
+        self._buffer_gen = None  # server's buffer generation; changes on re-plan
+        # NB: not `control_port` -- _setup_zmq() uses that name for the REQ
+        # socket to the *server's* control port (action_port + 1).
+        self.bias_port = bias_port
+
         self.obs_cone_e = RPCClient("localhost", 8081)
-        self.obs_cone_e.init()
+        # Connect without motion first.  The explicit sequence below then
+        # performs exactly one machine-zero visit per inference launch.  It
+        # also makes --attach-current genuinely motion-free when ConeE has not
+        # yet been initialized by another client.
+        self.obs_cone_e.init(reset_arms=False)
         self.obs_rpc_lock = threading.Lock()
+        self.latest_observation_lock = threading.Lock()
+        self.latest_observation = None
 
         self.cone_e = RPCClient("localhost", 8081)
-        self.cone_e.init()
-        self.cone_e.home_left_arm()
-        self.cone_e.home_right_arm()
+        self.cone_e.init(reset_arms=False)
+        if home_on_init:
+            prepare_arms_for_inference(self.cone_e)
+        else:
+            print("[startup] Attaching to current arm pose; machine zero and "
+                  "manipulation home are both skipped.", flush=True)
 
-        # ZeroMQ setup
         self._setup_zmq(hpc_host, obs_port, action_port)
 
-        # Transform (identity for this setup)
-        self.H = mink.SE3.from_rotation(
-            mink.SO3.from_matrix(np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]))
-        )
+        self.H = mink.SE3.from_rotation(mink.SO3.from_matrix(np.eye(3)))
 
-        # Gripper state tracking
         self.last_left_gripper = 1.0
         self.last_right_gripper = 1.0
         self.last_left_gripper_binary = 1.0
         self.last_right_gripper_binary = 1.0
-
         self.starting_pose_left = None
         self.starting_pose_right = None
 
         self.stats = {
-            'observations_sent': 0,
-            'actions_received': 0,
-            'errors': 0,
-            'buffer_wraps': 0
+            'observations_sent': 0, 'actions_received': 0,
+            'errors': 0, 'buffer_wraps': 0
         }
-
         self.test_qpos = None
         save_path = Path(save_dir) if save_dir else DATA_DIR
+        cam_map = load_camera_map()
 
-        # Head camera (device 0)
-        self.camera = CameraFeedManager(self.stop_event)
+        self.camera = CameraFeedManager(
+            self.stop_event,
+            display=display,
+            head_stream=head_stream,
+            head_stream_host=head_stream_host,
+            head_stream_port=head_stream_port,
+            head_stream_token=head_stream_token,
+            head_stream_fps=head_stream_fps,
+        )
         self.camera.autonomous_mode = autonomous_mode
         self.camera.start()
 
-        # Right wrist camera (device 1)
         self.right_wrist_camera = USBWristCameraFeedManager(
-            self.stop_event, device_index=0, label="right wrist"
+            self.stop_event, device_index=cam_map.get("right", 1), label="right wrist"
         )
         self.right_wrist_camera.start()
 
-        # Left wrist camera (device 2)
         self.left_wrist_camera = USBWristCameraFeedManager(
-            self.stop_event, device_index=2, label="left wrist"
+            self.stop_event, device_index=cam_map.get("left", 2), label="left wrist"
         )
         self.left_wrist_camera.start()
 
-        # Link wrist cameras to head camera display (single display thread)
         self.camera.wrist_camera = self.right_wrist_camera
         self.camera.left_wrist_camera = self.left_wrist_camera
 
-        # Data recorder (optional)
         self.recorder = DataRecorder(save_path, self.stop_event) if enable_recording else None
 
-        # Episode manager
         self.episode_manager = EpisodeManager(
-            recorder=self.recorder,
-            robot_rpc=self.cone_e,
-            control_socket=self.control_socket,
-            autonomous_mode=autonomous_mode,
-            episode_timeout=episode_timeout,
-            manipulability_threshold=manipulability_threshold
+            recorder=self.recorder, robot_rpc=self.cone_e,
+            control_socket=self.control_socket, autonomous_mode=autonomous_mode,
+            episode_timeout=episode_timeout, manipulability_threshold=manipulability_threshold
         )
+        # Attach-current is an explicit operator choice: allow the next episode
+        # to begin from the pose already held by ConeE without forcing home.
+        self.episode_manager.arms_at_home = True
 
-        # Keyboard controller
         self.keyboard = KeyboardController(
             self.stop_event, self.episode_manager, enable_recording, autonomous_mode
         )
         self.keyboard.start()
 
-        # Manipulability calculator
         self.manipulability_calc = ManipulabilityCalculator(self.obs_cone_e, self.obs_rpc_lock)
 
-        # Start background threads
         self.obs_thread = threading.Thread(target=self._observation_publishing_loop, daemon=True)
         self.obs_thread.start()
+
+        self.bias_thread = threading.Thread(target=self._bias_control_loop, daemon=True)
+        self.bias_thread.start()
+
+    def _bias_control_loop(self):
+        """REP socket for changing the EE bias without restarting anything.
+
+        Mirrors the server's control loop in hpc_inference_act.py. Tuning a bias
+        used to mean killing and relaunching the inference server; now it is one
+        message. Commands:
+            {'command': 'set_bias', 'arm': 'right', 'bias': [x, y, z]}
+            {'command': 'get_bias'}
+        """
+        # Use a private context: terminating the policy sockets' context during
+        # shutdown must never wait on a socket owned by this worker thread.
+        context = zmq.Context()
+        sock = context.socket(zmq.REP)
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.bind(f"tcp://*:{self.bias_port}")
+        print(f"Bias control listening on port {self.bias_port}")
+
+        poller = zmq.Poller()
+        poller.register(sock, zmq.POLLIN)
+
+        while not self.stop_event.is_set():
+            try:
+                # Poll so shutdown isn't blocked waiting on a message.
+                if not poller.poll(timeout=200):
+                    continue
+                cmd = sock.recv_pyobj()
+                name = cmd.get('command')
+
+                if name == 'set_bias':
+                    arm = cmd.get('arm', 'right')
+                    if arm not in self.xyz_bias:
+                        reply = {'status': 'error', 'message': f"unknown arm '{arm}'"}
+                    else:
+                        applied = self.set_bias(arm, cmd.get('bias', [0, 0, 0]))
+                        reply = {'status': 'ok', 'arm': arm, 'bias': applied.tolist()}
+                elif name == 'get_bias':
+                    reply = {'status': 'ok',
+                             'bias': {k: v.tolist() for k, v in self.xyz_bias.items()},
+                             'safety_rejected': self.safety.rejected_count}
+                else:
+                    reply = {'status': 'error', 'message': f"unknown command '{name}'"}
+
+                sock.send_pyobj(reply)
+            except Exception as e:
+                if self.stop_event.is_set():
+                    break
+                print(f"[bias] control thread error: {e}", flush=True)
+                # REP sockets must reply or the socket wedges in a bad state.
+                try:
+                    sock.send_pyobj({'status': 'error', 'message': str(e)})
+                except Exception:
+                    pass
+
+        sock.close()
+        context.term()
 
     def _setup_zmq(self, hpc_host, obs_port, action_port):
         self.zmq_context = zmq.Context()
 
         self.obs_socket = self.zmq_context.socket(zmq.PUB)
-        obs_address = f"tcp://{hpc_host}:{obs_port}"
-        self.obs_socket.connect(obs_address)
-        print(f"Publishing observations to {obs_address}")
+        self.obs_socket.connect(f"tcp://{hpc_host}:{obs_port}")
+        print(f"Publishing observations to tcp://{hpc_host}:{obs_port}")
 
         self.action_socket = self.zmq_context.socket(zmq.REQ)
         self.action_socket.setsockopt(zmq.RCVTIMEO, 2000)
         self.action_socket.setsockopt(zmq.SNDTIMEO, 2000)
         self.action_socket.setsockopt(zmq.LINGER, 0)
-        action_address = f"tcp://{hpc_host}:{action_port}"
-        self.action_socket.connect(action_address)
-        print(f"Requesting actions from {action_address}")
+        self.action_socket.connect(f"tcp://{hpc_host}:{action_port}")
+        print(f"Requesting actions from tcp://{hpc_host}:{action_port}")
 
         self.control_port = action_port + 1
         self.control_socket = self.zmq_context.socket(zmq.REQ)
         self.control_socket.setsockopt(zmq.RCVTIMEO, 2000)
         self.control_socket.setsockopt(zmq.SNDTIMEO, 2000)
         self.control_socket.setsockopt(zmq.LINGER, 0)
-        control_address = f"tcp://{hpc_host}:{self.control_port}"
-        self.control_socket.connect(control_address)
-        print(f"Sending control commands to {control_address}")
-
+        self.control_socket.connect(f"tcp://{hpc_host}:{self.control_port}")
+        print(f"Sending control commands to tcp://{hpc_host}:{self.control_port}")
         time.sleep(0.5)
 
     def get_observation(self):
@@ -173,119 +258,113 @@ class PolicyController:
             left_gripper, right_gripper
         )
 
-        # Head camera
         rgb_frame, rgb_timestamp, depth_frame = self.camera.get_latest_frame()
-        if rgb_frame is not None:
-            rgb_frame = np.rot90(rgb_frame, k=3)
-        if depth_frame is not None:
-            depth_frame = np.rot90(depth_frame, k=3)
+        rgb_frame = _rotate_and_resize(rgb_frame)
 
-        # Left wrist camera
+        left_wrist_frame = None
+        left_wrist_timestamp = None
         if self.left_wrist_camera is not None:
-            left_wrist_frame, _, _ = self.left_wrist_camera.get_latest_frame()
-            if left_wrist_frame is not None:
-                left_wrist_frame = np.rot90(left_wrist_frame, k=3)
-        else:
-            left_wrist_frame = None
+            left_wrist_frame, left_wrist_timestamp, _ = self.left_wrist_camera.get_latest_frame()
+            left_wrist_frame = _rotate_and_resize(left_wrist_frame)
 
-        # Right wrist camera
+        right_wrist_frame = None
+        right_wrist_timestamp = None
         if self.right_wrist_camera is not None:
-            right_wrist_frame, _, _ = self.right_wrist_camera.get_latest_frame()
-            if right_wrist_frame is not None:
-                right_wrist_frame = np.rot90(right_wrist_frame, k=3)
-        else:
-            right_wrist_frame = None
+            right_wrist_frame, right_wrist_timestamp, _ = self.right_wrist_camera.get_latest_frame()
+            right_wrist_frame = _rotate_and_resize(right_wrist_frame)
 
-        # Build state vectors
+        blank = np.zeros((TARGET_H, TARGET_W, 3), dtype=np.uint8)
+
         left_pose = np.concatenate([
             ee_pose_left.translation(),
-            quat_to_r6(ee_pose_left.rotation().wxyz, batched=False)
+            quat_to_r6(ee_pose_left.rotation().wxyz)
         ])
         right_pose = np.concatenate([
             ee_pose_right.translation(),
-            quat_to_r6(ee_pose_right.rotation().wxyz, batched=False),
+            quat_to_r6(ee_pose_right.rotation().wxyz)
         ])
 
         observation = {
             'qpos': np.concatenate([
-                left_pose,
-                np.array([left_gripper], dtype=float),
-                right_pose,
-                np.array([right_gripper], dtype=float),
+                left_pose, np.array([left_gripper], dtype=float),
+                right_pose, np.array([right_gripper], dtype=float),
             ]),
             "images": {
-                "cam_high": rgb_frame if rgb_frame is not None else np.zeros((480, 640, 3), dtype=np.uint8),
-                "cam_left_wrist": left_wrist_frame if left_wrist_frame is not None else np.zeros((480, 640, 3), dtype=np.uint8),
-                "cam_right_wrist": right_wrist_frame if right_wrist_frame is not None else np.zeros((480, 640, 3), dtype=np.uint8),
+                "cam_high": rgb_frame if rgb_frame is not None else blank.copy(),
+                "cam_left_wrist": left_wrist_frame if left_wrist_frame is not None else blank.copy(),
+                "cam_right_wrist": right_wrist_frame if right_wrist_frame is not None else blank.copy(),
             },
-            "depth": None,
+            "depth": depth_frame,
             "timestamp": timestamp,
             "rgb_timestamp": rgb_timestamp,
+            "camera_timestamps": {
+                "cam_high": rgb_timestamp,
+                "cam_left_wrist": left_wrist_timestamp,
+                "cam_right_wrist": right_wrist_timestamp,
+            },
             "task": self.task,
         }
 
-        # Record if enabled
+        with self.latest_observation_lock:
+            self.latest_observation = observation
+        if self.agentic_supervisor is not None:
+            try:
+                self.agentic_supervisor.observe(observation)
+            except Exception as error:
+                print(f"[agentic] observation rejected: {error}", flush=True)
+                self.agentic_supervisor.request_invalid(
+                    f"observation_error:{type(error).__name__}:{error}"
+                )
+
         if self.recorder and self.recorder.is_recording:
             sample = RecordingSample(
                 timestamp=timestamp,
-                left_ee_pose=ee_pose_left,
-                right_ee_pose=ee_pose_right,
-                left_gripper_exact=left_gripper,
-                right_gripper_exact=right_gripper,
-                left_gripper=left_gripper_binary,
-                right_gripper=right_gripper_binary,
+                left_ee_pose=ee_pose_left, right_ee_pose=ee_pose_right,
+                left_gripper_exact=left_gripper, right_gripper_exact=right_gripper,
+                left_gripper=left_gripper_binary, right_gripper=right_gripper_binary,
                 rgb_frame=self.camera.latest_rgb_frame.copy() if self.camera.latest_rgb_frame is not None else None,
-                depth_frame=None,
-                rgb_timestamp=rgb_timestamp,
+                depth_frame=None, rgb_timestamp=rgb_timestamp,
                 left_joint_positions=left_joint_positions,
                 right_joint_positions=right_joint_positions,
                 left_wrist_rgb_frame=self.left_wrist_camera.latest_rgb.copy() if (self.left_wrist_camera and self.left_wrist_camera.latest_rgb is not None) else None,
                 right_wrist_rgb_frame=self.right_wrist_camera.latest_rgb.copy() if (self.right_wrist_camera and self.right_wrist_camera.latest_rgb is not None) else None,
+                left_wrist_rgb_timestamp=left_wrist_timestamp,
+                right_wrist_rgb_timestamp=right_wrist_timestamp,
             )
             self.recorder.record_sample(sample)
 
         return observation
 
     def _process_gripper_states(self, left_gripper, right_gripper):
-        delta_left_gripper = left_gripper - self.last_left_gripper
-        delta_right_gripper = right_gripper - self.last_right_gripper
+        delta_left = left_gripper - self.last_left_gripper
+        delta_right = right_gripper - self.last_right_gripper
 
-        if abs(delta_left_gripper) > 0.04:
+        if abs(delta_left) > 0.04:
             self.last_left_gripper = left_gripper
-            left_gripper_binary = 1.0 if delta_left_gripper > 0 else 0.0
-            self.last_left_gripper_binary = left_gripper_binary
-        else:
-            left_gripper_binary = self.last_left_gripper_binary
-
-        if abs(delta_right_gripper) > 0.04:
+            self.last_left_gripper_binary = 1.0 if delta_left > 0 else 0.0
+        if abs(delta_right) > 0.04:
             self.last_right_gripper = right_gripper
-            right_gripper_binary = 1.0 if right_gripper > 0.5 else 0.0
-            self.last_right_gripper_binary = right_gripper_binary
-        else:
-            right_gripper_binary = self.last_right_gripper_binary
+            self.last_right_gripper_binary = 1.0 if right_gripper > 0.5 else 0.0
 
-        return left_gripper_binary, right_gripper_binary
+        return self.last_left_gripper_binary, self.last_right_gripper_binary
 
     def _observation_publishing_loop(self):
         print("Observation publishing thread started")
-        rate_limiter = RateLimiter(10)
+        rate_limiter = RateLimiter(2)
 
         while not self.stop_event.is_set():
             try:
                 observation = self.get_observation()
                 self.obs_socket.send_pyobj(observation, flags=zmq.NOBLOCK)
                 self.stats['observations_sent'] += 1
-
                 if self.stats['observations_sent'] % 300 == 0:
                     print(f"Published {self.stats['observations_sent']} observations")
-
             except zmq.Again:
                 pass
 
             self.camera.is_episode_active = self.episode_manager.is_active()
             self.camera.episode_start_time = self.episode_manager.get_start_time()
             self.camera.is_recording = self.recorder.is_recording if self.recorder else False
-
             rate_limiter.sleep()
 
         print("Observation publishing thread stopped")
@@ -294,121 +373,176 @@ class PolicyController:
         try:
             self.action_socket.send_pyobj({'request': 'action'})
             action = self.action_socket.recv_pyobj()
-
             if 'error' in action:
                 print(f"Server error: {action['error']}")
                 return None
-
             self.stats['actions_received'] += 1
-
             if action.get('is_stale', False):
                 self.stats['buffer_wraps'] += 1
-
             return action
-
         except zmq.error.Again:
-            if not hasattr(self, '_last_timeout_warning'):
-                self._last_timeout_warning = 0
             now = time.time()
-            if now - self._last_timeout_warning > 2.0:
+            if not hasattr(self, '_last_timeout_warning') or now - self._last_timeout_warning > 2.0:
                 print("Timeout waiting for action from server")
                 self._last_timeout_warning = now
             self.stats['errors'] += 1
             return None
         except Exception as e:
-            if not hasattr(self, '_last_comm_error_time'):
-                self._last_comm_error_time = 0
             now = time.time()
-            if now - self._last_comm_error_time > 1.0:
+            if not hasattr(self, '_last_comm_error_time') or now - self._last_comm_error_time > 1.0:
                 print(f"Communication error: {e}")
                 self._last_comm_error_time = now
             self.stats['errors'] += 1
             return None
 
     def apply_action(self, action):
+        # Debug: log action values every 10 steps
+        if self.stats['actions_received'] % 10 == 1:
+            lp = action.get('left_ee_pose')
+            rp = action.get('right_ee_pose')
+            ld = action.get('left_delta_pose')
+            rd = action.get('right_delta_pose')
+            parts = []
+            if lp is not None:
+                parts.append(f"L_abs={lp[:3]}")
+            if rp is not None:
+                parts.append(f"R_abs={rp[:3]}")
+            if ld is not None:
+                parts.append(f"L_delta={ld[:3]}")
+            if rd is not None:
+                parts.append(f"R_delta={rd[:3]}")
+            if parts:
+                print(f"  ACTION: {', '.join(parts)}")
+
         if not self.episode_manager.is_active():
             self.starting_pose_left = None
             self.starting_pose_right = None
+            self.safety.reset()  # next episode's first target has no predecessor
+            self._buffer_gen = None
             return
 
-        if self.starting_pose_left is None or self.starting_pose_right is None:
-            self.starting_pose_left = self.cone_e.get_left_ee_pose()
-            self.starting_pose_right = self.cone_e.get_right_ee_pose()
+        # A re-plan overwrites the buffer, so the next target is computed from
+        # the arm's *current* pose while the previous one was however far ahead
+        # the tracking lag had put it. That legitimate discontinuity is not a
+        # runaway, and at transport speed it can exceed the step limit -- which
+        # would reject exactly the fast motion we need. The server stamps every
+        # action with the buffer generation, so drop the step reference when it
+        # changes and let the first target of each chunk through.
+        gen = action.get('total_buffer_updates')
+        if gen is not None and gen != self._buffer_gen:
+            self.safety.reset()
+            self._buffer_gen = gen
+            if self.reanchor_chunks:
+                for arm in ('left', 'right'):
+                    raw = action.get(f'{arm}_ee_pose')
+                    if raw is None:
+                        self._chunk_anchor[arm] = None
+                        continue
+                    model_pose = self.H.inverse() @ mink.SE3(raw) @ self.H
+                    measured_pose = getattr(self.cone_e, f'get_{arm}_ee_pose')()
+                    self._chunk_anchor[arm] = measured_pose @ model_pose.inverse()
 
-        # Apply left arm action
+        if self.starting_pose_left is None or self.starting_pose_right is None:
+            # Latch the reference pose. In delta mode this is the ONLY place the
+            # bias enters -- applying it per step would integrate (see
+            # _apply_arm_action). In absolute mode the latched pose is just a
+            # distance reference and the bias is re-applied per target, so
+            # offsetting it here is harmless.
+            self.starting_pose_left = self._biased_pose(
+                self.cone_e.get_left_ee_pose(), 'left')
+            self.starting_pose_right = self._biased_pose(
+                self.cone_e.get_right_ee_pose(), 'right')
+            self.safety.reset()
+
         if 'left_delta_pose' in action and action['left_delta_pose'] is not None:
             self.starting_pose_left = self._apply_arm_action(
-                action['left_delta_pose'],
-                action.get('left_gripper', 0.5),
-                self.starting_pose_left,
-                self.cone_e.set_left_ee_target
+                'left', action['left_delta_pose'], action.get('left_gripper', 0.5),
+                self.starting_pose_left, self.cone_e.set_left_ee_target
             )
         elif 'left_ee_pose' in action and action['left_ee_pose'] is not None:
             self._apply_arm_action_absolute(
-                action['left_ee_pose'],
-                action.get('left_gripper', 0.5),
-                self.starting_pose_left,
-                self.cone_e.set_left_ee_target
+                'left', action['left_ee_pose'], action.get('left_gripper', 0.5),
+                self.starting_pose_left, self.cone_e.set_left_ee_target
             )
             self.starting_pose_left = self.cone_e.get_left_ee_pose()
 
-        # Apply right arm action
         if 'right_delta_pose' in action and action['right_delta_pose'] is not None:
             self.starting_pose_right = self._apply_arm_action(
-                action['right_delta_pose'],
-                action.get('right_gripper', 0.5),
-                self.starting_pose_right,
-                self.cone_e.set_right_ee_target
+                'right', action['right_delta_pose'], action.get('right_gripper', 0.5),
+                self.starting_pose_right, self.cone_e.set_right_ee_target
             )
         elif 'right_ee_pose' in action and action['right_ee_pose'] is not None:
             self._apply_arm_action_absolute(
-                action['right_ee_pose'],
-                action.get('right_gripper', 0.5),
-                self.starting_pose_right,
-                self.cone_e.set_right_ee_target
+                'right', action['right_ee_pose'], action.get('right_gripper', 0.5),
+                self.starting_pose_right, self.cone_e.set_right_ee_target
             )
             self.starting_pose_right = self.cone_e.get_right_ee_pose()
 
-    def _apply_arm_action(self, delta_pose, gripper, starting_pose, set_target_fn):
+    def _biased_pose(self, pose, arm):
+        """Return `pose` translated by that arm's bias, rotation untouched."""
+        bias = self.xyz_bias[arm]
+        if pose is None or not np.any(bias):
+            return pose
+        return mink.SE3(np.concatenate([
+            pose.rotation().wxyz, pose.translation() + bias
+        ]))
+
+    def set_bias(self, arm, bias):
+        """Set an arm's finite xyz bias in metres in the robot frame."""
+        b = np.asarray(bias, dtype=float).reshape(3)
+        if not np.all(np.isfinite(b)):
+            raise ValueError(f"bias must contain three finite values, got {bias!r}")
+        self.xyz_bias[arm] = b
+        # Changing the bias jumps the next target by the delta -- a legitimate
+        # discontinuity, not a runaway. Drop the step reference so the safety
+        # layer doesn't reject the frame right after a live bias change.
+        self.safety.reset(arm)
+        print(f"[bias] {arm} = {np.round(b, 4)} m", flush=True)
+        return b.copy()
+
+    def _apply_arm_action(self, arm, delta_pose, gripper, starting_pose, set_target_fn):
         X_delta = mink.SE3(delta_pose)
         X_Rdelta = self.H.inverse() @ X_delta @ self.H
-
         p_target = starting_pose.translation() + X_Rdelta.translation()
         R_target = X_Rdelta.rotation() @ starting_pose.rotation()
 
-        ee_distance = np.linalg.norm(X_Rdelta.translation())
-        preview_time = 0.5
+        # NOTE: no bias is added here. In delta mode `starting_pose` is replaced
+        # by the target we return, so adding a constant offset every step would
+        # integrate into a drift. The bias is applied once, to the latched
+        # starting pose, in apply_action().
+        p_safe = self.safety.check(arm, p_target)
+        if p_safe is None:
+            return starting_pose  # hold: keep the previous target as reference
 
-        target_pose = mink.SE3(np.concatenate([R_target.wxyz, p_target]))
-
-        set_target_fn(
-            ee_target=target_pose,
-            gripper_target=gripper,
-            preview_time=preview_time,
-        )
-
+        target_pose = mink.SE3(np.concatenate([R_target.wxyz, p_safe]))
+        set_target_fn(ee_target=target_pose, gripper_target=gripper, preview_time=0.5)
         return target_pose
 
-    def _apply_arm_action_absolute(self, abs_pose, gripper, starting_pose, set_target_fn):
+    def _apply_arm_action_absolute(self, arm, abs_pose, gripper, starting_pose, set_target_fn):
         X_target = mink.SE3(abs_pose)
         X_Rtarget = self.H.inverse() @ X_target @ self.H
+        if self._chunk_anchor[arm] is not None:
+            X_Rtarget = self._chunk_anchor[arm] @ X_Rtarget
 
-        p_target = X_Rtarget.translation()
+        # Absolute mode: the target is recomputed from scratch each step, so a
+        # constant offset stays constant -- safe to add every time. Applied in
+        # the robot frame (post-H) so the numbers mean what the workspace bounds
+        # and the EVAL_RESULTS z-bias figures mean.
+        p_target = X_Rtarget.translation() + self.xyz_bias[arm]
         R_target = X_Rtarget.rotation()
 
-        ee_distance = np.linalg.norm(p_target - starting_pose.translation())
-        preview_time = 0.5
+        p_safe = self.safety.check(arm, p_target)
+        if p_safe is None:
+            return
 
         set_target_fn(
-            ee_target=mink.SE3(np.concatenate([R_target.wxyz, p_target])),
-            gripper_target=gripper,
-            preview_time=preview_time,
+            ee_target=mink.SE3(np.concatenate([R_target.wxyz, p_safe])),
+            gripper_target=gripper, preview_time=0.5,
         )
 
     def control_loop(self, control_rate=30):
         rate_limiter = RateLimiter(control_rate)
         self.policy_active = True
-
         self._print_startup_info(control_rate)
         self.episode_manager.set_controller_start_time()
 
@@ -418,28 +552,123 @@ class PolicyController:
 
         iteration = 0
         wait_for_ready_count = 0
+        episode_token = None
+        episode_action_count = 0
 
         while not self.stop_event.is_set():
             loop_start = time.time()
+            if self.agentic_supervisor is None:
+                self.episode_manager.check_autonomous_conditions(
+                    self.manipulability_calc, iteration
+                )
+            elif self.episode_manager.autonomous_mode:
+                if (
+                    not self.episode_manager.is_active()
+                    and self.episode_manager.arms_at_home
+                    and not self.episode_manager.autonomous_paused
+                    and self.episode_manager.controller_start_time is not None
+                    and time.time() - self.episode_manager.controller_start_time
+                    >= self.episode_manager.auto_start_delay
+                ):
+                    self.episode_manager.start_episode()
+                elif (
+                    self.episode_manager.is_active()
+                    and self.episode_manager.get_start_time() is not None
+                    and time.time() - self.episode_manager.get_start_time()
+                    >= self.episode_manager.episode_timeout
+                ):
+                    self._finish_agentic_episode(
+                        reason='timeout', classification='invalid',
+                        home_after=False,
+                    )
 
-            self.episode_manager.check_autonomous_conditions(
-                self.manipulability_calc, iteration
-            )
-
-            # エピソードが非アクティブなら、アクションリクエストをスキップ
             if not self.episode_manager.is_active():
                 rate_limiter.sleep()
                 continue
 
+            current_token = self.episode_manager.get_start_time()
+            if current_token != episode_token:
+                episode_token = current_token
+                episode_action_count = 0
+                if self.agentic_supervisor is not None:
+                    with self.latest_observation_lock:
+                        observation = self.latest_observation
+                    if observation is None:
+                        print("[agentic] no observation at episode start; holding", flush=True)
+                        self._finish_agentic_episode(
+                            reason="missing_initial_observation",
+                            classification="invalid",
+                            home_after=False,
+                        )
+                        continue
+                    if self.recorder:
+                        self.recorder.set_episode_context({
+                            'schema': 'piper_robot.agentic_collection/v1',
+                            'task': self.agentic_supervisor.task.name,
+                            'instruction': self.agentic_supervisor.instruction,
+                            'condition': self.agentic_supervisor.condition,
+                            'mode': self.agentic_supervisor.mode.value,
+                        })
+                    try:
+                        self.agentic_supervisor.begin_episode(observation)
+                    except Exception as error:
+                        print(f"[agentic] initial check failed: {error}", flush=True)
+                        self.agentic_supervisor.request_invalid(
+                            f"initial_check_error:{type(error).__name__}:{error}"
+                        )
+                        self._finish_agentic_episode(
+                            reason="initial_check_error",
+                            classification="invalid",
+                            home_after=False,
+                        )
+                        continue
+                    self.task = self.agentic_supervisor.instruction
+
+            if self.agentic_supervisor is not None:
+                terminal = self.agentic_supervisor.terminal_request()
+                if terminal is not None:
+                    classification, reason = terminal
+                    self._finish_agentic_episode(
+                        reason=reason,
+                        classification=classification.value,
+                        home_after=(classification.value == 'clean_success'),
+                    )
+                    continue
+                if self.agentic_supervisor.held_uncertain:
+                    rate_limiter.sleep()
+                    continue
+                if self.agentic_supervisor.consume_resume_replan():
+                    self.episode_manager.clear_action_queue()
+
             action = self.request_action()
-
             if action is not None:
+                if self.recorder:
+                    self.recorder.record_action(action, source='act')
+                if (
+                    self.agentic_supervisor is not None
+                    and not self.agentic_supervisor.before_action(action)
+                ):
+                    terminal = self.agentic_supervisor.terminal_request()
+                    if terminal is not None:
+                        self._finish_agentic_episode(
+                            reason=terminal[1],
+                            classification=terminal[0].value,
+                            home_after=False,
+                        )
+                    continue
                 self.apply_action(action)
-
+                if self.agentic_supervisor is not None:
+                    self.agentic_supervisor.after_action(action)
+                episode_action_count += 1
                 if iteration % 30 == 0:
                     self._print_status(action, loop_start)
-
                 wait_for_ready_count = 0
+                if (self.max_episode_actions is not None and
+                        episode_action_count >= self.max_episode_actions):
+                    print(f"⏹️  Reached one-shot action limit "
+                          f"({self.max_episode_actions}); holding final pose")
+                    self.episode_manager.end_episode(
+                        reason="action_limit", home_after=False)
             else:
                 wait_for_ready_count += 1
                 if wait_for_ready_count % 30 == 1:
@@ -452,11 +681,37 @@ class PolicyController:
         self._print_stats()
         self.policy_active = False
 
+    def _finish_agentic_episode(self, *, reason, classification, home_after):
+        """Finalize audit metadata before the recorder closes its files."""
+        if self.agentic_supervisor is None:
+            return
+        from .agentic_collection import EpisodeClass
+
+        summary = self.agentic_supervisor.finish(
+            forced_class=EpisodeClass(classification),
+            reason=reason,
+        )
+        if not summary:
+            summary = {
+                'schema': 'piper_robot.agentic_collection/v1',
+                'task': self.agentic_supervisor.task.name,
+                'classification': classification,
+                'reason': reason,
+                'condition': self.agentic_supervisor.condition,
+                'mode': self.agentic_supervisor.mode.value,
+            }
+        if self.recorder:
+            self.recorder.set_episode_outcome(summary)
+        if self.episode_manager.is_active():
+            self.episode_manager.end_episode(
+                reason=f"agentic:{reason}", home_after=home_after
+            )
+        self.task = self.agentic_supervisor.instruction
+
     def _print_startup_info(self, control_rate):
         print(f"\nStarting policy control loop at {control_rate} Hz")
-        print("Observations publishing at 10 Hz in background")
+        print(f"Observations publishing at 2 Hz in background")
         print(f"Task: '{self.task}'")
-
         if self.episode_manager.autonomous_mode:
             print("AUTONOMOUS MODE ENABLED")
             print(f"  Auto-start delay: {self.episode_manager.auto_start_delay}s")
@@ -466,10 +721,8 @@ class PolicyController:
             print("MANUAL MODE")
             print("  Press 's' to start episode")
             print("  Press 'e' to end episode")
-
         if self.recorder:
             print("Recording is ENABLED (automatic with episodes)")
-
         print("Press 'q' or Ctrl+C to stop\n")
 
     def _print_status(self, action, loop_start):
@@ -478,19 +731,17 @@ class PolicyController:
         buffer_remaining = action.get('buffer_remaining', '?')
         is_stale = action.get('is_stale', False)
 
-        stale_marker = " ⚠️STALE" if is_stale else ""
-        rec_marker = " 🔴REC" if (self.recorder and self.recorder.is_recording) else ""
-        episode_marker = " ▶️ACTIVE" if self.episode_manager.is_active() else " ⏸️PAUSED"
+        stale = " ⚠️STALE" if is_stale else ""
+        rec = " 🔴REC" if (self.recorder and self.recorder.is_recording) else ""
+        ep = " ▶️ACTIVE" if self.episode_manager.is_active() else " ⏸️PAUSED"
 
-        status_msg = (f"Iter {self.stats['actions_received']}: "
-                      f"loop={loop_time:.1f}ms, buffer_age={buffer_age:.1f}ms, "
-                      f"remaining={buffer_remaining}{stale_marker}{rec_marker}{episode_marker}")
+        msg = (f"Iter {self.stats['actions_received']}: "
+               f"loop={loop_time:.1f}ms, buffer_age={buffer_age:.1f}ms, "
+               f"remaining={buffer_remaining}{stale}{rec}{ep}")
 
         if self.episode_manager.is_active() and self.episode_manager.get_start_time():
-            episode_elapsed = time.time() - self.episode_manager.get_start_time()
-            status_msg += f", episode_time={episode_elapsed:.1f}s"
-
-        print(status_msg)
+            msg += f", episode_time={time.time() - self.episode_manager.get_start_time():.1f}s"
+        print(msg)
 
         if self.stats['buffer_wraps'] > 0 and self.stats['actions_received'] % 90 == 0:
             print(f"  WARNING: {self.stats['buffer_wraps']} stale actions served (inference too slow)")
@@ -508,13 +759,14 @@ class PolicyController:
 
     def stop(self):
         print("Stopping policy controller...")
-
         if self.episode_manager.is_active():
             self.episode_manager.end_episode(reason="shutdown")
-
         self.stop_event.set()
-
         self.obs_thread.join(timeout=2.0)
+        # The bias thread owns a socket on self.zmq_context. Let it observe the
+        # stop event and close that socket before terminating the shared
+        # context; otherwise Context.term() can block indefinitely at shutdown.
+        self.bias_thread.join(timeout=2.0)
         self.camera.stop()
         if self.left_wrist_camera:
             self.left_wrist_camera.stop()
@@ -522,10 +774,11 @@ class PolicyController:
             self.right_wrist_camera.stop()
         if self.recorder:
             self.recorder.stop()
+        if self.agentic_supervisor is not None:
+            self.agentic_supervisor.close()
         self.keyboard.stop()
-
         self.obs_socket.close()
         self.action_socket.close()
+        self.control_socket.close()
         self.zmq_context.term()
-
         print("Policy controller stopped")

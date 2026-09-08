@@ -1,0 +1,1311 @@
+{
+  "schema": "door_source_complexity/v1",
+  "scope": [
+    "rollout/incubator_door_demo.py",
+    "rollout/incubator_door_visual.py",
+    "rollout/incubator_door_plane.py",
+    "src/compile_incubator_door_demos.py",
+    "src/estimate_incubator_door_plane.py",
+    "src/run_incubator_door_demo.py",
+    "rollout/articulated_appliance.py",
+    "src/run_incubator_door_autonomy.py"
+  ],
+  "definitions": {
+    "scope": "All existing Door-specific Python source files in the fixed allowlist, including diagnostic branches and compilation; excludes tests, configs, shared robot infrastructure, dependencies, data and archived one-off commands.",
+    "code_lines": "Physical lines containing Python tokens, excluding comments, blank lines and module/class/function docstring lines.",
+    "physical_lines": "Physical lines after normalizing redundant trailing newlines; comments and docstrings included.",
+    "functions": "AST FunctionDef plus AsyncFunctionDef, including methods/nested functions; excludes lambdas.",
+    "external_packages": "Distinct directly imported non-standard-library root names in scoped source; static dependencies, NOT executed tools or transitive packages.",
+    "external_api_names": "Distinct syntactic call targets rooted in imported external aliases, canonicalized (e.g. np.linalg.norm -> numpy.linalg.norm). Not runtime invocations or dynamically resolved instance methods; includes diagnostic code.",
+    "external_classification": "Uses Python sys.stdlib_module_names and excludes repository roots rollout, robot and src.",
+    "interpretation": "Source size, not semantic or algorithmic complexity. Snapshot is before each selected approach; later trial patches are not backdated."
+  },
+  "configurations": [
+    {
+      "display_stage": "D1",
+      "historical_stage": "D1",
+      "snapshot_before_approach_utc": "2026-08-08T04:31:21.158866Z",
+      "motion_path": "data/runs/pasteur/incubator_door_20260808T043120Z_demo_preclose/demo_preclose.json",
+      "applied_patch_count": 16,
+      "python_files": 4,
+      "physical_lines": 1381,
+      "code_lines_without_comments_or_docstrings": 1238,
+      "function_definitions": 36,
+      "class_definitions": 1,
+      "external_import_roots": [
+        "cv2",
+        "h5py",
+        "mink",
+        "numpy"
+      ],
+      "external_package_count": 4,
+      "external_api_names": [
+        "cv2.VideoCapture",
+        "cv2.connectedComponentsWithStats",
+        "cv2.cvtColor",
+        "cv2.imread",
+        "cv2.imwrite",
+        "cv2.inRange",
+        "h5py.File",
+        "mink.SE3",
+        "numpy.abs",
+        "numpy.all",
+        "numpy.argmin",
+        "numpy.asarray",
+        "numpy.clip",
+        "numpy.degrees",
+        "numpy.eye",
+        "numpy.flatnonzero",
+        "numpy.isfinite",
+        "numpy.linalg.eigh",
+        "numpy.linalg.norm",
+        "numpy.linalg.solve",
+        "numpy.log",
+        "numpy.max",
+        "numpy.mean",
+        "numpy.median",
+        "numpy.percentile",
+        "numpy.ptp",
+        "numpy.save",
+        "numpy.std",
+        "numpy.unique",
+        "numpy.zeros"
+      ],
+      "external_api_name_count": 30,
+      "files": {
+        "rollout/incubator_door_demo.py": {
+          "physical_lines": 278,
+          "code_lines_without_comments_or_docstrings": 230,
+          "function_definitions": 11,
+          "class_definitions": 1,
+          "external_import_roots": [
+            "h5py",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "h5py.File",
+            "mink.SE3",
+            "numpy.all",
+            "numpy.argmin",
+            "numpy.asarray",
+            "numpy.clip",
+            "numpy.degrees",
+            "numpy.flatnonzero",
+            "numpy.isfinite",
+            "numpy.linalg.eigh",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.ptp",
+            "numpy.std"
+          ],
+          "source_sha256": "7a97751d8f4d488482345b7c8e17b065c08ff84bee2be5c19ad0030f82823d35"
+        },
+        "rollout/incubator_door_visual.py": {
+          "physical_lines": 77,
+          "code_lines_without_comments_or_docstrings": 62,
+          "function_definitions": 3,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.connectedComponentsWithStats",
+            "cv2.cvtColor",
+            "cv2.inRange",
+            "numpy.all",
+            "numpy.asarray",
+            "numpy.eye",
+            "numpy.isfinite",
+            "numpy.linalg.solve",
+            "numpy.log",
+            "numpy.zeros"
+          ],
+          "source_sha256": "9fdd6c0c1fdd2e96c323f4ac3dd265a8612360396da7fe1c92453d2244daf0d8"
+        },
+        "src/compile_incubator_door_demos.py": {
+          "physical_lines": 124,
+          "code_lines_without_comments_or_docstrings": 112,
+          "function_definitions": 1,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "h5py",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.VideoCapture",
+            "h5py.File",
+            "mink.SE3",
+            "numpy.asarray",
+            "numpy.flatnonzero",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.percentile",
+            "numpy.std",
+            "numpy.unique"
+          ],
+          "source_sha256": "2667069ac8d5d2646af575fd2782577202051f3f31d459ae01928650f2ff22dd"
+        },
+        "src/run_incubator_door_demo.py": {
+          "physical_lines": 902,
+          "code_lines_without_comments_or_docstrings": 834,
+          "function_definitions": 21,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.imread",
+            "cv2.imwrite",
+            "mink.SE3",
+            "numpy.abs",
+            "numpy.all",
+            "numpy.asarray",
+            "numpy.clip",
+            "numpy.isfinite",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.median",
+            "numpy.save"
+          ],
+          "source_sha256": "df64011f8a739924a3a3fb0b753b1daa5ad99c154869bfd335729f81df534284"
+        }
+      }
+    },
+    {
+      "display_stage": "D2",
+      "historical_stage": "D2",
+      "snapshot_before_approach_utc": "2026-08-08T04:40:57.185115Z",
+      "motion_path": "data/runs/pasteur/incubator_door_20260808T044056Z_retry_preclose_registration/demo_preclose.json",
+      "applied_patch_count": 18,
+      "python_files": 4,
+      "physical_lines": 1463,
+      "code_lines_without_comments_or_docstrings": 1312,
+      "function_definitions": 38,
+      "class_definitions": 1,
+      "external_import_roots": [
+        "cv2",
+        "h5py",
+        "mink",
+        "numpy"
+      ],
+      "external_package_count": 4,
+      "external_api_names": [
+        "cv2.VideoCapture",
+        "cv2.connectedComponentsWithStats",
+        "cv2.cvtColor",
+        "cv2.imread",
+        "cv2.imwrite",
+        "cv2.inRange",
+        "h5py.File",
+        "mink.SE3",
+        "numpy.abs",
+        "numpy.all",
+        "numpy.argmin",
+        "numpy.asarray",
+        "numpy.clip",
+        "numpy.degrees",
+        "numpy.eye",
+        "numpy.flatnonzero",
+        "numpy.isfinite",
+        "numpy.linalg.eigh",
+        "numpy.linalg.norm",
+        "numpy.linalg.solve",
+        "numpy.log",
+        "numpy.max",
+        "numpy.mean",
+        "numpy.median",
+        "numpy.percentile",
+        "numpy.ptp",
+        "numpy.save",
+        "numpy.std",
+        "numpy.unique",
+        "numpy.zeros"
+      ],
+      "external_api_name_count": 30,
+      "files": {
+        "rollout/incubator_door_demo.py": {
+          "physical_lines": 278,
+          "code_lines_without_comments_or_docstrings": 230,
+          "function_definitions": 11,
+          "class_definitions": 1,
+          "external_import_roots": [
+            "h5py",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "h5py.File",
+            "mink.SE3",
+            "numpy.all",
+            "numpy.argmin",
+            "numpy.asarray",
+            "numpy.clip",
+            "numpy.degrees",
+            "numpy.flatnonzero",
+            "numpy.isfinite",
+            "numpy.linalg.eigh",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.ptp",
+            "numpy.std"
+          ],
+          "source_sha256": "7a97751d8f4d488482345b7c8e17b065c08ff84bee2be5c19ad0030f82823d35"
+        },
+        "rollout/incubator_door_visual.py": {
+          "physical_lines": 77,
+          "code_lines_without_comments_or_docstrings": 62,
+          "function_definitions": 3,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.connectedComponentsWithStats",
+            "cv2.cvtColor",
+            "cv2.inRange",
+            "numpy.all",
+            "numpy.asarray",
+            "numpy.eye",
+            "numpy.isfinite",
+            "numpy.linalg.solve",
+            "numpy.log",
+            "numpy.zeros"
+          ],
+          "source_sha256": "9fdd6c0c1fdd2e96c323f4ac3dd265a8612360396da7fe1c92453d2244daf0d8"
+        },
+        "src/compile_incubator_door_demos.py": {
+          "physical_lines": 124,
+          "code_lines_without_comments_or_docstrings": 112,
+          "function_definitions": 1,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "h5py",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.VideoCapture",
+            "h5py.File",
+            "mink.SE3",
+            "numpy.asarray",
+            "numpy.flatnonzero",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.percentile",
+            "numpy.std",
+            "numpy.unique"
+          ],
+          "source_sha256": "2667069ac8d5d2646af575fd2782577202051f3f31d459ae01928650f2ff22dd"
+        },
+        "src/run_incubator_door_demo.py": {
+          "physical_lines": 984,
+          "code_lines_without_comments_or_docstrings": 908,
+          "function_definitions": 23,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.imread",
+            "cv2.imwrite",
+            "mink.SE3",
+            "numpy.abs",
+            "numpy.all",
+            "numpy.asarray",
+            "numpy.clip",
+            "numpy.isfinite",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.median",
+            "numpy.save"
+          ],
+          "source_sha256": "fa4553876f96e9c7c6a5d391ba4dffba372856ad754c46c7059d1a999aecd574"
+        }
+      }
+    },
+    {
+      "display_stage": "D3",
+      "historical_stage": "D4_pre_parser_fix",
+      "snapshot_before_approach_utc": "2026-08-08T10:01:11.089229Z",
+      "motion_path": "data/runs/pasteur/incubator_auto_open_20260808_demo/03_aligned-yaw-preclose/motion/aligned_yaw_preclose.json",
+      "applied_patch_count": 39,
+      "python_files": 8,
+      "physical_lines": 3436,
+      "code_lines_without_comments_or_docstrings": 3094,
+      "function_definitions": 85,
+      "class_definitions": 6,
+      "external_import_roots": [
+        "cv2",
+        "h5py",
+        "mink",
+        "numpy"
+      ],
+      "external_package_count": 4,
+      "external_api_names": [
+        "cv2.Rodrigues",
+        "cv2.VideoCapture",
+        "cv2.addWeighted",
+        "cv2.connectedComponentsWithStats",
+        "cv2.cvtColor",
+        "cv2.findHomography",
+        "cv2.imread",
+        "cv2.imwrite",
+        "cv2.inRange",
+        "cv2.perspectiveTransform",
+        "cv2.putText",
+        "cv2.resize",
+        "cv2.rotate",
+        "cv2.solvePnP",
+        "cv2.warpPerspective",
+        "h5py.File",
+        "mink.SE3",
+        "mink.SE3.from_rotation_and_translation",
+        "mink.SO3.from_z_radians",
+        "numpy.abs",
+        "numpy.all",
+        "numpy.arctan2",
+        "numpy.argmin",
+        "numpy.asarray",
+        "numpy.ceil",
+        "numpy.clip",
+        "numpy.concatenate",
+        "numpy.cross",
+        "numpy.degrees",
+        "numpy.diag",
+        "numpy.eye",
+        "numpy.flatnonzero",
+        "numpy.full",
+        "numpy.indices",
+        "numpy.isfinite",
+        "numpy.linalg.eigh",
+        "numpy.linalg.inv",
+        "numpy.linalg.norm",
+        "numpy.linalg.solve",
+        "numpy.linalg.svd",
+        "numpy.load",
+        "numpy.log",
+        "numpy.max",
+        "numpy.mean",
+        "numpy.median",
+        "numpy.percentile",
+        "numpy.ptp",
+        "numpy.random.default_rng",
+        "numpy.roll",
+        "numpy.save",
+        "numpy.sqrt",
+        "numpy.stack",
+        "numpy.std",
+        "numpy.uint8",
+        "numpy.unique",
+        "numpy.zeros",
+        "numpy.zeros_like"
+      ],
+      "external_api_name_count": 57,
+      "files": {
+        "rollout/articulated_appliance.py": {
+          "physical_lines": 389,
+          "code_lines_without_comments_or_docstrings": 330,
+          "function_definitions": 11,
+          "class_definitions": 3,
+          "external_import_roots": [
+            "cv2",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.addWeighted",
+            "cv2.findHomography",
+            "cv2.imread",
+            "cv2.perspectiveTransform",
+            "cv2.putText",
+            "cv2.resize",
+            "cv2.rotate",
+            "cv2.warpPerspective",
+            "numpy.abs",
+            "numpy.asarray",
+            "numpy.ceil",
+            "numpy.concatenate",
+            "numpy.diag",
+            "numpy.indices",
+            "numpy.isfinite",
+            "numpy.linalg.inv",
+            "numpy.linalg.norm",
+            "numpy.load",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.roll",
+            "numpy.uint8",
+            "numpy.zeros_like"
+          ],
+          "source_sha256": "b3d90504226c7ca635887294c97960d2b4d565631498d9c37b5c1e2d9a5035c3"
+        },
+        "rollout/incubator_door_demo.py": {
+          "physical_lines": 278,
+          "code_lines_without_comments_or_docstrings": 230,
+          "function_definitions": 11,
+          "class_definitions": 1,
+          "external_import_roots": [
+            "h5py",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "h5py.File",
+            "mink.SE3",
+            "numpy.all",
+            "numpy.argmin",
+            "numpy.asarray",
+            "numpy.clip",
+            "numpy.degrees",
+            "numpy.flatnonzero",
+            "numpy.isfinite",
+            "numpy.linalg.eigh",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.ptp",
+            "numpy.std"
+          ],
+          "source_sha256": "7a97751d8f4d488482345b7c8e17b065c08ff84bee2be5c19ad0030f82823d35"
+        },
+        "rollout/incubator_door_plane.py": {
+          "physical_lines": 190,
+          "code_lines_without_comments_or_docstrings": 175,
+          "function_definitions": 5,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.Rodrigues",
+            "cv2.cvtColor",
+            "cv2.imread",
+            "cv2.resize",
+            "cv2.rotate",
+            "cv2.solvePnP",
+            "numpy.abs",
+            "numpy.arctan2",
+            "numpy.asarray",
+            "numpy.cross",
+            "numpy.degrees",
+            "numpy.flatnonzero",
+            "numpy.full",
+            "numpy.indices",
+            "numpy.isfinite",
+            "numpy.linalg.norm",
+            "numpy.linalg.svd",
+            "numpy.load",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.ptp",
+            "numpy.random.default_rng",
+            "numpy.sqrt",
+            "numpy.stack",
+            "numpy.std",
+            "numpy.zeros"
+          ],
+          "source_sha256": "41774d330dfc2eba43442daab258abc9cbfdb77f75623acce57eb74f79da4a2b"
+        },
+        "rollout/incubator_door_visual.py": {
+          "physical_lines": 77,
+          "code_lines_without_comments_or_docstrings": 62,
+          "function_definitions": 3,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.connectedComponentsWithStats",
+            "cv2.cvtColor",
+            "cv2.inRange",
+            "numpy.all",
+            "numpy.asarray",
+            "numpy.eye",
+            "numpy.isfinite",
+            "numpy.linalg.solve",
+            "numpy.log",
+            "numpy.zeros"
+          ],
+          "source_sha256": "9fdd6c0c1fdd2e96c323f4ac3dd265a8612360396da7fe1c92453d2244daf0d8"
+        },
+        "src/compile_incubator_door_demos.py": {
+          "physical_lines": 124,
+          "code_lines_without_comments_or_docstrings": 112,
+          "function_definitions": 1,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "h5py",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.VideoCapture",
+            "h5py.File",
+            "mink.SE3",
+            "numpy.asarray",
+            "numpy.flatnonzero",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.percentile",
+            "numpy.std",
+            "numpy.unique"
+          ],
+          "source_sha256": "2667069ac8d5d2646af575fd2782577202051f3f31d459ae01928650f2ff22dd"
+        },
+        "src/estimate_incubator_door_plane.py": {
+          "physical_lines": 35,
+          "code_lines_without_comments_or_docstrings": 25,
+          "function_definitions": 1,
+          "class_definitions": 0,
+          "external_import_roots": [],
+          "external_api_names": [],
+          "source_sha256": "2902db1e0771694cdbdff7a793261372c0f657f6b739c508d6487ec3bac6319d"
+        },
+        "src/run_incubator_door_autonomy.py": {
+          "physical_lines": 500,
+          "code_lines_without_comments_or_docstrings": 447,
+          "function_definitions": 18,
+          "class_definitions": 2,
+          "external_import_roots": [
+            "cv2",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.imread",
+            "cv2.imwrite",
+            "numpy.asarray",
+            "numpy.linalg.norm"
+          ],
+          "source_sha256": "28afc99cc4c34e5e66289365a214262cd78dcb5eca436770da7065e0010cd71b"
+        },
+        "src/run_incubator_door_demo.py": {
+          "physical_lines": 1843,
+          "code_lines_without_comments_or_docstrings": 1713,
+          "function_definitions": 35,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.imread",
+            "cv2.imwrite",
+            "mink.SE3",
+            "mink.SE3.from_rotation_and_translation",
+            "mink.SO3.from_z_radians",
+            "numpy.abs",
+            "numpy.all",
+            "numpy.asarray",
+            "numpy.clip",
+            "numpy.isfinite",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.median",
+            "numpy.save"
+          ],
+          "source_sha256": "9e77c453172833c2459ded3061f6357a3669ebd7f9fc9f6d5774c2d9e6bc9fc4"
+        }
+      }
+    },
+    {
+      "display_stage": "D4",
+      "historical_stage": "D4",
+      "snapshot_before_approach_utc": "2026-08-08T10:03:10.756303Z",
+      "motion_path": "data/runs/pasteur/incubator_auto_open_20260808_demo_retry2/03_aligned-yaw-preclose/motion/aligned_yaw_preclose.json",
+      "applied_patch_count": 41,
+      "python_files": 8,
+      "physical_lines": 3457,
+      "code_lines_without_comments_or_docstrings": 3108,
+      "function_definitions": 86,
+      "class_definitions": 6,
+      "external_import_roots": [
+        "cv2",
+        "h5py",
+        "mink",
+        "numpy"
+      ],
+      "external_package_count": 4,
+      "external_api_names": [
+        "cv2.Rodrigues",
+        "cv2.VideoCapture",
+        "cv2.addWeighted",
+        "cv2.connectedComponentsWithStats",
+        "cv2.cvtColor",
+        "cv2.findHomography",
+        "cv2.imread",
+        "cv2.imwrite",
+        "cv2.inRange",
+        "cv2.perspectiveTransform",
+        "cv2.putText",
+        "cv2.resize",
+        "cv2.rotate",
+        "cv2.solvePnP",
+        "cv2.warpPerspective",
+        "h5py.File",
+        "mink.SE3",
+        "mink.SE3.from_rotation_and_translation",
+        "mink.SO3.from_z_radians",
+        "numpy.abs",
+        "numpy.all",
+        "numpy.arctan2",
+        "numpy.argmin",
+        "numpy.asarray",
+        "numpy.ceil",
+        "numpy.clip",
+        "numpy.concatenate",
+        "numpy.cross",
+        "numpy.degrees",
+        "numpy.diag",
+        "numpy.eye",
+        "numpy.flatnonzero",
+        "numpy.full",
+        "numpy.indices",
+        "numpy.isfinite",
+        "numpy.linalg.eigh",
+        "numpy.linalg.inv",
+        "numpy.linalg.norm",
+        "numpy.linalg.solve",
+        "numpy.linalg.svd",
+        "numpy.load",
+        "numpy.log",
+        "numpy.max",
+        "numpy.mean",
+        "numpy.median",
+        "numpy.percentile",
+        "numpy.ptp",
+        "numpy.random.default_rng",
+        "numpy.roll",
+        "numpy.save",
+        "numpy.sqrt",
+        "numpy.stack",
+        "numpy.std",
+        "numpy.uint8",
+        "numpy.unique",
+        "numpy.zeros",
+        "numpy.zeros_like"
+      ],
+      "external_api_name_count": 57,
+      "files": {
+        "rollout/articulated_appliance.py": {
+          "physical_lines": 389,
+          "code_lines_without_comments_or_docstrings": 330,
+          "function_definitions": 11,
+          "class_definitions": 3,
+          "external_import_roots": [
+            "cv2",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.addWeighted",
+            "cv2.findHomography",
+            "cv2.imread",
+            "cv2.perspectiveTransform",
+            "cv2.putText",
+            "cv2.resize",
+            "cv2.rotate",
+            "cv2.warpPerspective",
+            "numpy.abs",
+            "numpy.asarray",
+            "numpy.ceil",
+            "numpy.concatenate",
+            "numpy.diag",
+            "numpy.indices",
+            "numpy.isfinite",
+            "numpy.linalg.inv",
+            "numpy.linalg.norm",
+            "numpy.load",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.roll",
+            "numpy.uint8",
+            "numpy.zeros_like"
+          ],
+          "source_sha256": "b3d90504226c7ca635887294c97960d2b4d565631498d9c37b5c1e2d9a5035c3"
+        },
+        "rollout/incubator_door_demo.py": {
+          "physical_lines": 278,
+          "code_lines_without_comments_or_docstrings": 230,
+          "function_definitions": 11,
+          "class_definitions": 1,
+          "external_import_roots": [
+            "h5py",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "h5py.File",
+            "mink.SE3",
+            "numpy.all",
+            "numpy.argmin",
+            "numpy.asarray",
+            "numpy.clip",
+            "numpy.degrees",
+            "numpy.flatnonzero",
+            "numpy.isfinite",
+            "numpy.linalg.eigh",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.ptp",
+            "numpy.std"
+          ],
+          "source_sha256": "7a97751d8f4d488482345b7c8e17b065c08ff84bee2be5c19ad0030f82823d35"
+        },
+        "rollout/incubator_door_plane.py": {
+          "physical_lines": 190,
+          "code_lines_without_comments_or_docstrings": 175,
+          "function_definitions": 5,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.Rodrigues",
+            "cv2.cvtColor",
+            "cv2.imread",
+            "cv2.resize",
+            "cv2.rotate",
+            "cv2.solvePnP",
+            "numpy.abs",
+            "numpy.arctan2",
+            "numpy.asarray",
+            "numpy.cross",
+            "numpy.degrees",
+            "numpy.flatnonzero",
+            "numpy.full",
+            "numpy.indices",
+            "numpy.isfinite",
+            "numpy.linalg.norm",
+            "numpy.linalg.svd",
+            "numpy.load",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.ptp",
+            "numpy.random.default_rng",
+            "numpy.sqrt",
+            "numpy.stack",
+            "numpy.std",
+            "numpy.zeros"
+          ],
+          "source_sha256": "41774d330dfc2eba43442daab258abc9cbfdb77f75623acce57eb74f79da4a2b"
+        },
+        "rollout/incubator_door_visual.py": {
+          "physical_lines": 77,
+          "code_lines_without_comments_or_docstrings": 62,
+          "function_definitions": 3,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.connectedComponentsWithStats",
+            "cv2.cvtColor",
+            "cv2.inRange",
+            "numpy.all",
+            "numpy.asarray",
+            "numpy.eye",
+            "numpy.isfinite",
+            "numpy.linalg.solve",
+            "numpy.log",
+            "numpy.zeros"
+          ],
+          "source_sha256": "9fdd6c0c1fdd2e96c323f4ac3dd265a8612360396da7fe1c92453d2244daf0d8"
+        },
+        "src/compile_incubator_door_demos.py": {
+          "physical_lines": 124,
+          "code_lines_without_comments_or_docstrings": 112,
+          "function_definitions": 1,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "h5py",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.VideoCapture",
+            "h5py.File",
+            "mink.SE3",
+            "numpy.asarray",
+            "numpy.flatnonzero",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.mean",
+            "numpy.median",
+            "numpy.percentile",
+            "numpy.std",
+            "numpy.unique"
+          ],
+          "source_sha256": "2667069ac8d5d2646af575fd2782577202051f3f31d459ae01928650f2ff22dd"
+        },
+        "src/estimate_incubator_door_plane.py": {
+          "physical_lines": 35,
+          "code_lines_without_comments_or_docstrings": 25,
+          "function_definitions": 1,
+          "class_definitions": 0,
+          "external_import_roots": [],
+          "external_api_names": [],
+          "source_sha256": "2902db1e0771694cdbdff7a793261372c0f657f6b739c508d6487ec3bac6319d"
+        },
+        "src/run_incubator_door_autonomy.py": {
+          "physical_lines": 521,
+          "code_lines_without_comments_or_docstrings": 461,
+          "function_definitions": 19,
+          "class_definitions": 2,
+          "external_import_roots": [
+            "cv2",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.imread",
+            "cv2.imwrite",
+            "numpy.asarray",
+            "numpy.linalg.norm"
+          ],
+          "source_sha256": "187ae7d00e5d43d599f5a5ed13519fa84a80205d48e8e2ec22c2d38a626f14b6"
+        },
+        "src/run_incubator_door_demo.py": {
+          "physical_lines": 1843,
+          "code_lines_without_comments_or_docstrings": 1713,
+          "function_definitions": 35,
+          "class_definitions": 0,
+          "external_import_roots": [
+            "cv2",
+            "mink",
+            "numpy"
+          ],
+          "external_api_names": [
+            "cv2.imread",
+            "cv2.imwrite",
+            "mink.SE3",
+            "mink.SE3.from_rotation_and_translation",
+            "mink.SO3.from_z_radians",
+            "numpy.abs",
+            "numpy.all",
+            "numpy.asarray",
+            "numpy.clip",
+            "numpy.isfinite",
+            "numpy.linalg.norm",
+            "numpy.max",
+            "numpy.median",
+            "numpy.save"
+          ],
+          "source_sha256": "9e77c453172833c2459ded3061f6357a3669ebd7f9fc9f6d5774c2d9e6bc9fc4"
+        }
+      }
+    }
+  ],
+  "git_reconstruction_checks": [
+    {
+      "commit": "2b6ccab",
+      "timestamp": "2026-08-08T05:54:06Z",
+      "all_scoped_sources_match": true,
+      "normalization": "Ignore redundant trailing newlines only; all other source bytes must match."
+    },
+    {
+      "commit": "bfa9b7e",
+      "timestamp": "2026-08-08T08:53:17Z",
+      "all_scoped_sources_match": true,
+      "normalization": "Ignore redundant trailing newlines only; all other source bytes must match."
+    },
+    {
+      "commit": "f2149bb",
+      "timestamp": "2026-08-08T09:13:38Z",
+      "all_scoped_sources_match": true,
+      "normalization": "Ignore redundant trailing newlines only; all other source bytes must match."
+    },
+    {
+      "commit": "283b913",
+      "timestamp": "2026-08-08T10:08:42Z",
+      "all_scoped_sources_match": true,
+      "normalization": "Ignore redundant trailing newlines only; all other source bytes must match."
+    }
+  ],
+  "applied_patches": [
+    {
+      "timestamp": "2026-08-08T03:43:02.472Z",
+      "call_id": "call_sIKGnmGvzSJhDYnzE7avkwkb",
+      "patch_sha256": "d12d4681e0e120247fedd09efb0c0402b5d24830ac60bef976104466c1516b05",
+      "files": [
+        "rollout/incubator_door_demo.py",
+        "src/compile_incubator_door_demos.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T03:44:07.184Z",
+      "call_id": "call_gaMCITpvTENYiySJoBHGHizU",
+      "patch_sha256": "887e036fb0075dacf702177f0a228f71407c299547cbdb8a9b2ba3a5b7d20927",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T03:46:50.945Z",
+      "call_id": "call_D190qgoY4molqEKFGaEyDwJN",
+      "patch_sha256": "56fb8738ba1bddad501a60bf84c9f0aed4cf6abc171956809464107c80c412d2",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T03:51:30.005Z",
+      "call_id": "call_joY7vdZAnB3RDDW9w8yEntL5",
+      "patch_sha256": "23bf57c9802c1ea64c92f255278b67ac1b6eb4b1a343f877a16e31de2ff5fc80",
+      "files": [
+        "rollout/incubator_door_visual.py",
+        "src/compile_incubator_door_demos.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T03:51:53.312Z",
+      "call_id": "call_YJ9kS0LaU03QFWeS8sF4vfpg",
+      "patch_sha256": "db0bb09e0af2a927c8f4e35f72ce9137e17166e99bfaee28004a58079fdd86d1",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T03:52:02.837Z",
+      "call_id": "call_W2P9L71Z20BY63rHPKbW6AP4",
+      "patch_sha256": "619b7eb3ca625b64558f76f851698ef7fbb4cd7840e180ccef34f58fe7162e94",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T03:54:03.227Z",
+      "call_id": "call_kj9zd9THADbfGhssSUOF7H4d",
+      "patch_sha256": "866fb0a13a6fd9b37d89033f64986ca72535f921b2754a0b25951a4fd897f448",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T03:55:04.813Z",
+      "call_id": "call_7olgyZSHK1CdDXCR8y0Mc8DG",
+      "patch_sha256": "0129ca41cbf67f406f7b72d96b040b37c1887eb4da2274f8debc7e795dfb4667",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:04:32.713Z",
+      "call_id": "call_7AMqp0yFnVqrvqHP3VAybwwD",
+      "patch_sha256": "6cc3de9ea53749397914a4ff2895a598d73630f8a2758a703bfc503be37fa634",
+      "files": [
+        "rollout/incubator_door_demo.py",
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:06:20.882Z",
+      "call_id": "call_JYWboCtwfKLD4ncHVe3Sv6CE",
+      "patch_sha256": "e7ab597e57c668a9bf02c00cc14298eff5ad57d177449b40ba14b849de7562c0",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:11:53.728Z",
+      "call_id": "call_gO1cd8NDl2HJgza6KcyBi7OJ",
+      "patch_sha256": "91135d6c7aaa30c84776d0cb32049bdf4e6b9cdcf1e51e3a15c7eec5951a5b97",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:18:17.977Z",
+      "call_id": "call_v6pEN25tLrL8i6WYown8yAoc",
+      "patch_sha256": "8a68889854626ee4388f81b1d3f80e9fee6a6eef3278bac43ac04379b2450454",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:19:30.504Z",
+      "call_id": "call_380vW8KVT46RrFXzgXWHhlDD",
+      "patch_sha256": "16b2f30ea2290568d580c91bdc5a12c22240918afeb2ecb670d377bb9abe886c",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:25:51.025Z",
+      "call_id": "call_kEBqTKVZpMO4EnFWzugklZ0U",
+      "patch_sha256": "0297f9e26aabcabdfd7f19433f32ea8d3212b7aae58fa4bf955d2cc65269985e",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:30:01.224Z",
+      "call_id": "call_4cfjlpX04GjgbLuYOWYtJtSN",
+      "patch_sha256": "2e90450f8011bca8226582b92e011f2448067d0d3eac6a98604f09485320d720",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:31:06.452Z",
+      "call_id": "call_Ujy3qYtXdoALxfGdCyL6a8EM",
+      "patch_sha256": "da8206ea70ca4a57e2eb348d67358e63e9eb55da3c3fda5d3a4418800706fe79",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:32:46.656Z",
+      "call_id": "call_yt7TJQC8uOXrgsVeocx0rL4A",
+      "patch_sha256": "2760ea59f3a3ddfd44a468c3fc909b987dab3e5f63b6c44420b1ef967797711e",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:39:10.902Z",
+      "call_id": "call_s2nPTxUlRZuZAYjQQNqirOlO",
+      "patch_sha256": "47ded6e69315939e6843323cd3b783c183904191657b39e04031872497bcd3d5",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:43:39.973Z",
+      "call_id": "call_66nF4CgopbOoyhPrHMpRN7eI",
+      "patch_sha256": "01c906742b80dd1e66406b67ce2788c4af320f7dd2dbc10702c833ac6289a237",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T04:52:11.198Z",
+      "call_id": "call_sB0bONO7xfTLu6V94mh6Gob5",
+      "patch_sha256": "5929fdaa760abd50c867a305b8292e619b18e8d9d5049b1ec4e978a87af1d682",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:03:03.056Z",
+      "call_id": "call_4qwJcZ8LkoxAToowEk5fAJ1N",
+      "patch_sha256": "f36ada288d1188f3c77d2368142f3c863074ce64d07086910c03c57757c774b0",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:12:38.606Z",
+      "call_id": "call_1eQeXi4cumNKvOSwyi5XaAT5",
+      "patch_sha256": "50551d158f6edc850990519db2c52185fd13e9c6063c75f768df9b178125df6a",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:24:45.287Z",
+      "call_id": "call_O0TW8YGSMmP4qySm8d3xZaiw",
+      "patch_sha256": "6d7fc2e0ffccdd1ebe34140f1de65c5f667763229dff04c353a4c11dbb8ccbc4",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:27:40.410Z",
+      "call_id": "call_yxkQQ2LBFp2Tw03tyEGFn3tl",
+      "patch_sha256": "3d8265e2c1efa88c2483e23a356193b7fc966613af418ae0f344b5e620b96dd8",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:30:09.750Z",
+      "call_id": "call_BSWCcca6C31TaQpbU3710Vv8",
+      "patch_sha256": "d536201455c7d345c619b295729ccae0f33e7a74d036d8944ca4d1944b068736",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:36:44.494Z",
+      "call_id": "call_viejrfHcnGFN2LbNVThW3n3T",
+      "patch_sha256": "46701a04a5b3835dc6e6dd15bcb10fa0f0de3bd8957983136d0f5780d42f7e4f",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:42:01.301Z",
+      "call_id": "call_MITnhAK3sD8Kg7xOQKOxn9LA",
+      "patch_sha256": "6e84d09a4b703bd4db722e650630b1211d895b251f6e3c8b535316a8404d1055",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:44:52.775Z",
+      "call_id": "call_pUxLrO51fTjfYzoRATb9qtde",
+      "patch_sha256": "c276626bc38c109874100f458dfe409aed20ad02417353f4ab679a202f7dd06e",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:48:33.274Z",
+      "call_id": "call_Nh9hrJHiEovypx08VJPMQjMQ",
+      "patch_sha256": "2d2eccd92561480adb5ffefad2a0f586d2b91e4e1cf44c4baf396363a78cfc9d",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:49:48.340Z",
+      "call_id": "call_rcSAejsUTR5HXzWJk8wH9pc0",
+      "patch_sha256": "c25455bcf15d448aeae0460e54e85e0b4818085c6a7cda695659e5a95b25ac78",
+      "files": [
+        "rollout/incubator_door_plane.py",
+        "src/estimate_incubator_door_plane.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T05:53:48.583Z",
+      "call_id": "call_5HdBNvkvsDecs167AEQ9X9ET",
+      "patch_sha256": "6a8df10777ddfcbaac65e730726546239408cf7bab62510c4c8493866a952dd1",
+      "files": [
+        "rollout/incubator_door_visual.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T08:32:36.209Z",
+      "call_id": "call_ze1TdRhgKgHsLPACZCNZANmC",
+      "patch_sha256": "4f112d0b92ff6ef15511daaa857f911c3f0425e0e11a6e91a5665810885a671a",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T08:35:08.939Z",
+      "call_id": "call_qwE9oXEV8lYUKaSXJwLWxFW3",
+      "patch_sha256": "208d669e3c73e49717428b83b3c41352cdc0aae8ef932d4291c7c2e5ebef52b8",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T08:39:47.092Z",
+      "call_id": "call_1wft1VhHBhh9LLV2oGNBXwQn",
+      "patch_sha256": "d993d69d6443e1a0208a72809caffee61bd2075b4a3913bc10acfce230e49a96",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T08:41:58.776Z",
+      "call_id": "call_OSMlR9AlB4boD1Efml8xdH91",
+      "patch_sha256": "165fafc65865a3d67be45acb1c781bfba11924fd2cc5ffd144c99bc0b3b1e243",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T08:52:58.731Z",
+      "call_id": "call_iIJqIGv3QrZeIakhvcxNlQh9",
+      "patch_sha256": "5ca227a10861efa5609ef6bba2d182f62e9806ae00a31a757c8135540e10617c",
+      "files": [
+        "src/run_incubator_door_demo.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T09:07:04.039Z",
+      "call_id": "call_wtdulUCfwZk4QQJxL7fqfgvZ",
+      "patch_sha256": "0bf36041b16bd4921cc1ec6c26ddbcb082aabae0e144ceab4288c46e87d9579a",
+      "files": [
+        "rollout/articulated_appliance.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T09:08:39.142Z",
+      "call_id": "call_yvBbmWXE1umBTSBzJEwiE59r",
+      "patch_sha256": "caedba6357339189bb299603462342b577032f84ed28b82db2ac56ddea058f8a",
+      "files": [
+        "src/run_incubator_door_autonomy.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T09:11:52.433Z",
+      "call_id": "call_n66xsN7sWvPN57cOB5OKuGMV",
+      "patch_sha256": "1c77cd140e0c41f2550f0b10244f96932d377ecc7d102709e128cd5dd1127689",
+      "files": [
+        "rollout/articulated_appliance.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T10:02:00.528Z",
+      "call_id": "call_faAe41sig3T8LQukZ6YRVCCv",
+      "patch_sha256": "8cec57f900a3d85a43123f8eef6a2de0252763c0ec2f9a78e348824739a32422",
+      "files": [
+        "src/run_incubator_door_autonomy.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T10:02:41.407Z",
+      "call_id": "call_l0cz7gDTjnclqcBtfCrehqdO",
+      "patch_sha256": "ccc6b29c4d531a417aa38589908e66c28d6dcfca5c5d6eee424f4b196190bd7c",
+      "files": [
+        "src/run_incubator_door_autonomy.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T10:07:32.308Z",
+      "call_id": "call_aATOrjJUj1BpK9RrfZMlk0u8",
+      "patch_sha256": "3ddd3a022266ea1da5b455242aa0bea7b4ce86743421cae84304f1d8deb44c75",
+      "files": [
+        "rollout/articulated_appliance.py"
+      ]
+    },
+    {
+      "timestamp": "2026-08-08T10:07:42.490Z",
+      "call_id": "call_B2p1ojHcNy0n5P8FyeRFpcMI",
+      "patch_sha256": "d0eb13ae6a6cc24c707770e08227466e5c0d37464d3eea13e9b5b5e412ce0e78",
+      "files": [
+        "src/run_incubator_door_autonomy.py"
+      ]
+    }
+  ],
+  "rejected_patch_calls": [
+    {
+      "call_id": "call_vXgPZ7rDfx6wbVOyJ6konArt",
+      "timestamp": "2026-08-08T05:44:21.755Z"
+    },
+    {
+      "call_id": "call_NSlJlO28A4mZIhjltx71GNjf",
+      "timestamp": "2026-08-08T08:52:40.188Z"
+    }
+  ]
+}
